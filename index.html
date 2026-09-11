@@ -180,8 +180,8 @@
       <div class="price loading" id="kospiPrice">—</div>
       <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
       <div class="ma-badges">
-        <span class="badge flat" id="kospiMa5Badge">5일선 확인 중</span>
-        <span class="badge flat" id="kospiAlignBadge">정배열 확인 중</span>
+        <span class="badge flat" id="kospiMa5Badge">배열 확인 중</span>
+        <span class="badge flat" id="kospiAlignBadge">순위 확인 중</span>
       </div>
       <canvas id="kospiChart" class="chart-lg"></canvas>
       <div class="legend">
@@ -329,15 +329,20 @@ function drawMultiLine(canvas, series) {
   });
 }
 
-function buildAlignmentChain(mas) {
-  let html = mas[0].label;
-  for (let i = 1; i < mas.length; i++) {
-    const prev = mas[i - 1].value, cur = mas[i].value;
-    const cls = prev > cur ? "up" : prev < cur ? "down" : "flat";
-    const symbol = prev > cur ? "&gt;" : prev < cur ? "&lt;" : "=";
-    html += ` <b class="${cls}">${symbol}</b> ${mas[i].label}`;
-  }
-  return html;
+function computeAlignmentVerdict(mas) {
+  const bull = mas.every((m, i) => i === 0 || mas[i - 1].value > m.value);
+  const bear = mas.every((m, i) => i === 0 || mas[i - 1].value < m.value);
+  if (bull) return { text: "정배열", cls: "up" };
+  if (bear) return { text: "역배열", cls: "down" };
+  return { text: "혼조", cls: "flat" };
+}
+
+function buildRankChain(price, mas) {
+  const items = [{ label: "지수", value: price, isPrice: true }, ...mas];
+  items.sort((a, b) => b.value - a.value);
+  return items
+    .map((it) => (it.isPrice ? `<b class="up">지수</b>` : it.label))
+    .join(` <span class="flat">&gt;</span> `);
 }
 
 async function updateIndexPanel(key) {
@@ -363,18 +368,20 @@ async function updateIndexPanel(key) {
     const ma60 = ma60Arr[ma60Arr.length - 1];
     const ma120 = ma120Arr[ma120Arr.length - 1];
 
-    const aboveMa5 = last >= ma5;
-    ma5BadgeEl.textContent = aboveMa5 ? "5일선 위" : "5일선 아래";
-    ma5BadgeEl.className = "badge " + (aboveMa5 ? "up" : "down");
-
-    alignBadgeEl.className = "badge flat";
-    alignBadgeEl.innerHTML = buildAlignmentChain([
+    const maList = [
       { label: "5", value: ma5 },
       { label: "10", value: ma10 },
       { label: "20", value: ma20 },
       { label: "60", value: ma60 },
       { label: "120", value: ma120 },
-    ]);
+    ];
+
+    const verdict = computeAlignmentVerdict(maList);
+    ma5BadgeEl.textContent = verdict.text;
+    ma5BadgeEl.className = "badge " + verdict.cls;
+
+    alignBadgeEl.className = "badge flat";
+    alignBadgeEl.innerHTML = buildRankChain(last, maList);
 
     const DISPLAY_DAYS = 25;
     const sliceFrom = Math.max(0, closes.length - DISPLAY_DAYS);
@@ -387,9 +394,9 @@ async function updateIndexPanel(key) {
       { values: closes.slice(sliceFrom), color: cssVar("--up"), width: 2 },
     ]);
   } catch (e) {
-    ma5BadgeEl.textContent = "5일선 오류";
+    ma5BadgeEl.textContent = "배열 오류";
     ma5BadgeEl.className = "badge flat";
-    alignBadgeEl.textContent = "정배열 오류";
+    alignBadgeEl.textContent = "순위 오류";
     alignBadgeEl.className = "badge flat";
   }
 }
