@@ -12,12 +12,15 @@
     --sub: #6b7280;
     --border: #e5e7eb;
     --up: #d92d20;
-    --down: #1a7f37;
+    --down: #2563eb;
+    --success: #1a7f37;
     --flat: #6b7280;
     --accent: #2563eb;
     --ma5: #f59e0b;
     --ma10: #a855f7;
     --ma20: #06b6d4;
+    --ma60: #16a34a;
+    --ma120: #64748b;
     --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   }
   @media (prefers-color-scheme: dark) {
@@ -28,12 +31,15 @@
       --sub: #9aa1ac;
       --border: #262a31;
       --up: #f87171;
-      --down: #4ade80;
+      --down: #60a5fa;
+      --success: #4ade80;
       --flat: #9aa1ac;
       --accent: #60a5fa;
       --ma5: #fbbf24;
       --ma10: #c084fc;
       --ma20: #22d3ee;
+      --ma60: #4ade80;
+      --ma120: #94a3b8;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
     }
   }
@@ -51,7 +57,7 @@
   h1 { font-size: 20px; font-weight: 700; margin: 0; }
   .status { font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 8px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--flat); display: inline-block; }
-  .dot.live { background: var(--down); box-shadow: 0 0 0 0 rgba(74,222,128,.6); animation: pulse 2s infinite; }
+  .dot.live { background: var(--success); box-shadow: 0 0 0 0 rgba(74,222,128,.6); animation: pulse 2s infinite; }
   .dot.err { background: var(--up); }
   @keyframes pulse {
     0% { box-shadow: 0 0 0 0 rgba(74,222,128,.5); }
@@ -179,10 +185,12 @@
       </div>
       <canvas id="kospiChart" class="chart-lg"></canvas>
       <div class="legend">
-        <span><i class="dot" style="background:var(--accent)"></i>지수</span>
+        <span><i class="dot" style="background:var(--up)"></i>지수</span>
         <span><i class="dot" style="background:var(--ma5)"></i>5일선</span>
         <span><i class="dot" style="background:var(--ma10)"></i>10일선</span>
         <span><i class="dot" style="background:var(--ma20)"></i>20일선</span>
+        <span><i class="dot" style="background:var(--ma60)"></i>60일선</span>
+        <span><i class="dot" style="background:var(--ma120)"></i>120일선</span>
       </div>
       <div class="meta-row">
         <span id="kospiUpdated">-</span>
@@ -274,8 +282,7 @@ function drawSparkline(canvas, closes) {
   const stepX = (w - pad * 2) / (closes.length - 1);
 
   const up = pts[pts.length - 1] >= pts[0];
-  const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  ctx.strokeStyle = up ? (isDark ? "#4ade80" : "#1a7f37") : (isDark ? "#f87171" : "#d92d20");
+  ctx.strokeStyle = up ? cssVar("--up") : cssVar("--down");
   ctx.lineWidth = 1.75;
   ctx.beginPath();
   let started = false;
@@ -322,42 +329,61 @@ function drawMultiLine(canvas, series) {
   });
 }
 
+function buildAlignmentChain(mas) {
+  let html = mas[0].label;
+  for (let i = 1; i < mas.length; i++) {
+    const prev = mas[i - 1].value, cur = mas[i].value;
+    const cls = prev > cur ? "up" : prev < cur ? "down" : "flat";
+    const symbol = prev > cur ? "&gt;" : prev < cur ? "&lt;" : "=";
+    html += ` <b class="${cls}">${symbol}</b> ${mas[i].label}`;
+  }
+  return html;
+}
+
 async function updateIndexPanel(key) {
   const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
   const chartEl = document.getElementById(key + "Chart");
   if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return;
   try {
-    const daily = await fetchSeries(SERIES[key].symbol, { range: "2mo", interval: "1d" });
+    const daily = await fetchSeries(SERIES[key].symbol, { range: "1y", interval: "1d" });
     const closes = (daily.indicators?.quote?.[0]?.close || []).filter((v) => v != null);
-    if (closes.length < 20) throw new Error("데이터 부족");
+    if (closes.length < 120) throw new Error("데이터 부족");
 
     const ma5Arr = rollingMA(closes, 5);
     const ma10Arr = rollingMA(closes, 10);
     const ma20Arr = rollingMA(closes, 20);
+    const ma60Arr = rollingMA(closes, 60);
+    const ma120Arr = rollingMA(closes, 120);
 
     const last = closes[closes.length - 1];
     const ma5 = ma5Arr[ma5Arr.length - 1];
     const ma10 = ma10Arr[ma10Arr.length - 1];
     const ma20 = ma20Arr[ma20Arr.length - 1];
+    const ma60 = ma60Arr[ma60Arr.length - 1];
+    const ma120 = ma120Arr[ma120Arr.length - 1];
 
     const aboveMa5 = last >= ma5;
     ma5BadgeEl.textContent = aboveMa5 ? "5일선 위" : "5일선 아래";
     ma5BadgeEl.className = "badge " + (aboveMa5 ? "up" : "down");
 
-    let alignText, alignDir;
-    if (ma5 > ma10 && ma10 > ma20) { alignText = "정배열"; alignDir = "up"; }
-    else if (ma5 < ma10 && ma10 < ma20) { alignText = "역배열"; alignDir = "down"; }
-    else { alignText = "혼조"; alignDir = "flat"; }
-    alignBadgeEl.textContent = alignText;
-    alignBadgeEl.className = "badge " + alignDir;
+    alignBadgeEl.className = "badge flat";
+    alignBadgeEl.innerHTML = buildAlignmentChain([
+      { label: "5", value: ma5 },
+      { label: "10", value: ma10 },
+      { label: "20", value: ma20 },
+      { label: "60", value: ma60 },
+      { label: "120", value: ma120 },
+    ]);
 
-    const startIdx = ma20Arr.findIndex((v) => v != null);
+    const startIdx = ma120Arr.findIndex((v) => v != null);
     drawMultiLine(chartEl, [
+      { values: ma120Arr.slice(startIdx), color: cssVar("--ma120"), width: 1.5 },
+      { values: ma60Arr.slice(startIdx), color: cssVar("--ma60"), width: 1.5 },
       { values: ma20Arr.slice(startIdx), color: cssVar("--ma20"), width: 1.5 },
       { values: ma10Arr.slice(startIdx), color: cssVar("--ma10"), width: 1.5 },
       { values: ma5Arr.slice(startIdx), color: cssVar("--ma5"), width: 1.5 },
-      { values: closes.slice(startIdx), color: cssVar("--accent"), width: 2 },
+      { values: closes.slice(startIdx), color: cssVar("--up"), width: 2 },
     ]);
   } catch (e) {
     ma5BadgeEl.textContent = "5일선 오류";
