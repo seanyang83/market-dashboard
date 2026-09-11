@@ -376,14 +376,15 @@ async function updateIndexPanel(key) {
       { label: "120", value: ma120 },
     ]);
 
-    const startIdx = ma120Arr.findIndex((v) => v != null);
+    const DISPLAY_DAYS = 60;
+    const sliceFrom = Math.max(0, closes.length - DISPLAY_DAYS);
     drawMultiLine(chartEl, [
-      { values: ma120Arr.slice(startIdx), color: cssVar("--ma120"), width: 1.5 },
-      { values: ma60Arr.slice(startIdx), color: cssVar("--ma60"), width: 1.5 },
-      { values: ma20Arr.slice(startIdx), color: cssVar("--ma20"), width: 1.5 },
-      { values: ma10Arr.slice(startIdx), color: cssVar("--ma10"), width: 1.5 },
-      { values: ma5Arr.slice(startIdx), color: cssVar("--ma5"), width: 1.5 },
-      { values: closes.slice(startIdx), color: cssVar("--up"), width: 2 },
+      { values: ma120Arr.slice(sliceFrom), color: cssVar("--ma120"), width: 1.5 },
+      { values: ma60Arr.slice(sliceFrom), color: cssVar("--ma60"), width: 1.5 },
+      { values: ma20Arr.slice(sliceFrom), color: cssVar("--ma20"), width: 1.5 },
+      { values: ma10Arr.slice(sliceFrom), color: cssVar("--ma10"), width: 1.5 },
+      { values: ma5Arr.slice(sliceFrom), color: cssVar("--ma5"), width: 1.5 },
+      { values: closes.slice(sliceFrom), color: cssVar("--up"), width: 2 },
     ]);
   } catch (e) {
     ma5BadgeEl.textContent = "5일선 오류";
