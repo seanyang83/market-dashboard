@@ -376,7 +376,7 @@ async function updateIndexPanel(key) {
       { label: "120", value: ma120 },
     ]);
 
-    const DISPLAY_DAYS = 60;
+    const DISPLAY_DAYS = 25;
     const sliceFrom = Math.max(0, closes.length - DISPLAY_DAYS);
     drawMultiLine(chartEl, [
       { values: ma120Arr.slice(sliceFrom), color: cssVar("--ma120"), width: 1.5 },
