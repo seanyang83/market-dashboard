@@ -15,6 +15,9 @@
     --down: #1a7f37;
     --flat: #6b7280;
     --accent: #2563eb;
+    --ma5: #f59e0b;
+    --ma10: #a855f7;
+    --ma20: #06b6d4;
     --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   }
   @media (prefers-color-scheme: dark) {
@@ -28,6 +31,9 @@
       --down: #4ade80;
       --flat: #9aa1ac;
       --accent: #60a5fa;
+      --ma5: #fbbf24;
+      --ma10: #c084fc;
+      --ma20: #22d3ee;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
     }
   }
@@ -72,6 +78,9 @@
   .down { color: var(--down); }
   .flat { color: var(--flat); }
   canvas { width: 100%; height: 60px; display: block; margin-top: 14px; }
+  canvas.chart-lg { height: 130px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--sub); margin-top: 8px; }
+  .legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
   .meta-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 11.5px; color: var(--sub); margin-top: 10px; }
   .error-msg {
     font-size: 12.5px; color: var(--up); margin-top: 10px; line-height: 1.5;
@@ -168,7 +177,13 @@
         <span class="badge flat" id="kospiMa5Badge">5일선 확인 중</span>
         <span class="badge flat" id="kospiAlignBadge">정배열 확인 중</span>
       </div>
-      <canvas id="kospiChart"></canvas>
+      <canvas id="kospiChart" class="chart-lg"></canvas>
+      <div class="legend">
+        <span><i class="dot" style="background:var(--accent)"></i>지수</span>
+        <span><i class="dot" style="background:var(--ma5)"></i>5일선</span>
+        <span><i class="dot" style="background:var(--ma10)"></i>10일선</span>
+        <span><i class="dot" style="background:var(--ma20)"></i>20일선</span>
+      </div>
       <div class="meta-row">
         <span id="kospiUpdated">-</span>
         <span id="kospiRange">-</span>
@@ -210,6 +225,21 @@ function fmtNum(n, isYield, decimals, prefix) {
 
 function average(arr) {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function rollingMA(values, period) {
+  const out = new Array(values.length).fill(null);
+  let sum = 0;
+  for (let i = 0; i < values.length; i++) {
+    sum += values[i];
+    if (i >= period) sum -= values[i - period];
+    if (i >= period - 1) out[i] = sum / period;
+  }
+  return out;
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
 function fmtTime(ts) {
@@ -259,19 +289,57 @@ function drawSparkline(canvas, closes) {
   ctx.stroke();
 }
 
-async function updateMaBadges(key) {
+function drawMultiLine(canvas, series) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const allVals = series.flatMap((s) => s.values.filter((v) => v != null));
+  if (allVals.length < 2) return;
+
+  const min = Math.min(...allVals), max = Math.max(...allVals);
+  const pad = 4;
+  const range = max - min || 1;
+  const n = series[0].values.length;
+  const stepX = (w - pad * 2) / (n - 1);
+
+  series.forEach((s) => {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.width;
+    ctx.beginPath();
+    let started = false;
+    s.values.forEach((v, i) => {
+      if (v == null) return;
+      const x = pad + i * stepX;
+      const y = h - pad - ((v - min) / range) * (h - pad * 2);
+      if (!started) { ctx.moveTo(x, y); started = true; }
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+}
+
+async function updateIndexPanel(key) {
   const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
-  if (!ma5BadgeEl || !alignBadgeEl) return;
+  const chartEl = document.getElementById(key + "Chart");
+  if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return;
   try {
     const daily = await fetchSeries(SERIES[key].symbol, { range: "2mo", interval: "1d" });
     const closes = (daily.indicators?.quote?.[0]?.close || []).filter((v) => v != null);
     if (closes.length < 20) throw new Error("데이터 부족");
 
+    const ma5Arr = rollingMA(closes, 5);
+    const ma10Arr = rollingMA(closes, 10);
+    const ma20Arr = rollingMA(closes, 20);
+
     const last = closes[closes.length - 1];
-    const ma5 = average(closes.slice(-5));
-    const ma10 = average(closes.slice(-10));
-    const ma20 = average(closes.slice(-20));
+    const ma5 = ma5Arr[ma5Arr.length - 1];
+    const ma10 = ma10Arr[ma10Arr.length - 1];
+    const ma20 = ma20Arr[ma20Arr.length - 1];
 
     const aboveMa5 = last >= ma5;
     ma5BadgeEl.textContent = aboveMa5 ? "5일선 위" : "5일선 아래";
@@ -283,6 +351,14 @@ async function updateMaBadges(key) {
     else { alignText = "혼조"; alignDir = "flat"; }
     alignBadgeEl.textContent = alignText;
     alignBadgeEl.className = "badge " + alignDir;
+
+    const startIdx = ma20Arr.findIndex((v) => v != null);
+    drawMultiLine(chartEl, [
+      { values: ma20Arr.slice(startIdx), color: cssVar("--ma20"), width: 1.5 },
+      { values: ma10Arr.slice(startIdx), color: cssVar("--ma10"), width: 1.5 },
+      { values: ma5Arr.slice(startIdx), color: cssVar("--ma5"), width: 1.5 },
+      { values: closes.slice(startIdx), color: cssVar("--accent"), width: 2 },
+    ]);
   } catch (e) {
     ma5BadgeEl.textContent = "5일선 오류";
     ma5BadgeEl.className = "badge flat";
@@ -324,7 +400,7 @@ async function updateCard(key) {
     changeEl.className = "change-row " + dir;
     changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${diffFmt}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
 
-    drawSparkline(chartEl, closes);
+    if (!cfg.withMA) drawSparkline(chartEl, closes);
 
     updatedEl.textContent = "업데이트: " + fmtTime(meta.regularMarketTime);
     const validCloses = closes.filter((v) => v != null);
@@ -336,7 +412,7 @@ async function updateCard(key) {
 
     errorEl.classList.remove("show");
 
-    if (cfg.withMA) await updateMaBadges(key);
+    if (cfg.withMA) await updateIndexPanel(key);
 
     return true;
   } catch (e) {
