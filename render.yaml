@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: market-dashboard
+    env: python
+    plan: free
+    buildCommand: ""
+    startCommand: "python3 server.py"

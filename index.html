@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>미국 10년물 국채금리 · WTI 유가 · 나스닥 선물 대시보드</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card-bg: #ffffff;
+    --text: #14161a;
+    --sub: #6b7280;
+    --border: #e5e7eb;
+    --up: #d92d20;
+    --down: #1a7f37;
+    --flat: #6b7280;
+    --accent: #2563eb;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10;
+      --card-bg: #15181d;
+      --text: #f2f3f5;
+      --sub: #9aa1ac;
+      --border: #262a31;
+      --up: #f87171;
+      --down: #4ade80;
+      --flat: #9aa1ac;
+      --accent: #60a5fa;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Apple SD Gothic Neo", Roboto, sans-serif;
+    min-height: 100vh;
+    padding: 32px 20px 60px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  .status { font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 8px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--flat); display: inline-block; }
+  .dot.live { background: var(--down); box-shadow: 0 0 0 0 rgba(74,222,128,.6); animation: pulse 2s infinite; }
+  .dot.err { background: var(--up); }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(74,222,128,.5); }
+    70% { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
+    100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+  }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .card .label { font-size: 13px; color: var(--sub); font-weight: 600; letter-spacing: .02em; }
+  .card .sub-label { font-size: 12px; color: var(--sub); margin-top: 2px; }
+  .card .price { font-size: 38px; font-weight: 700; margin: 10px 0 2px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .card .price.loading { opacity: .35; }
+  .change-row { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .change-row .arrow { font-size: 13px; }
+  .up { color: var(--up); }
+  .down { color: var(--down); }
+  .flat { color: var(--flat); }
+  canvas { width: 100%; height: 60px; display: block; margin-top: 14px; }
+  .meta-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 11.5px; color: var(--sub); margin-top: 10px; }
+  .error-msg {
+    font-size: 12.5px; color: var(--up); margin-top: 10px; line-height: 1.5;
+    display: none;
+  }
+  .error-msg.show { display: block; }
+  footer { margin-top: 28px; font-size: 12px; color: var(--sub); line-height: 1.6; }
+  footer a { color: var(--accent); }
+  .refresh-btn {
+    border: 1px solid var(--border); background: var(--card-bg); color: var(--text);
+    font-size: 12.5px; padding: 5px 12px; border-radius: 999px; cursor: pointer;
+  }
+  .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .refresh-btn:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>미국 10년물 국채금리 · WTI 유가 · 나스닥 선물</h1>
+    <div class="status">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">연결 중...</span>
+      <button class="refresh-btn" id="refreshBtn">새로고침</button>
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <div class="label">미국 10년물 국채금리 (US10Y)</div>
+      <div class="sub-label">CBOE 10-Year Treasury Note Yield · ^TNX</div>
+      <div class="price loading" id="tnxPrice">—</div>
+      <div class="change-row flat" id="tnxChange"><span>불러오는 중</span></div>
+      <canvas id="tnxChart"></canvas>
+      <div class="meta-row">
+        <span id="tnxUpdated">-</span>
+        <span id="tnxRange">-</span>
+      </div>
+      <div class="error-msg" id="tnxError"></div>
+    </div>
+
+    <div class="card">
+      <div class="label">WTI 원유 선물</div>
+      <div class="sub-label">NYMEX Crude Oil Futures · CL=F (USD/bbl)</div>
+      <div class="price loading" id="wtiPrice">—</div>
+      <div class="change-row flat" id="wtiChange"><span>불러오는 중</span></div>
+      <canvas id="wtiChart"></canvas>
+      <div class="meta-row">
+        <span id="wtiUpdated">-</span>
+        <span id="wtiRange">-</span>
+      </div>
+      <div class="error-msg" id="wtiError"></div>
+    </div>
+
+    <div class="card">
+      <div class="label">나스닥 100 선물</div>
+      <div class="sub-label">Nasdaq 100 E-mini Futures · NQ=F</div>
+      <div class="price loading" id="ndqPrice">—</div>
+      <div class="change-row flat" id="ndqChange"><span>불러오는 중</span></div>
+      <canvas id="ndqChart"></canvas>
+      <div class="meta-row">
+        <span id="ndqUpdated">-</span>
+        <span id="ndqRange">-</span>
+      </div>
+      <div class="error-msg" id="ndqError"></div>
+    </div>
+  </div>
+
+  <footer>
+    데이터 출처: Yahoo Finance (실시간 또는 최대 15~20분 지연 시세). 브라우저는 CORS 정책 때문에
+    Yahoo API를 직접 호출할 수 없어, 같은 폴더의 <code>server.py</code>가 로컬 프록시 역할을 합니다.
+    30초마다 자동 갱신됩니다.<br>
+    투자 판단의 근거로 사용하지 마세요.
+  </footer>
+</div>
+
+<script>
+const REFRESH_MS = 30000;
+
+const SERIES = {
+  tnx: { symbol: "^TNX", isYield: true },
+  wti: { symbol: "CL=F", isYield: false },
+  ndq: { symbol: "NQ=F", isYield: false },
+};
+
+function fmtNum(n, isYield) {
+  if (n == null || Number.isNaN(n)) return "—";
+  return isYield ? n.toFixed(3) + "%" : "$" + n.toFixed(2);
+}
+
+function fmtTime(ts) {
+  const d = ts ? new Date(ts * 1000) : new Date();
+  return d.toLocaleTimeString("ko-KR", { hour12: false });
+}
+
+async function fetchSeries(symbol) {
+  const url = `/api/quote?symbol=${encodeURIComponent(symbol)}`;
+  const res = await fetch(url, { cache: "no-store" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
+  const result = data?.chart?.result?.[0];
+  if (!result) throw new Error(data?.chart?.error?.description || "데이터 없음");
+  return result;
+}
+
+function drawSparkline(canvas, closes) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const pts = closes.filter((v) => v != null);
+  if (pts.length < 2) return;
+
+  const min = Math.min(...pts), max = Math.max(...pts);
+  const pad = 4;
+  const range = max - min || 1;
+  const stepX = (w - pad * 2) / (closes.length - 1);
+
+  const up = pts[pts.length - 1] >= pts[0];
+  const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  ctx.strokeStyle = up ? (isDark ? "#4ade80" : "#1a7f37") : (isDark ? "#f87171" : "#d92d20");
+  ctx.lineWidth = 1.75;
+  ctx.beginPath();
+  let started = false;
+  closes.forEach((v, i) => {
+    if (v == null) return;
+    const x = pad + i * stepX;
+    const y = h - pad - ((v - min) / range) * (h - pad * 2);
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+async function updateCard(key) {
+  const { symbol, isYield } = SERIES[key];
+  const priceEl = document.getElementById(key + "Price");
+  const changeEl = document.getElementById(key + "Change");
+  const chartEl = document.getElementById(key + "Chart");
+  const updatedEl = document.getElementById(key + "Updated");
+  const rangeEl = document.getElementById(key + "Range");
+  const errorEl = document.getElementById(key + "Error");
+  try {
+    const result = await fetchSeries(symbol);
+    const meta = result.meta;
+    const price = meta.regularMarketPrice;
+    const prevClose = meta.previousClose ?? meta.chartPreviousClose;
+    const closes = result.indicators?.quote?.[0]?.close || [];
+
+    const diff = price - prevClose;
+    const pct = (diff / prevClose) * 100;
+    const dir = diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat";
+    const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
+
+    priceEl.textContent = fmtNum(price, isYield);
+    priceEl.classList.remove("loading");
+
+    changeEl.className = "change-row " + dir;
+    changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${isYield ? diff.toFixed(3) + "%p" : (diff >= 0 ? "+" : "") + diff.toFixed(2)}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
+
+    drawSparkline(chartEl, closes);
+
+    updatedEl.textContent = "업데이트: " + fmtTime(meta.regularMarketTime);
+    const validCloses = closes.filter((v) => v != null);
+    const dayLow = meta.regularMarketDayLow || Math.min(...validCloses, price);
+    const dayHigh = meta.regularMarketDayHigh || Math.max(...validCloses, price);
+    rangeEl.textContent = validCloses.length
+      ? `당일 ${fmtNum(dayLow, isYield)} ~ ${fmtNum(dayHigh, isYield)}`
+      : "";
+
+    errorEl.classList.remove("show");
+    return true;
+  } catch (e) {
+    errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message + " (네트워크 또는 CORS 차단 가능성)";
+    errorEl.classList.add("show");
+    return false;
+  }
+}
+
+const statusDot = document.getElementById("statusDot");
+const statusText = document.getElementById("statusText");
+const refreshBtn = document.getElementById("refreshBtn");
+
+async function refreshAll() {
+  refreshBtn.disabled = true;
+  statusText.textContent = "갱신 중...";
+  const results = await Promise.all(Object.keys(SERIES).map(updateCard));
+  const okCount = results.filter(Boolean).length;
+
+  if (okCount === results.length) {
+    statusDot.className = "dot live";
+    statusText.textContent = "실시간 연결됨";
+  } else if (okCount > 0) {
+    statusDot.className = "dot live";
+    statusText.textContent = "일부 데이터 오류";
+  } else {
+    statusDot.className = "dot err";
+    statusText.textContent = "연결 실패";
+  }
+  refreshBtn.disabled = false;
+}
+
+refreshBtn.addEventListener("click", refreshAll);
+refreshAll();
+setInterval(refreshAll, REFRESH_MS);
+</script>
+</body>
+</html>
