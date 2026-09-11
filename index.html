@@ -52,9 +52,7 @@
     70% { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
     100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
   }
-  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
   .card {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -88,6 +86,13 @@
   }
   .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
   .refresh-btn:disabled { opacity: .5; cursor: default; }
+  .ma-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .badge {
+    display: inline-flex; align-items: center; white-space: nowrap;
+    font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+    background: color-mix(in srgb, currentColor 14%, transparent);
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  }
 </style>
 </head>
 <body>
@@ -153,6 +158,23 @@
       </div>
       <div class="error-msg" id="btcError"></div>
     </div>
+
+    <div class="card">
+      <div class="label">코스피 지수</div>
+      <div class="sub-label">KOSPI Composite Index · ^KS11</div>
+      <div class="price loading" id="kospiPrice">—</div>
+      <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
+      <div class="ma-badges">
+        <span class="badge flat" id="kospiMa5Badge">5일선 확인 중</span>
+        <span class="badge flat" id="kospiAlignBadge">정배열 확인 중</span>
+      </div>
+      <canvas id="kospiChart"></canvas>
+      <div class="meta-row">
+        <span id="kospiUpdated">-</span>
+        <span id="kospiRange">-</span>
+      </div>
+      <div class="error-msg" id="kospiError"></div>
+    </div>
   </div>
 
   <footer>
@@ -171,17 +193,23 @@ const SERIES = {
   wti: { symbol: "CL=F", isYield: false },
   ndq: { symbol: "NQ=F", isYield: false },
   btc: { symbol: "BTC-USD", isYield: false },
+  kospi: { symbol: "^KS11", isYield: false, prefix: "", decimals: 2, withMA: true },
 };
 
-function decimalsFor(isYield, price) {
-  if (isYield) return 3;
+function decimalsFor(cfg, price) {
+  if (cfg.decimals != null) return cfg.decimals;
+  if (cfg.isYield) return 3;
   return Math.abs(price) >= 1000 ? 0 : 2;
 }
 
-function fmtNum(n, isYield, decimals) {
+function fmtNum(n, isYield, decimals, prefix) {
   if (n == null || Number.isNaN(n)) return "—";
   if (isYield) return n.toFixed(3) + "%";
-  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return (prefix ?? "$") + n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function average(arr) {
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
 }
 
 function fmtTime(ts) {
@@ -189,9 +217,9 @@ function fmtTime(ts) {
   return d.toLocaleTimeString("ko-KR", { hour12: false });
 }
 
-async function fetchSeries(symbol) {
-  const url = `/api/quote?symbol=${encodeURIComponent(symbol)}`;
-  const res = await fetch(url, { cache: "no-store" });
+async function fetchSeries(symbol, opts = {}) {
+  const params = new URLSearchParams({ symbol, ...opts });
+  const res = await fetch(`/api/quote?${params.toString()}`, { cache: "no-store" });
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
   const result = data?.chart?.result?.[0];
@@ -231,8 +259,41 @@ function drawSparkline(canvas, closes) {
   ctx.stroke();
 }
 
+async function updateMaBadges(key) {
+  const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
+  const alignBadgeEl = document.getElementById(key + "AlignBadge");
+  if (!ma5BadgeEl || !alignBadgeEl) return;
+  try {
+    const daily = await fetchSeries(SERIES[key].symbol, { range: "2mo", interval: "1d" });
+    const closes = (daily.indicators?.quote?.[0]?.close || []).filter((v) => v != null);
+    if (closes.length < 20) throw new Error("데이터 부족");
+
+    const last = closes[closes.length - 1];
+    const ma5 = average(closes.slice(-5));
+    const ma10 = average(closes.slice(-10));
+    const ma20 = average(closes.slice(-20));
+
+    const aboveMa5 = last >= ma5;
+    ma5BadgeEl.textContent = aboveMa5 ? "5일선 위" : "5일선 아래";
+    ma5BadgeEl.className = "badge " + (aboveMa5 ? "up" : "down");
+
+    let alignText, alignDir;
+    if (ma5 > ma10 && ma10 > ma20) { alignText = "정배열"; alignDir = "up"; }
+    else if (ma5 < ma10 && ma10 < ma20) { alignText = "역배열"; alignDir = "down"; }
+    else { alignText = "혼조"; alignDir = "flat"; }
+    alignBadgeEl.textContent = alignText;
+    alignBadgeEl.className = "badge " + alignDir;
+  } catch (e) {
+    ma5BadgeEl.textContent = "5일선 오류";
+    ma5BadgeEl.className = "badge flat";
+    alignBadgeEl.textContent = "정배열 오류";
+    alignBadgeEl.className = "badge flat";
+  }
+}
+
 async function updateCard(key) {
-  const { symbol, isYield } = SERIES[key];
+  const cfg = SERIES[key];
+  const { symbol, isYield } = cfg;
   const priceEl = document.getElementById(key + "Price");
   const changeEl = document.getElementById(key + "Change");
   const chartEl = document.getElementById(key + "Chart");
@@ -246,7 +307,8 @@ async function updateCard(key) {
     const prevClose = meta.previousClose ?? meta.chartPreviousClose;
     const closes = result.indicators?.quote?.[0]?.close || [];
 
-    const decimals = decimalsFor(isYield, price);
+    const decimals = decimalsFor(cfg, price);
+    const prefix = cfg.prefix ?? "$";
     const diff = price - prevClose;
     const pct = (diff / prevClose) * 100;
     const dir = diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat";
@@ -256,7 +318,7 @@ async function updateCard(key) {
       ? diffAbs.toFixed(3) + "%p"
       : diffAbs.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
-    priceEl.textContent = fmtNum(price, isYield, decimals);
+    priceEl.textContent = fmtNum(price, isYield, decimals, prefix);
     priceEl.classList.remove("loading");
 
     changeEl.className = "change-row " + dir;
@@ -269,10 +331,13 @@ async function updateCard(key) {
     const dayLow = meta.regularMarketDayLow || Math.min(...validCloses, price);
     const dayHigh = meta.regularMarketDayHigh || Math.max(...validCloses, price);
     rangeEl.textContent = validCloses.length
-      ? `당일 ${fmtNum(dayLow, isYield, decimals)} ~ ${fmtNum(dayHigh, isYield, decimals)}`
+      ? `당일 ${fmtNum(dayLow, isYield, decimals, prefix)} ~ ${fmtNum(dayHigh, isYield, decimals, prefix)}`
       : "";
 
     errorEl.classList.remove("show");
+
+    if (cfg.withMA) await updateMaBadges(key);
+
     return true;
   } catch (e) {
     errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message + " (네트워크 또는 CORS 차단 가능성)";

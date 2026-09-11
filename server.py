@@ -17,6 +17,8 @@ import urllib.request
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8934))
 YAHOO_HOSTS = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"]
+ALLOWED_RANGES = {"1d", "5d", "1mo", "2mo", "3mo", "6mo", "1y"}
+ALLOWED_INTERVALS = {"1m", "2m", "5m", "15m", "1d"}
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -33,13 +35,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not symbol:
             self.send_json(400, {"error": "missing symbol"})
             return
+        range_ = params.get("range", ["1d"])[0]
+        interval = params.get("interval", ["2m"])[0]
+        if range_ not in ALLOWED_RANGES or interval not in ALLOWED_INTERVALS:
+            self.send_json(400, {"error": "invalid range/interval"})
+            return
 
         encoded_symbol = urllib.parse.quote(symbol, safe="")
         last_err = None
         for host in YAHOO_HOSTS:
             url = (
                 f"{host}/v8/finance/chart/{encoded_symbol}"
-                "?range=1d&interval=2m&includePrePost=false"
+                f"?range={range_}&interval={interval}&includePrePost=false"
             )
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             try:
