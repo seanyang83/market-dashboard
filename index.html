@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>미국 10년물 국채금리 · WTI 유가 · 나스닥 선물 대시보드</title>
+<title>미국 10년물 국채금리 · WTI 유가 · 나스닥 선물 · 비트코인 대시보드</title>
 <style>
   :root {
     --bg: #f4f5f7;
@@ -40,7 +40,7 @@
     min-height: 100vh;
     padding: 32px 20px 60px;
   }
-  .wrap { max-width: 1180px; margin: 0 auto; }
+  .wrap { max-width: 1320px; margin: 0 auto; }
   header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
   h1 { font-size: 20px; font-weight: 700; margin: 0; }
   .status { font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 8px; }
@@ -52,8 +52,8 @@
     70% { box-shadow: 0 0 0 6px rgba(74,222,128,0); }
     100% { box-shadow: 0 0 0 0 rgba(74,222,128,0); }
   }
-  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  @media (max-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 620px) { .grid { grid-template-columns: 1fr; } }
   .card {
     background: var(--card-bg);
@@ -66,7 +66,7 @@
   }
   .card .label { font-size: 13px; color: var(--sub); font-weight: 600; letter-spacing: .02em; }
   .card .sub-label { font-size: 12px; color: var(--sub); margin-top: 2px; }
-  .card .price { font-size: 38px; font-weight: 700; margin: 10px 0 2px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .card .price { font-size: 32px; font-weight: 700; margin: 10px 0 2px; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
   .card .price.loading { opacity: .35; }
   .change-row { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .change-row .arrow { font-size: 13px; }
@@ -93,7 +93,7 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>미국 10년물 국채금리 · WTI 유가 · 나스닥 선물</h1>
+    <h1>미국 10년물 국채금리 · WTI 유가 · 나스닥 선물 · 비트코인</h1>
     <div class="status">
       <span class="dot" id="statusDot"></span>
       <span id="statusText">연결 중...</span>
@@ -140,6 +140,19 @@
       </div>
       <div class="error-msg" id="ndqError"></div>
     </div>
+
+    <div class="card">
+      <div class="label">비트코인</div>
+      <div class="sub-label">Bitcoin · BTC-USD</div>
+      <div class="price loading" id="btcPrice">—</div>
+      <div class="change-row flat" id="btcChange"><span>불러오는 중</span></div>
+      <canvas id="btcChart"></canvas>
+      <div class="meta-row">
+        <span id="btcUpdated">-</span>
+        <span id="btcRange">-</span>
+      </div>
+      <div class="error-msg" id="btcError"></div>
+    </div>
   </div>
 
   <footer>
@@ -157,11 +170,18 @@ const SERIES = {
   tnx: { symbol: "^TNX", isYield: true },
   wti: { symbol: "CL=F", isYield: false },
   ndq: { symbol: "NQ=F", isYield: false },
+  btc: { symbol: "BTC-USD", isYield: false },
 };
 
-function fmtNum(n, isYield) {
+function decimalsFor(isYield, price) {
+  if (isYield) return 3;
+  return Math.abs(price) >= 1000 ? 0 : 2;
+}
+
+function fmtNum(n, isYield, decimals) {
   if (n == null || Number.isNaN(n)) return "—";
-  return isYield ? n.toFixed(3) + "%" : "$" + n.toFixed(2);
+  if (isYield) return n.toFixed(3) + "%";
+  return "$" + n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
 function fmtTime(ts) {
@@ -226,16 +246,21 @@ async function updateCard(key) {
     const prevClose = meta.previousClose ?? meta.chartPreviousClose;
     const closes = result.indicators?.quote?.[0]?.close || [];
 
+    const decimals = decimalsFor(isYield, price);
     const diff = price - prevClose;
     const pct = (diff / prevClose) * 100;
     const dir = diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat";
     const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
+    const diffAbs = Math.abs(diff);
+    const diffFmt = isYield
+      ? diffAbs.toFixed(3) + "%p"
+      : diffAbs.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 
-    priceEl.textContent = fmtNum(price, isYield);
+    priceEl.textContent = fmtNum(price, isYield, decimals);
     priceEl.classList.remove("loading");
 
     changeEl.className = "change-row " + dir;
-    changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${isYield ? diff.toFixed(3) + "%p" : (diff >= 0 ? "+" : "") + diff.toFixed(2)}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
+    changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${diffFmt}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
 
     drawSparkline(chartEl, closes);
 
@@ -244,7 +269,7 @@ async function updateCard(key) {
     const dayLow = meta.regularMarketDayLow || Math.min(...validCloses, price);
     const dayHigh = meta.regularMarketDayHigh || Math.max(...validCloses, price);
     rangeEl.textContent = validCloses.length
-      ? `당일 ${fmtNum(dayLow, isYield)} ~ ${fmtNum(dayHigh, isYield)}`
+      ? `당일 ${fmtNum(dayLow, isYield, decimals)} ~ ${fmtNum(dayHigh, isYield, decimals)}`
       : "";
 
     errorEl.classList.remove("show");
