@@ -149,6 +149,8 @@
   .checklist-title-row { display: flex; align-items: center; justify-content: space-between; }
   .checklist-title-row .checklist-title { margin-bottom: 0; }
   .checklist-body { font-size: 14px; font-weight: 600; }
+  .price-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .price-row .price { margin: 10px 0 2px; }
   .flow-row { display: flex; gap: 8px; margin-top: 12px; }
   .flow-item {
     flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
@@ -316,15 +318,15 @@
           <div class="label" id="stockName">-</div>
           <div class="sub-label" id="stockCode">-</div>
         </div>
-        <div style="display:flex; align-items:center; gap:10px;">
-          <span class="signal-dot" id="stockPriceSignal"></span>
-          <span class="signal-summary" id="stockSummary">
-            <span class="dots" id="stockSummaryDots"></span>
-            <span id="stockSummaryText">확인 중</span>
-          </span>
-        </div>
+        <span class="signal-summary" id="stockSummary">
+          <span class="dots" id="stockSummaryDots"></span>
+          <span id="stockSummaryText">확인 중</span>
+        </span>
       </div>
-      <div class="price" id="stockPrice">-</div>
+      <div class="price-row">
+        <div class="price" id="stockPrice">-</div>
+        <span class="signal-dot" id="stockCandleSignal"></span>
+      </div>
       <div class="change-row flat" id="stockChange"><span>불러오는 중</span></div>
 
       <div class="checklist-item">
@@ -334,15 +336,7 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">1. 당일 상승 양봉</div>
-          <span class="signal-dot" id="stockCandleSignal"></span>
-        </div>
-        <div class="checklist-body" id="stockCandle">-</div>
-      </div>
-
-      <div class="checklist-item">
-        <div class="checklist-title-row">
-          <div class="checklist-title">2. 전일 미국 동일 산업군</div>
+          <div class="checklist-title">1. 전일 미국 동일 산업군</div>
           <span class="signal-dot" id="stockUsSectorSignal"></span>
         </div>
         <div class="checklist-body" id="stockUsSector">-</div>
@@ -350,7 +344,7 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">3. 국내 동일 산업군</div>
+          <div class="checklist-title">2. 국내 동일 산업군</div>
           <span class="signal-dot" id="stockKrSectorSignal"></span>
         </div>
         <div class="checklist-body" id="stockKrSector">-</div>
@@ -358,7 +352,7 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">4. 차트 5일선 위</div>
+          <div class="checklist-title">3. 차트 5일선 위</div>
           <span class="signal-dot" id="stockChartSignal"></span>
         </div>
         <div class="ma-badges">
@@ -379,7 +373,7 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">5. 수급 (개인 · 외국인 · 기관)</div>
+          <div class="checklist-title">4. 수급 (개인 · 외국인 · 기관)</div>
           <span class="signal-dot" id="stockFlowSignal"></span>
         </div>
         <div class="flow-row">
@@ -830,22 +824,11 @@ async function runStockChecklist(code, displayName) {
     const changeEl = document.getElementById("stockChange");
     changeEl.className = "change-row " + dir;
     changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${Math.abs(Math.round(diff)).toLocaleString("ko-KR")}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
-    document.getElementById("stockPriceSignal").className = "signal-dot " + computeSignal(dir, "normal");
-
     const open = quote.open;
-    const candleEl = document.getElementById("stockCandle");
     const candleDir = open == null ? "flat" : price > open ? "up" : price < open ? "down" : "flat";
     const candleSignal = computeSignal(candleDir, "normal");
     document.getElementById("stockCandleSignal").className = "signal-dot " + candleSignal;
     signals.push(candleSignal);
-    candleEl.textContent = open == null
-      ? "시가 정보 없음"
-      : candleDir === "up"
-        ? `양봉 (시가 ₩${Math.round(open).toLocaleString("ko-KR")} → 현재 ₩${Math.round(price).toLocaleString("ko-KR")})`
-        : candleDir === "down"
-          ? `음봉 (시가 ₩${Math.round(open).toLocaleString("ko-KR")} → 현재 ₩${Math.round(price).toLocaleString("ko-KR")})`
-          : `보합 (시가와 동일)`;
-    candleEl.className = "checklist-body " + candleDir;
 
     const info = themeResp.info;
     const usEl = document.getElementById("stockUsSector");
