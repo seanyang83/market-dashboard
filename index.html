@@ -964,6 +964,13 @@ stockQueryInput.addEventListener("keydown", (e) => {
 
 refreshBtn.addEventListener("click", refreshAll);
 refreshAll();
+
+const DEFAULT_STOCK = { code: "000660", name: "SK하이닉스" };
+stockQueryInput.value = DEFAULT_STOCK.name;
+currentStockCode = DEFAULT_STOCK.code;
+currentStockName = DEFAULT_STOCK.name;
+runStockChecklist(currentStockCode, currentStockName);
+
 setInterval(() => {
   refreshAll();
   if (currentStockCode) runStockChecklist(currentStockCode, currentStockName);
