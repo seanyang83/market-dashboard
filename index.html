@@ -109,6 +109,13 @@
     border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   }
   .card-index { grid-column: 1 / -1; }
+  .flow-row { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  .flow-item {
+    flex: 1; min-width: 100px; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 8px 10px;
+  }
+  .flow-label { display: block; font-size: 11px; color: var(--sub); margin-bottom: 2px; }
+  .flow-value { font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
   @media (max-width: 640px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
     .card-compact { padding: 12px 14px; }
@@ -204,6 +211,20 @@
         <span><i class="dot" style="background:var(--ma20)"></i>20일선</span>
         <span><i class="dot" style="background:var(--ma60)"></i>60일선</span>
         <span><i class="dot" style="background:var(--ma120)"></i>120일선</span>
+      </div>
+      <div class="flow-row">
+        <div class="flow-item">
+          <span class="flow-label">개인</span>
+          <span class="flow-value flat" id="kospiFlowIndividual">-</span>
+        </div>
+        <div class="flow-item">
+          <span class="flow-label">외국인</span>
+          <span class="flow-value flat" id="kospiFlowForeign">-</span>
+        </div>
+        <div class="flow-item">
+          <span class="flow-label">기관</span>
+          <span class="flow-value flat" id="kospiFlowInstitution">-</span>
+        </div>
       </div>
       <div class="meta-row">
         <span id="kospiUpdated">-</span>
@@ -421,6 +442,35 @@ async function updateIndexPanel(key) {
   }
 }
 
+function fmtEok(won) {
+  if (won == null || Number.isNaN(won)) return "—";
+  const eok = Math.round(won / 1e8);
+  return (eok > 0 ? "+" : "") + eok.toLocaleString("ko-KR") + "억";
+}
+
+async function updateInvestorFlow(key) {
+  const els = {
+    individual: document.getElementById(key + "FlowIndividual"),
+    foreign: document.getElementById(key + "FlowForeign"),
+    institution: document.getElementById(key + "FlowInstitution"),
+  };
+  if (!els.individual || !els.foreign || !els.institution) return;
+  try {
+    const flow = await fetchJson("/api/kospi/investors");
+    for (const [k, el] of Object.entries(els)) {
+      const v = flow[k];
+      const dir = v > 0 ? "up" : v < 0 ? "down" : "flat";
+      el.textContent = fmtEok(v);
+      el.className = "flow-value " + dir;
+    }
+  } catch (e) {
+    for (const el of Object.values(els)) {
+      el.textContent = "오류";
+      el.className = "flow-value flat";
+    }
+  }
+}
+
 async function updateCard(key) {
   const cfg = SERIES[key];
   const { symbol, isYield } = cfg;
@@ -479,7 +529,7 @@ async function updateCard(key) {
 
     errorEl.classList.remove("show");
 
-    if (cfg.withMA) await updateIndexPanel(key);
+    if (cfg.withMA) await Promise.all([updateIndexPanel(key), updateInvestorFlow(key)]);
 
     return true;
   } catch (e) {

@@ -31,6 +31,14 @@ ALLOWED_INTERVALS = {"1m", "2m", "5m", "15m", "1d"}
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com"}
 NAVER_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI"
 NAVER_HISTORY_URL = "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
+NAVER_INVESTOR_URL = (
+    "https://stock.naver.com/api/domestic/market/trend/daily"
+    "?tradeType=KRX&marketType=KOSPI&startIdx=0&pageSize=1"
+)
+# KRX investor-type codes: 9000 individual, 8000/9001 foreign, everything else
+# (securities/insurance/trust/pension/etc.) rolls up into "institution".
+INVESTOR_INDIVIDUAL = {"9000"}
+INVESTOR_FOREIGN = {"8000", "9001"}
 NAVER_HISTORY_ROW_RE = re.compile(
     rb'<td class="date">(\d{4})\.(\d{2})\.(\d{2})</td>\s*<td class="number_1">([\d,]+\.\d+)</td>'
 )
@@ -48,6 +56,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_kospi_quote()
         elif self.path.startswith("/api/kospi/history"):
             self.handle_kospi_history()
+        elif self.path.startswith("/api/kospi/investors"):
+            self.handle_kospi_investors()
         else:
             super().do_GET()
 
@@ -108,6 +118,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "low": float(d["lowPriceRaw"]),
                 "time": epoch,
                 "marketStatus": d.get("marketStatus"),
+            })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_kospi_investors(self):
+        req = urllib.request.Request(NAVER_INVESTOR_URL, headers=NAVER_HEADERS)
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read())
+            row = data["content"][0]
+            amounts = {a["investorGubun"]: int(a["diffValue"]) for a in row["netAmounts"]}
+            individual = sum(v for k, v in amounts.items() if k in INVESTOR_INDIVIDUAL)
+            foreign = sum(v for k, v in amounts.items() if k in INVESTOR_FOREIGN)
+            institution = sum(amounts.values()) - individual - foreign
+            self.send_json(200, {
+                "date": row.get("bizdate"),
+                "individual": individual,
+                "foreign": foreign,
+                "institution": institution,
             })
         except Exception as e:
             self.send_json(502, {"error": str(e)})
