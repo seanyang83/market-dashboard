@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>종가베팅 모니터링</title>
+<title>종가베팅 체크리스트</title>
 <style>
   :root {
     --bg: #f4f5f7;
@@ -114,6 +114,7 @@
     background: color-mix(in srgb, currentColor 14%, transparent);
     border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   }
+  .badge[hidden] { display: none; }
   .card-index { grid-column: 1 / -1; }
   .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
   .signal-dot {
@@ -133,6 +134,9 @@
   .signal-summary .dots span.red { background: var(--tl-red); }
   .signal-summary .dots span.yellow { background: var(--tl-yellow); }
   .signal-summary.all-green { border-color: var(--tl-green); color: var(--tl-green); font-weight: 700; }
+  .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 12px; }
+  .section-head:not(:first-of-type) { margin-top: 28px; }
+  .section-title { font-size: 15px; font-weight: 700; margin: 0; }
   .stock-panel { margin-top: 16px; }
   .stock-search-row { display: flex; gap: 8px; margin-top: 12px; }
   .stock-search-row input {
@@ -172,17 +176,21 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>종가베팅 모니터링</h1>
+    <h1>종가베팅 체크리스트</h1>
     <div class="status">
-      <span class="signal-summary" id="signalSummary">
-        <span class="dots" id="signalSummaryDots"></span>
-        <span id="signalSummaryText">신호 확인 중</span>
-      </span>
       <span class="dot" id="statusDot"></span>
       <span id="statusText">연결 중...</span>
       <button class="refresh-btn" id="refreshBtn">새로고침</button>
     </div>
   </header>
+
+  <div class="section-head">
+    <h2 class="section-title">매크로 체크</h2>
+    <span class="signal-summary" id="signalSummary">
+      <span class="dots" id="signalSummaryDots"></span>
+      <span id="signalSummaryText">확인 중</span>
+    </span>
+  </div>
 
   <div class="grid">
     <div class="card card-compact">
@@ -258,8 +266,9 @@
       <div class="price loading" id="kospiPrice">—</div>
       <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
       <div class="ma-badges">
-        <span class="badge flat" id="kospiMa5Badge">배열 확인 중</span>
+        <span class="badge flat" id="kospiMa5Badge">확인 중</span>
         <span class="badge flat" id="kospiAlignBadge">순위 확인 중</span>
+        <span class="badge up" id="kospiReboundBadge" hidden>이평선 반등</span>
       </div>
       <canvas id="kospiChart" class="chart-lg"></canvas>
       <div class="legend">
@@ -319,8 +328,16 @@
       <div class="change-row flat" id="stockChange"><span>불러오는 중</span></div>
 
       <div class="checklist-item">
-        <div class="checklist-title">1. 테마</div>
+        <div class="checklist-title">테마</div>
         <div class="checklist-body" id="stockTheme">-</div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title-row">
+          <div class="checklist-title">1. 당일 상승 양봉</div>
+          <span class="signal-dot" id="stockCandleSignal"></span>
+        </div>
+        <div class="checklist-body" id="stockCandle">-</div>
       </div>
 
       <div class="checklist-item">
@@ -333,7 +350,7 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">3. 오늘 국내 동일 산업군</div>
+          <div class="checklist-title">3. 국내 동일 산업군</div>
           <span class="signal-dot" id="stockKrSectorSignal"></span>
         </div>
         <div class="checklist-body" id="stockKrSector">-</div>
@@ -341,12 +358,13 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">4. 차트 위치 · 이평선 정배열</div>
+          <div class="checklist-title">4. 차트 5일선 위</div>
           <span class="signal-dot" id="stockChartSignal"></span>
         </div>
         <div class="ma-badges">
           <span class="badge flat" id="stockVerdict">확인 중</span>
           <span class="badge flat" id="stockRank">확인 중</span>
+          <span class="badge up" id="stockReboundBadge" hidden>이평선 반등</span>
         </div>
         <canvas id="stockChart" class="chart-lg"></canvas>
         <div class="legend">
@@ -361,7 +379,7 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">5. 오늘 수급 (개인 · 외국인 · 기관)</div>
+          <div class="checklist-title">5. 수급 (개인 · 외국인 · 기관)</div>
           <span class="signal-dot" id="stockFlowSignal"></span>
         </div>
         <div class="flow-row">
@@ -409,6 +427,13 @@ function computeSignal(dir, sentiment) {
   if (dir === "flat") return "yellow";
   const favorable = sentiment === "inverse" ? dir === "down" : dir === "up";
   return favorable ? "green" : "red";
+}
+
+function scoreFor(signal) {
+  if (signal === "green") return 20;
+  if (signal === "yellow") return 10;
+  if (signal === "red") return 0;
+  return 10;
 }
 
 function decimalsFor(cfg, price) {
@@ -545,11 +570,12 @@ function buildRankChain(price, mas, priceLabel) {
     .join(` <span class="flat">&gt;</span> `);
 }
 
-async function updateIndexPanel(key) {
+async function updateIndexPanel(key, dayLow) {
   const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
+  const reboundEl = document.getElementById(key + "ReboundBadge");
   const chartEl = document.getElementById(key + "Chart");
-  if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return;
+  if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return null;
   try {
     const history = await fetchJson("/api/kospi/history");
     const closes = (history.closes || []).map((c) => c.close).filter((v) => v != null);
@@ -576,12 +602,17 @@ async function updateIndexPanel(key) {
       { label: "120", value: ma120 },
     ];
 
-    const verdict = computeAlignmentVerdict(maList);
-    ma5BadgeEl.textContent = verdict.text;
-    ma5BadgeEl.className = "badge " + verdict.cls;
+    let zoneLabel, zoneSignal;
+    if (last >= ma5) { zoneLabel = "2배베팅"; zoneSignal = "green"; }
+    else if (last > ma20) { zoneLabel = "현금베팅"; zoneSignal = "yellow"; }
+    else { zoneLabel = "저점 현금베팅"; zoneSignal = "red"; }
+    ma5BadgeEl.textContent = zoneLabel;
+    ma5BadgeEl.className = "badge " + zoneSignal;
 
     alignBadgeEl.className = "badge flat";
     alignBadgeEl.innerHTML = buildRankChain(last, maList);
+
+    if (reboundEl) reboundEl.hidden = !(dayLow != null && dayLow <= ma5 && last > ma5);
 
     const DISPLAY_DAYS = 25;
     const sliceFrom = Math.max(0, closes.length - DISPLAY_DAYS);
@@ -593,11 +624,14 @@ async function updateIndexPanel(key) {
       { values: ma5Arr.slice(sliceFrom), color: cssVar("--ma5"), width: 1.5 },
       { values: closes.slice(sliceFrom), color: cssVar("--up"), width: 2 },
     ]);
+    return zoneSignal;
   } catch (e) {
-    ma5BadgeEl.textContent = "배열 오류";
+    ma5BadgeEl.textContent = "확인 오류";
     ma5BadgeEl.className = "badge flat";
     alignBadgeEl.textContent = "순위 오류";
     alignBadgeEl.className = "badge flat";
+    if (reboundEl) reboundEl.hidden = true;
+    return null;
   }
 }
 
@@ -680,8 +714,7 @@ async function updateCard(key) {
     changeEl.className = "change-row " + dir;
     changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${diffFmt}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
 
-    const signal = computeSignal(dir, cfg.sentiment);
-    if (signalEl) signalEl.className = "signal-dot " + signal;
+    let signal = computeSignal(dir, cfg.sentiment);
 
     if (!cfg.withMA) drawSparkline(chartEl, closes);
 
@@ -692,7 +725,12 @@ async function updateCard(key) {
 
     errorEl.classList.remove("show");
 
-    if (cfg.withMA) await Promise.all([updateIndexPanel(key), updateInvestorFlow(key)]);
+    if (cfg.withMA) {
+      const [zoneSignal] = await Promise.all([updateIndexPanel(key, dayLow), updateInvestorFlow(key)]);
+      if (zoneSignal) signal = zoneSignal;
+    }
+
+    if (signalEl) signalEl.className = "signal-dot " + signal;
 
     return { ok: true, signal };
   } catch (e) {
@@ -714,9 +752,10 @@ function renderSignalSummary(summaryEl, dotsEl, textEl, signals) {
   const known = signals.filter((s) => s != null);
   dotsEl.innerHTML = signals.map((s) => `<span class="${s || ""}"></span>`).join("");
 
-  const greenCount = known.filter((s) => s === "green").length;
-  const allGreen = known.length === signals.length && greenCount === signals.length;
-  textEl.textContent = `${greenCount}/${signals.length} 초록`;
+  const score = signals.reduce((sum, s) => sum + scoreFor(s), 0);
+  const maxScore = signals.length * 20;
+  const allGreen = known.length === signals.length && known.every((s) => s === "green");
+  textEl.textContent = `${score}/${maxScore}점`;
   summaryEl.className = "signal-summary" + (allGreen ? " all-green" : "");
 }
 
@@ -791,9 +830,22 @@ async function runStockChecklist(code, displayName) {
     const changeEl = document.getElementById("stockChange");
     changeEl.className = "change-row " + dir;
     changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${Math.abs(Math.round(diff)).toLocaleString("ko-KR")}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
-    const priceSignal = computeSignal(dir, "normal");
-    document.getElementById("stockPriceSignal").className = "signal-dot " + priceSignal;
-    signals.push(priceSignal);
+    document.getElementById("stockPriceSignal").className = "signal-dot " + computeSignal(dir, "normal");
+
+    const open = quote.open;
+    const candleEl = document.getElementById("stockCandle");
+    const candleDir = open == null ? "flat" : price > open ? "up" : price < open ? "down" : "flat";
+    const candleSignal = computeSignal(candleDir, "normal");
+    document.getElementById("stockCandleSignal").className = "signal-dot " + candleSignal;
+    signals.push(candleSignal);
+    candleEl.textContent = open == null
+      ? "시가 정보 없음"
+      : candleDir === "up"
+        ? `양봉 (시가 ₩${Math.round(open).toLocaleString("ko-KR")} → 현재 ₩${Math.round(price).toLocaleString("ko-KR")})`
+        : candleDir === "down"
+          ? `음봉 (시가 ₩${Math.round(open).toLocaleString("ko-KR")} → 현재 ₩${Math.round(price).toLocaleString("ko-KR")})`
+          : `보합 (시가와 동일)`;
+    candleEl.className = "checklist-body " + candleDir;
 
     const info = themeResp.info;
     const usEl = document.getElementById("stockUsSector");
@@ -878,6 +930,11 @@ async function runStockChecklist(code, displayName) {
       document.getElementById("stockChartSignal").className = "signal-dot " + chartSignal;
       signals.push(chartSignal);
 
+      const stockReboundEl = document.getElementById("stockReboundBadge");
+      if (stockReboundEl) {
+        stockReboundEl.hidden = !(quote.low != null && quote.low <= maList[0].value && last > maList[0].value);
+      }
+
       const DISPLAY_DAYS = 25;
       const sliceFrom = Math.max(0, closes.length - DISPLAY_DAYS);
       drawMultiLine(document.getElementById("stockChart"), [
@@ -894,6 +951,8 @@ async function runStockChecklist(code, displayName) {
       rankEl.textContent = "-";
       rankEl.className = "badge flat";
       document.getElementById("stockChartSignal").className = "signal-dot";
+      const stockReboundEl = document.getElementById("stockReboundBadge");
+      if (stockReboundEl) stockReboundEl.hidden = true;
     }
 
     if (investors) {
