@@ -21,6 +21,9 @@
     --ma20: #06b6d4;
     --ma60: #16a34a;
     --ma120: #64748b;
+    --tl-green: #16a34a;
+    --tl-red: #dc2626;
+    --tl-yellow: #eab308;
     --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   }
   @media (prefers-color-scheme: dark) {
@@ -40,6 +43,9 @@
       --ma20: #22d3ee;
       --ma60: #4ade80;
       --ma120: #94a3b8;
+      --tl-green: #4ade80;
+      --tl-red: #f87171;
+      --tl-yellow: #fbbf24;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
     }
   }
@@ -109,6 +115,24 @@
     border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   }
   .card-index { grid-column: 1 / -1; }
+  .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .signal-dot {
+    width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; margin-top: 2px;
+    background: var(--flat); box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
+  }
+  .signal-dot.green { background: var(--tl-green); color: var(--tl-green); }
+  .signal-dot.red { background: var(--tl-red); color: var(--tl-red); }
+  .signal-dot.yellow { background: var(--tl-yellow); color: var(--tl-yellow); }
+  .signal-summary {
+    font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px;
+    border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px;
+  }
+  .signal-summary .dots { display: flex; gap: 3px; }
+  .signal-summary .dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--flat); }
+  .signal-summary .dots span.green { background: var(--tl-green); }
+  .signal-summary .dots span.red { background: var(--tl-red); }
+  .signal-summary .dots span.yellow { background: var(--tl-yellow); }
+  .signal-summary.all-green { border-color: var(--tl-green); color: var(--tl-green); font-weight: 700; }
   .flow-row { display: flex; gap: 8px; margin-top: 12px; }
   .flow-item {
     flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
@@ -138,6 +162,10 @@
   <header>
     <h1>종가베팅 모니터링</h1>
     <div class="status">
+      <span class="signal-summary" id="signalSummary">
+        <span class="dots" id="signalSummaryDots"></span>
+        <span id="signalSummaryText">신호 확인 중</span>
+      </span>
       <span class="dot" id="statusDot"></span>
       <span id="statusText">연결 중...</span>
       <button class="refresh-btn" id="refreshBtn">새로고침</button>
@@ -146,7 +174,10 @@
 
   <div class="grid">
     <div class="card card-compact">
-      <div class="label">미국 10년물 국채금리 (US10Y)</div>
+      <div class="card-head">
+        <div class="label">미국 10년물 국채금리 (US10Y)</div>
+        <span class="signal-dot" id="tnxSignal"></span>
+      </div>
       <div class="sub-label">CBOE 10-Year Treasury Note Yield · ^TNX</div>
       <div class="price loading" id="tnxPrice">—</div>
       <div class="change-row flat" id="tnxChange"><span>불러오는 중</span></div>
@@ -159,7 +190,10 @@
     </div>
 
     <div class="card card-compact">
-      <div class="label">WTI 원유 선물</div>
+      <div class="card-head">
+        <div class="label">WTI 원유 선물</div>
+        <span class="signal-dot" id="wtiSignal"></span>
+      </div>
       <div class="sub-label">NYMEX Crude Oil Futures · CL=F (USD/bbl)</div>
       <div class="price loading" id="wtiPrice">—</div>
       <div class="change-row flat" id="wtiChange"><span>불러오는 중</span></div>
@@ -172,7 +206,10 @@
     </div>
 
     <div class="card card-compact">
-      <div class="label">나스닥 100 선물</div>
+      <div class="card-head">
+        <div class="label">나스닥 100 선물</div>
+        <span class="signal-dot" id="ndqSignal"></span>
+      </div>
       <div class="sub-label">Nasdaq 100 E-mini Futures · NQ=F</div>
       <div class="price loading" id="ndqPrice">—</div>
       <div class="change-row flat" id="ndqChange"><span>불러오는 중</span></div>
@@ -185,7 +222,10 @@
     </div>
 
     <div class="card card-compact">
-      <div class="label">비트코인</div>
+      <div class="card-head">
+        <div class="label">비트코인</div>
+        <span class="signal-dot" id="btcSignal"></span>
+      </div>
       <div class="sub-label">Bitcoin · BTC-USD</div>
       <div class="price loading" id="btcPrice">—</div>
       <div class="change-row flat" id="btcChange"><span>불러오는 중</span></div>
@@ -198,7 +238,10 @@
     </div>
 
     <div class="card card-index">
-      <div class="label">코스피 지수</div>
+      <div class="card-head">
+        <div class="label">코스피 지수</div>
+        <span class="signal-dot" id="kospiSignal"></span>
+      </div>
       <div class="sub-label">KOSPI Composite Index · ^KS11</div>
       <div class="price loading" id="kospiPrice">—</div>
       <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
@@ -248,13 +291,20 @@
 <script>
 const REFRESH_MS = 30000;
 
+// sentiment "inverse": falling is favorable (green); "normal": rising is favorable (green)
 const SERIES = {
-  tnx: { symbol: "^TNX", isYield: true },
-  wti: { symbol: "CL=F", isYield: false },
-  ndq: { symbol: "NQ=F", isYield: false },
-  btc: { symbol: "BTC-USD", isYield: false },
-  kospi: { isYield: false, prefix: "", decimals: 2, withMA: true, source: "naver" },
+  tnx: { symbol: "^TNX", isYield: true, sentiment: "inverse" },
+  wti: { symbol: "CL=F", isYield: false, sentiment: "inverse" },
+  ndq: { symbol: "NQ=F", isYield: false, sentiment: "normal" },
+  btc: { symbol: "BTC-USD", isYield: false, sentiment: "normal" },
+  kospi: { isYield: false, prefix: "", decimals: 2, withMA: true, source: "naver", sentiment: "normal" },
 };
+
+function computeSignal(dir, sentiment) {
+  if (dir === "flat") return "yellow";
+  const favorable = sentiment === "inverse" ? dir === "down" : dir === "up";
+  return favorable ? "green" : "red";
+}
 
 function decimalsFor(cfg, price) {
   if (cfg.decimals != null) return cfg.decimals;
@@ -483,6 +533,7 @@ async function updateCard(key) {
   const updatedEl = document.getElementById(key + "Updated");
   const rangeEl = document.getElementById(key + "Range");
   const errorEl = document.getElementById(key + "Error");
+  const signalEl = document.getElementById(key + "Signal");
   try {
     let price, prevClose, dayLow, dayHigh, updatedTs;
     let closes = [];
@@ -523,6 +574,9 @@ async function updateCard(key) {
     changeEl.className = "change-row " + dir;
     changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${diffFmt}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
 
+    const signal = computeSignal(dir, cfg.sentiment);
+    if (signalEl) signalEl.className = "signal-dot " + signal;
+
     if (!cfg.withMA) drawSparkline(chartEl, closes);
 
     updatedEl.textContent = "업데이트: " + fmtTime(updatedTs);
@@ -534,23 +588,40 @@ async function updateCard(key) {
 
     if (cfg.withMA) await Promise.all([updateIndexPanel(key), updateInvestorFlow(key)]);
 
-    return true;
+    return { ok: true, signal };
   } catch (e) {
     errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message;
     errorEl.classList.add("show");
-    return false;
+    if (signalEl) signalEl.className = "signal-dot";
+    return { ok: false, signal: null };
   }
 }
 
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 const refreshBtn = document.getElementById("refreshBtn");
+const signalSummaryEl = document.getElementById("signalSummary");
+const signalSummaryDotsEl = document.getElementById("signalSummaryDots");
+const signalSummaryTextEl = document.getElementById("signalSummaryText");
+
+function updateSignalSummary(signals) {
+  const known = signals.filter((s) => s != null);
+  signalSummaryDotsEl.innerHTML = signals.map((s) => `<span class="${s || ""}"></span>`).join("");
+
+  const greenCount = known.filter((s) => s === "green").length;
+  const allGreen = known.length === signals.length && greenCount === signals.length;
+  signalSummaryTextEl.textContent = `${greenCount}/${signals.length} 초록`;
+  signalSummaryEl.className = "signal-summary" + (allGreen ? " all-green" : "");
+}
 
 async function refreshAll() {
   refreshBtn.disabled = true;
   statusText.textContent = "갱신 중...";
-  const results = await Promise.all(Object.keys(SERIES).map(updateCard));
-  const okCount = results.filter(Boolean).length;
+  const keys = Object.keys(SERIES);
+  const results = await Promise.all(keys.map(updateCard));
+  const okCount = results.filter((r) => r.ok).length;
+
+  updateSignalSummary(results.map((r) => r.signal));
 
   if (okCount === results.length) {
     statusDot.className = "dot live";
