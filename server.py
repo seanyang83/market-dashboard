@@ -376,11 +376,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not data:
                 raise ValueError("no data for code")
             row = data[0]
+            close_price = int(row["closePrice"])
+            individual_qty = int(row["individualPureBuyQuant"])
+            foreign_qty = int(row["foreignerPureBuyQuant"])
+            institution_qty = int(row["organPureBuyQuant"])
+            # Naver only gives net share quantity per investor type, not won
+            # value, so approximate the money amount using that day's close
+            # price (same convention the market-wide /kospi/investors uses).
             self.send_json(200, {
                 "date": row.get("bizdate"),
-                "individual": int(row["individualPureBuyQuant"]),
-                "foreign": int(row["foreignerPureBuyQuant"]),
-                "institution": int(row["organPureBuyQuant"]),
+                "individual": individual_qty * close_price,
+                "foreign": foreign_qty * close_price,
+                "institution": institution_qty * close_price,
+                "individualQty": individual_qty,
+                "foreignQty": foreign_qty,
+                "institutionQty": institution_qty,
             })
         except Exception as e:
             self.send_json(502, {"error": str(e)})
