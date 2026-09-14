@@ -115,6 +115,11 @@
     border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   }
   .badge[hidden] { display: none; }
+  .badge-alert { font-weight: 800; animation: badgeAlertPulse 1.6s ease-in-out infinite; }
+  @keyframes badgeAlertPulse {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+    50% { box-shadow: 0 0 0 5px color-mix(in srgb, currentColor 0%, transparent); }
+  }
   .card-index { grid-column: 1 / -1; }
   .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
   .signal-dot {
@@ -137,6 +142,15 @@
   .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 12px; }
   .section-head:not(:first-of-type) { margin-top: 28px; }
   .section-title { font-size: 15px; font-weight: 700; margin: 0; }
+  .grid[hidden] { display: none; }
+  .collapse-btn {
+    border: 1px solid var(--border); background: var(--card-bg); color: var(--text);
+    width: 28px; height: 28px; border-radius: 999px; cursor: pointer;
+    font-size: 13px; line-height: 1; display: flex; align-items: center; justify-content: center;
+    transition: transform .15s ease;
+  }
+  .collapse-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .collapse-btn.collapsed { transform: rotate(-180deg); }
   .stock-panel { margin-top: 16px; }
   .stock-search-row { display: flex; gap: 8px; margin-top: 12px; }
   .stock-search-row input {
@@ -188,13 +202,16 @@
 
   <div class="section-head">
     <h2 class="section-title">매크로 체크</h2>
-    <span class="signal-summary" id="signalSummary">
-      <span class="dots" id="signalSummaryDots"></span>
-      <span id="signalSummaryText">확인 중</span>
-    </span>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="signal-summary" id="signalSummary">
+        <span class="dots" id="signalSummaryDots"></span>
+        <span id="signalSummaryText">확인 중</span>
+      </span>
+      <button class="collapse-btn" id="macroCollapseBtn" aria-label="매크로 체크 접기/펼치기" aria-expanded="true">▾</button>
+    </div>
   </div>
 
-  <div class="grid">
+  <div class="grid" id="macroGrid">
     <div class="card card-compact">
       <div class="card-head">
         <div class="label">미국 10년물 국채금리 (US10Y)</div>
@@ -599,9 +616,9 @@ async function updateIndexPanel(key, dayLow) {
     let zoneLabel, zoneSignal;
     if (last >= ma5) { zoneLabel = "2배베팅"; zoneSignal = "green"; }
     else if (last > ma20) { zoneLabel = "현금베팅"; zoneSignal = "yellow"; }
-    else { zoneLabel = "저점 현금베팅"; zoneSignal = "red"; }
+    else { zoneLabel = "🔻 저점 현금베팅"; zoneSignal = "red"; }
     ma5BadgeEl.textContent = zoneLabel;
-    ma5BadgeEl.className = "badge " + zoneSignal;
+    ma5BadgeEl.className = "badge " + zoneSignal + (zoneSignal === "red" ? " badge-alert" : "");
 
     alignBadgeEl.className = "badge flat";
     alignBadgeEl.innerHTML = buildRankChain(last, maList);
@@ -1002,6 +1019,15 @@ async function handleStockSearch() {
 stockSearchBtn.addEventListener("click", handleStockSearch);
 stockQueryInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") handleStockSearch();
+});
+
+const macroGrid = document.getElementById("macroGrid");
+const macroCollapseBtn = document.getElementById("macroCollapseBtn");
+macroCollapseBtn.addEventListener("click", () => {
+  const collapsed = !macroGrid.hidden;
+  macroGrid.hidden = collapsed;
+  macroCollapseBtn.classList.toggle("collapsed", collapsed);
+  macroCollapseBtn.setAttribute("aria-expanded", String(!collapsed));
 });
 
 refreshBtn.addEventListener("click", refreshAll);
