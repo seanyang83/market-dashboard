@@ -52,6 +52,85 @@ KOSPI_HISTORY_MAX_PAGES = 30
 KOSPI_HISTORY_CACHE_TTL = 300
 _kospi_history_cache = {"data": None, "ts": 0}
 
+# --- Single-stock checklist feature ---
+NAVER_STOCK_SEARCH_URL = "https://ac.stock.naver.com/ac?q={query}&target=stock"
+NAVER_STOCK_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
+NAVER_STOCK_HISTORY_URL = "https://finance.naver.com/item/sise_day.naver?code={code}&page={page}"
+NAVER_STOCK_INVESTOR_URL = (
+    "https://stock.naver.com/api/domestic/detail/{code}/trend?tradeType=KRX&startIdx=0&pageSize=1"
+)
+STOCK_CODE_RE = re.compile(r"^[0-9A-Z]{6}$")
+STOCK_HISTORY_ROW_RE = re.compile(
+    rb'<td align="center"><span class="tah p10 gray03">(\d{4})\.(\d{2})\.(\d{2})</span></td>\s*'
+    rb'<td class="num"><span class="tah p11">([\d,]+)</span></td>'
+)
+STOCK_HISTORY_MIN_DAYS = 150
+STOCK_HISTORY_MAX_PAGES = 20
+STOCK_HISTORY_CACHE_TTL = 300
+_stock_history_cache = {}  # code -> {"data": [...], "ts": epoch}
+
+# Naver has no clean public "theme" API, so this is a small curated map of
+# well-known large-caps to a representative domestic ETF (today's sector
+# move) and US ETF (yesterday's close, via the existing Yahoo proxy) per
+# theme. Anything not listed here just skips the theme/sector checklist
+# items rather than guessing.
+STOCK_THEMES = {
+    "000660": {"name": "SK하이닉스", "theme": "반도체",
+               "krProxy": {"code": "091160", "name": "KODEX 반도체"},
+               "usProxy": {"symbol": "SOXX", "name": "iShares Semiconductor ETF"}},
+    "005930": {"name": "삼성전자", "theme": "반도체",
+               "krProxy": {"code": "091160", "name": "KODEX 반도체"},
+               "usProxy": {"symbol": "SOXX", "name": "iShares Semiconductor ETF"}},
+    "373220": {"name": "LG에너지솔루션", "theme": "2차전지",
+               "krProxy": {"code": "305540", "name": "TIGER 2차전지테마"},
+               "usProxy": {"symbol": "LIT", "name": "Global X Lithium & Battery Tech ETF"}},
+    "006400": {"name": "삼성SDI", "theme": "2차전지",
+               "krProxy": {"code": "305540", "name": "TIGER 2차전지테마"},
+               "usProxy": {"symbol": "LIT", "name": "Global X Lithium & Battery Tech ETF"}},
+    "247540": {"name": "에코프로비엠", "theme": "2차전지",
+               "krProxy": {"code": "305540", "name": "TIGER 2차전지테마"},
+               "usProxy": {"symbol": "LIT", "name": "Global X Lithium & Battery Tech ETF"}},
+    "086520": {"name": "에코프로", "theme": "2차전지",
+               "krProxy": {"code": "305540", "name": "TIGER 2차전지테마"},
+               "usProxy": {"symbol": "LIT", "name": "Global X Lithium & Battery Tech ETF"}},
+    "005380": {"name": "현대차", "theme": "자동차",
+               "krProxy": {"code": "091180", "name": "KODEX 자동차"},
+               "usProxy": {"symbol": "CARZ", "name": "First Trust Future Vehicles & Tech ETF"}},
+    "000270": {"name": "기아", "theme": "자동차",
+               "krProxy": {"code": "091180", "name": "KODEX 자동차"},
+               "usProxy": {"symbol": "CARZ", "name": "First Trust Future Vehicles & Tech ETF"}},
+    "035420": {"name": "NAVER", "theme": "인터넷/플랫폼",
+               "krProxy": None,
+               "usProxy": {"symbol": "XLK", "name": "Technology Select Sector SPDR"}},
+    "035720": {"name": "카카오", "theme": "인터넷/플랫폼",
+               "krProxy": None,
+               "usProxy": {"symbol": "XLK", "name": "Technology Select Sector SPDR"}},
+    "068270": {"name": "셀트리온", "theme": "바이오",
+               "krProxy": {"code": "266420", "name": "KODEX 헬스케어"},
+               "usProxy": {"symbol": "XBI", "name": "SPDR S&P Biotech ETF"}},
+    "207940": {"name": "삼성바이오로직스", "theme": "바이오",
+               "krProxy": {"code": "266420", "name": "KODEX 헬스케어"},
+               "usProxy": {"symbol": "XBI", "name": "SPDR S&P Biotech ETF"}},
+    "105560": {"name": "KB금융", "theme": "금융",
+               "krProxy": {"code": "091170", "name": "KODEX 은행"},
+               "usProxy": {"symbol": "XLF", "name": "Financial Select Sector SPDR"}},
+    "055550": {"name": "신한지주", "theme": "금융",
+               "krProxy": {"code": "091170", "name": "KODEX 은행"},
+               "usProxy": {"symbol": "XLF", "name": "Financial Select Sector SPDR"}},
+    "012450": {"name": "한화에어로스페이스", "theme": "방산",
+               "krProxy": {"code": "449450", "name": "PLUS K방산"},
+               "usProxy": {"symbol": "ITA", "name": "iShares U.S. Aerospace & Defense ETF"}},
+    "079550": {"name": "LIG넥스원", "theme": "방산",
+               "krProxy": {"code": "449450", "name": "PLUS K방산"},
+               "usProxy": {"symbol": "ITA", "name": "iShares U.S. Aerospace & Defense ETF"}},
+    "042660": {"name": "한화오션", "theme": "조선",
+               "krProxy": {"code": "0115D0", "name": "KODEX 조선TOP10"}, "usProxy": None},
+    "329180": {"name": "HD현대중공업", "theme": "조선",
+               "krProxy": {"code": "0115D0", "name": "KODEX 조선TOP10"}, "usProxy": None},
+    "090430": {"name": "아모레퍼시픽", "theme": "화장품",
+               "krProxy": {"code": "228790", "name": "TIGER 화장품"}, "usProxy": None},
+}
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -63,8 +142,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_kospi_history()
         elif self.path.startswith("/api/kospi/investors"):
             self.handle_kospi_investors()
+        elif self.path.startswith("/api/stock/search"):
+            self.handle_stock_search()
+        elif self.path.startswith("/api/stock/quote"):
+            self.handle_stock_quote()
+        elif self.path.startswith("/api/stock/history"):
+            self.handle_stock_history()
+        elif self.path.startswith("/api/stock/investors"):
+            self.handle_stock_investors()
+        elif self.path.startswith("/api/stock/theme"):
+            self.handle_stock_theme()
         else:
             super().do_GET()
+
+    def query_param(self, name):
+        query = urllib.parse.urlparse(self.path).query
+        return urllib.parse.parse_qs(query).get(name, [""])[0]
+
+    def require_stock_code(self):
+        code = self.query_param("code").strip().upper()
+        if not STOCK_CODE_RE.match(code):
+            self.send_json(400, {"error": "invalid or missing code"})
+            return None
+        return code
 
     def handle_quote(self):
         query = urllib.parse.urlparse(self.path).query
@@ -178,6 +278,119 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(200, {"closes": cached})
             else:
                 self.send_json(502, {"error": str(e)})
+
+    def handle_stock_search(self):
+        q = self.query_param("q").strip()
+        if not q:
+            self.send_json(400, {"error": "missing q"})
+            return
+        url = NAVER_STOCK_SEARCH_URL.format(query=urllib.parse.quote(q))
+        req = urllib.request.Request(url, headers=NAVER_HEADERS)
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read())
+            items = [
+                {"code": it["code"], "name": it["name"], "market": it.get("typeName")}
+                for it in data.get("items", [])
+                if it.get("category") == "stock"
+            ]
+            self.send_json(200, {"items": items[:10]})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_stock_quote(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        req = urllib.request.Request(NAVER_STOCK_QUOTE_URL.format(code=code), headers=NAVER_HEADERS)
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read())
+            d = data["datas"][0]
+            price = float(d["closePriceRaw"])
+            change = float(d["compareToPreviousClosePriceRaw"])
+            epoch = None
+            traded_at = d.get("localTradedAt")
+            if traded_at:
+                try:
+                    epoch = int(datetime.fromisoformat(traded_at).timestamp())
+                except ValueError:
+                    epoch = None
+            self.send_json(200, {
+                "name": d.get("stockName"),
+                "price": price,
+                "prevClose": price - change,
+                "open": float(d["openPriceRaw"]),
+                "high": float(d["highPriceRaw"]),
+                "low": float(d["lowPriceRaw"]),
+                "time": epoch,
+                "marketStatus": d.get("marketStatus"),
+            })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_stock_history(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        now = time.time()
+        cache_entry = _stock_history_cache.get(code)
+        if cache_entry and now - cache_entry["ts"] < STOCK_HISTORY_CACHE_TTL:
+            self.send_json(200, {"closes": cache_entry["data"]})
+            return
+        try:
+            by_date = {}
+            for page in range(1, STOCK_HISTORY_MAX_PAGES + 1):
+                url = NAVER_STOCK_HISTORY_URL.format(code=code, page=page)
+                req = urllib.request.Request(url, headers=NAVER_HEADERS)
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    body = resp.read()
+                matches = STOCK_HISTORY_ROW_RE.findall(body)
+                if not matches:
+                    break
+                for y, m, d, price in matches:
+                    date = f"{y.decode()}-{m.decode()}-{d.decode()}"
+                    by_date[date] = float(price.decode().replace(",", ""))
+                if len(by_date) >= STOCK_HISTORY_MIN_DAYS:
+                    break
+
+            closes = [{"date": d, "close": by_date[d]} for d in sorted(by_date)]
+            if len(closes) < 20:
+                raise ValueError("insufficient history rows scraped")
+            _stock_history_cache[code] = {"data": closes, "ts": now}
+            self.send_json(200, {"closes": closes})
+        except Exception as e:
+            if cache_entry:
+                self.send_json(200, {"closes": cache_entry["data"]})
+            else:
+                self.send_json(502, {"error": str(e)})
+
+    def handle_stock_investors(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        req = urllib.request.Request(NAVER_STOCK_INVESTOR_URL.format(code=code), headers=NAVER_HEADERS)
+        try:
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read())
+            if not data:
+                raise ValueError("no data for code")
+            row = data[0]
+            self.send_json(200, {
+                "date": row.get("bizdate"),
+                "individual": int(row["individualPureBuyQuant"]),
+                "foreign": int(row["foreignerPureBuyQuant"]),
+                "institution": int(row["organPureBuyQuant"]),
+            })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_stock_theme(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        info = STOCK_THEMES.get(code)
+        self.send_json(200, {"found": info is not None, "info": info})
 
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()

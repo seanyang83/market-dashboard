@@ -133,6 +133,16 @@
   .signal-summary .dots span.red { background: var(--tl-red); }
   .signal-summary .dots span.yellow { background: var(--tl-yellow); }
   .signal-summary.all-green { border-color: var(--tl-green); color: var(--tl-green); font-weight: 700; }
+  .stock-panel { margin-top: 16px; }
+  .stock-search-row { display: flex; gap: 8px; margin-top: 12px; }
+  .stock-search-row input {
+    flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  .stock-search-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .checklist-item { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .checklist-title { font-size: 12px; font-weight: 700; color: var(--sub); margin-bottom: 6px; }
+  .checklist-body { font-size: 14px; font-weight: 600; }
   .flow-row { display: flex; gap: 8px; margin-top: 12px; }
   .flow-item {
     flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--border);
@@ -277,6 +287,84 @@
         <span id="kospiRange">-</span>
       </div>
       <div class="error-msg" id="kospiError"></div>
+    </div>
+  </div>
+
+  <div class="card stock-panel">
+    <div class="label">종목 체크리스트</div>
+    <div class="sub-label">종목명을 입력하면 테마·수급·이평선 상태로 종가베팅 여부를 판단합니다 (주요 대형주 위주로 테마 매칭 지원)</div>
+    <div class="stock-search-row">
+      <input type="text" id="stockQueryInput" placeholder="예: SK하이닉스" />
+      <button class="refresh-btn" id="stockSearchBtn">조회</button>
+    </div>
+    <div class="error-msg" id="stockSearchError"></div>
+
+    <div id="stockCard" hidden>
+      <div class="card-head" style="margin-top:16px;">
+        <div>
+          <div class="label" id="stockName">-</div>
+          <div class="sub-label" id="stockCode">-</div>
+        </div>
+        <span class="signal-summary" id="stockSummary">
+          <span class="dots" id="stockSummaryDots"></span>
+          <span id="stockSummaryText">확인 중</span>
+        </span>
+      </div>
+      <div class="price" id="stockPrice">-</div>
+      <div class="change-row flat" id="stockChange"><span>불러오는 중</span></div>
+
+      <div class="checklist-item">
+        <div class="checklist-title">1. 테마</div>
+        <div class="checklist-body" id="stockTheme">-</div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title">2. 전일 미국 동일 산업군</div>
+        <div class="checklist-body" id="stockUsSector">-</div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title">3. 오늘 국내 동일 산업군</div>
+        <div class="checklist-body" id="stockKrSector">-</div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title">4. 차트 위치 · 이평선 정배열</div>
+        <div class="ma-badges">
+          <span class="badge flat" id="stockVerdict">확인 중</span>
+          <span class="badge flat" id="stockRank">확인 중</span>
+        </div>
+        <canvas id="stockChart" class="chart-lg"></canvas>
+        <div class="legend">
+          <span><i class="dot" style="background:var(--up)"></i>종가</span>
+          <span><i class="dot" style="background:var(--ma5)"></i>5일선</span>
+          <span><i class="dot" style="background:var(--ma10)"></i>10일선</span>
+          <span><i class="dot" style="background:var(--ma20)"></i>20일선</span>
+          <span><i class="dot" style="background:var(--ma60)"></i>60일선</span>
+          <span><i class="dot" style="background:var(--ma120)"></i>120일선</span>
+        </div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title">5. 오늘 수급 (개인 · 외국인 · 기관, 주)</div>
+        <div class="flow-row">
+          <div class="flow-item">
+            <span class="flow-label">개인</span>
+            <span class="flow-value flat" id="stockFlowIndividual">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">외국인</span>
+            <span class="flow-value flat" id="stockFlowForeign">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">기관</span>
+            <span class="flow-value flat" id="stockFlowInstitution">-</span>
+          </div>
+        </div>
+        <div class="meta-row"><span id="stockFlowDate">-</span></div>
+      </div>
+
+      <div class="error-msg" id="stockError"></div>
     </div>
   </div>
 
@@ -501,6 +589,16 @@ function fmtEok(won) {
   return (eok > 0 ? "+" : "") + eok.toLocaleString("ko-KR") + "억";
 }
 
+function fmtShares(v) {
+  if (v == null || Number.isNaN(v)) return "—";
+  const sign = v > 0 ? "+" : v < 0 ? "-" : "";
+  const abs = Math.abs(v);
+  if (abs >= 10000) {
+    return sign + (abs / 10000).toLocaleString("ko-KR", { maximumFractionDigits: 1 }) + "만주";
+  }
+  return sign + abs.toLocaleString("ko-KR") + "주";
+}
+
 async function updateInvestorFlow(key) {
   const els = {
     individual: document.getElementById(key + "FlowIndividual"),
@@ -604,14 +702,18 @@ const signalSummaryEl = document.getElementById("signalSummary");
 const signalSummaryDotsEl = document.getElementById("signalSummaryDots");
 const signalSummaryTextEl = document.getElementById("signalSummaryText");
 
-function updateSignalSummary(signals) {
+function renderSignalSummary(summaryEl, dotsEl, textEl, signals) {
   const known = signals.filter((s) => s != null);
-  signalSummaryDotsEl.innerHTML = signals.map((s) => `<span class="${s || ""}"></span>`).join("");
+  dotsEl.innerHTML = signals.map((s) => `<span class="${s || ""}"></span>`).join("");
 
   const greenCount = known.filter((s) => s === "green").length;
   const allGreen = known.length === signals.length && greenCount === signals.length;
-  signalSummaryTextEl.textContent = `${greenCount}/${signals.length} 초록`;
-  signalSummaryEl.className = "signal-summary" + (allGreen ? " all-green" : "");
+  textEl.textContent = `${greenCount}/${signals.length} 초록`;
+  summaryEl.className = "signal-summary" + (allGreen ? " all-green" : "");
+}
+
+function updateSignalSummary(signals) {
+  renderSignalSummary(signalSummaryEl, signalSummaryDotsEl, signalSummaryTextEl, signals);
 }
 
 async function refreshAll() {
@@ -636,9 +738,207 @@ async function refreshAll() {
   refreshBtn.disabled = false;
 }
 
+async function fetchProxyDir(kind, ref) {
+  if (kind === "kr") {
+    const q = await fetchJson(`/api/stock/quote?code=${encodeURIComponent(ref.code)}`);
+    const diff = q.price - q.prevClose;
+    const pct = q.prevClose ? (diff / q.prevClose) * 100 : 0;
+    return { pct, dir: diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat" };
+  }
+  const result = await fetchSeries(ref.symbol);
+  const meta = result.meta;
+  const prevClose = meta.previousClose ?? meta.chartPreviousClose;
+  const diff = meta.regularMarketPrice - prevClose;
+  const pct = prevClose ? (diff / prevClose) * 100 : 0;
+  return { pct, dir: diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat" };
+}
+
+let currentStockCode = null;
+let currentStockName = null;
+
+async function runStockChecklist(code, displayName) {
+  const cardEl = document.getElementById("stockCard");
+  const errorEl = document.getElementById("stockError");
+  cardEl.hidden = false;
+  errorEl.classList.remove("show");
+  document.getElementById("stockName").textContent = displayName || code;
+  document.getElementById("stockCode").textContent = code;
+
+  try {
+    const [quote, history, investors, themeResp] = await Promise.all([
+      fetchJson(`/api/stock/quote?code=${code}`),
+      fetchJson(`/api/stock/history?code=${code}`),
+      fetchJson(`/api/stock/investors?code=${code}`).catch(() => null),
+      fetchJson(`/api/stock/theme?code=${code}`),
+    ]);
+
+    const signals = [];
+
+    const price = quote.price, prevClose = quote.prevClose;
+    const diff = price - prevClose;
+    const pct = prevClose ? (diff / prevClose) * 100 : 0;
+    const dir = diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat";
+    const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
+    document.getElementById("stockPrice").textContent = "₩" + Math.round(price).toLocaleString("ko-KR");
+    const changeEl = document.getElementById("stockChange");
+    changeEl.className = "change-row " + dir;
+    changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${Math.abs(Math.round(diff)).toLocaleString("ko-KR")}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
+    signals.push(computeSignal(dir, "normal"));
+
+    const info = themeResp.info;
+    const usEl = document.getElementById("stockUsSector");
+    const krEl = document.getElementById("stockKrSector");
+    if (info) {
+      document.getElementById("stockTheme").textContent = `${info.theme} (${info.name} 기준)`;
+
+      if (info.usProxy) {
+        try {
+          const us = await fetchProxyDir("us", info.usProxy);
+          signals.push(computeSignal(us.dir, "normal"));
+          const a = us.dir === "up" ? "▲" : us.dir === "down" ? "▼" : "–";
+          usEl.textContent = `${info.usProxy.name} ${a} ${us.pct >= 0 ? "+" : ""}${us.pct.toFixed(2)}%`;
+          usEl.className = "checklist-body " + us.dir;
+        } catch (e) {
+          usEl.textContent = "데이터를 불러오지 못했습니다";
+          usEl.className = "checklist-body flat";
+        }
+      } else {
+        usEl.textContent = "해당 테마의 미국 대표 ETF 없음";
+        usEl.className = "checklist-body flat";
+      }
+
+      if (info.krProxy) {
+        try {
+          const kr = await fetchProxyDir("kr", info.krProxy);
+          signals.push(computeSignal(kr.dir, "normal"));
+          const a = kr.dir === "up" ? "▲" : kr.dir === "down" ? "▼" : "–";
+          krEl.textContent = `${info.krProxy.name} ${a} ${kr.pct >= 0 ? "+" : ""}${kr.pct.toFixed(2)}%`;
+          krEl.className = "checklist-body " + kr.dir;
+        } catch (e) {
+          krEl.textContent = "데이터를 불러오지 못했습니다";
+          krEl.className = "checklist-body flat";
+        }
+      } else {
+        krEl.textContent = "해당 테마의 국내 대표 ETF 없음";
+        krEl.className = "checklist-body flat";
+      }
+    } else {
+      document.getElementById("stockTheme").textContent = "테마 정보 없음 (주요 대형주만 지원)";
+      usEl.textContent = "테마 미확인으로 판단 불가";
+      usEl.className = "checklist-body flat";
+      krEl.textContent = "테마 미확인으로 판단 불가";
+      krEl.className = "checklist-body flat";
+    }
+
+    const verdictEl = document.getElementById("stockVerdict");
+    const rankEl = document.getElementById("stockRank");
+    const closes = (history.closes || []).map((c) => c.close).filter((v) => v != null);
+    if (closes.length >= 120) {
+      const ma5Arr = rollingMA(closes, 5);
+      const ma10Arr = rollingMA(closes, 10);
+      const ma20Arr = rollingMA(closes, 20);
+      const ma60Arr = rollingMA(closes, 60);
+      const ma120Arr = rollingMA(closes, 120);
+      const last = closes[closes.length - 1];
+      const maList = [
+        { label: "5", value: ma5Arr[ma5Arr.length - 1] },
+        { label: "10", value: ma10Arr[ma10Arr.length - 1] },
+        { label: "20", value: ma20Arr[ma20Arr.length - 1] },
+        { label: "60", value: ma60Arr[ma60Arr.length - 1] },
+        { label: "120", value: ma120Arr[ma120Arr.length - 1] },
+      ];
+      const verdict = computeAlignmentVerdict(maList);
+      verdictEl.textContent = verdict.text;
+      verdictEl.className = "badge " + verdict.cls;
+      rankEl.className = "badge flat";
+      rankEl.innerHTML = buildRankChain(last, maList);
+      signals.push(verdict.cls);
+
+      const DISPLAY_DAYS = 25;
+      const sliceFrom = Math.max(0, closes.length - DISPLAY_DAYS);
+      drawMultiLine(document.getElementById("stockChart"), [
+        { values: ma120Arr.slice(sliceFrom), color: cssVar("--ma120"), width: 1.5 },
+        { values: ma60Arr.slice(sliceFrom), color: cssVar("--ma60"), width: 1.5 },
+        { values: ma20Arr.slice(sliceFrom), color: cssVar("--ma20"), width: 1.5 },
+        { values: ma10Arr.slice(sliceFrom), color: cssVar("--ma10"), width: 1.5 },
+        { values: ma5Arr.slice(sliceFrom), color: cssVar("--ma5"), width: 1.5 },
+        { values: closes.slice(sliceFrom), color: cssVar("--up"), width: 2 },
+      ]);
+    } else {
+      verdictEl.textContent = "데이터 부족";
+      verdictEl.className = "badge flat";
+      rankEl.textContent = "-";
+      rankEl.className = "badge flat";
+    }
+
+    if (investors) {
+      const setFlow = (id, v) => {
+        const el = document.getElementById(id);
+        const d = v > 0 ? "up" : v < 0 ? "down" : "flat";
+        el.textContent = fmtShares(v);
+        el.className = "flow-value " + d;
+      };
+      setFlow("stockFlowIndividual", investors.individual);
+      setFlow("stockFlowForeign", investors.foreign);
+      setFlow("stockFlowInstitution", investors.institution);
+      document.getElementById("stockFlowDate").textContent = "기준일: " + investors.date + " (최신 영업일, 당일 미반영일 수 있음)";
+      const smartMoney = investors.foreign + investors.institution;
+      signals.push(smartMoney > 0 ? "green" : smartMoney < 0 ? "red" : "yellow");
+    } else {
+      document.getElementById("stockFlowDate").textContent = "수급 데이터를 불러오지 못했습니다";
+    }
+
+    renderSignalSummary(
+      document.getElementById("stockSummary"),
+      document.getElementById("stockSummaryDots"),
+      document.getElementById("stockSummaryText"),
+      signals
+    );
+  } catch (e) {
+    errorEl.textContent = "종목 데이터를 불러오지 못했습니다: " + e.message;
+    errorEl.classList.add("show");
+  }
+}
+
+const stockQueryInput = document.getElementById("stockQueryInput");
+const stockSearchBtn = document.getElementById("stockSearchBtn");
+const stockSearchErrorEl = document.getElementById("stockSearchError");
+
+async function handleStockSearch() {
+  const q = stockQueryInput.value.trim();
+  if (!q) return;
+  stockSearchBtn.disabled = true;
+  stockSearchErrorEl.classList.remove("show");
+  try {
+    const data = await fetchJson(`/api/stock/search?q=${encodeURIComponent(q)}`);
+    const items = data.items || [];
+    if (!items.length) {
+      stockSearchErrorEl.textContent = "검색 결과가 없습니다.";
+      stockSearchErrorEl.classList.add("show");
+      return;
+    }
+    currentStockCode = items[0].code;
+    currentStockName = items[0].name;
+    await runStockChecklist(currentStockCode, currentStockName);
+  } catch (e) {
+    stockSearchErrorEl.textContent = "검색 중 오류: " + e.message;
+    stockSearchErrorEl.classList.add("show");
+  } finally {
+    stockSearchBtn.disabled = false;
+  }
+}
+
+stockSearchBtn.addEventListener("click", handleStockSearch);
+stockQueryInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handleStockSearch();
+});
+
 refreshBtn.addEventListener("click", refreshAll);
 refreshAll();
-setInterval(refreshAll, REFRESH_MS);
+setInterval(() => {
+  refreshAll();
+  if (currentStockCode) runStockChecklist(currentStockCode, currentStockName);
+}, REFRESH_MS);
 </script>
 </body>
 </html>
