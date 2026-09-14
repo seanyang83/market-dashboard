@@ -214,8 +214,8 @@
   </div>
 
   <footer>
-    데이터 출처: Yahoo Finance (실시간 또는 최대 15~20분 지연 시세). 브라우저는 CORS 정책 때문에
-    Yahoo API를 직접 호출할 수 없어, 같은 폴더의 <code>server.py</code>가 로컬 프록시 역할을 합니다.
+    데이터 출처: Yahoo Finance(미국 지수·원자재·코인, 실시간 또는 최대 15~20분 지연 시세), 네이버 금융(코스피, 실시간).
+    브라우저가 각 API를 직접 호출하면 CORS 정책에 막히기 때문에, 같은 폴더의 <code>server.py</code>가 로컬 프록시 역할을 합니다.
     30초마다 자동 갱신됩니다.<br>
     투자 판단의 근거로 사용하지 마세요.
   </footer>
@@ -229,7 +229,7 @@ const SERIES = {
   wti: { symbol: "CL=F", isYield: false },
   ndq: { symbol: "NQ=F", isYield: false },
   btc: { symbol: "BTC-USD", isYield: false },
-  kospi: { symbol: "^KS11", isYield: false, prefix: "", decimals: 2, withMA: true },
+  kospi: { isYield: false, prefix: "", decimals: 2, withMA: true, source: "naver" },
 };
 
 function decimalsFor(cfg, price) {
@@ -276,6 +276,13 @@ async function fetchSeries(symbol, opts = {}) {
   const result = data?.chart?.result?.[0];
   if (!result) throw new Error(data?.chart?.error?.description || "데이터 없음");
   return result;
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
+  return data;
 }
 
 function drawSparkline(canvas, closes) {
@@ -364,8 +371,8 @@ async function updateIndexPanel(key) {
   const chartEl = document.getElementById(key + "Chart");
   if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return;
   try {
-    const daily = await fetchSeries(SERIES[key].symbol, { range: "1y", interval: "1d" });
-    const closes = (daily.indicators?.quote?.[0]?.close || []).filter((v) => v != null);
+    const history = await fetchJson("/api/kospi/history");
+    const closes = (history.closes || []).map((c) => c.close).filter((v) => v != null);
     if (closes.length < 120) throw new Error("데이터 부족");
 
     const ma5Arr = rollingMA(closes, 5);
@@ -424,11 +431,27 @@ async function updateCard(key) {
   const rangeEl = document.getElementById(key + "Range");
   const errorEl = document.getElementById(key + "Error");
   try {
-    const result = await fetchSeries(symbol);
-    const meta = result.meta;
-    const price = meta.regularMarketPrice;
-    const prevClose = meta.previousClose ?? meta.chartPreviousClose;
-    const closes = result.indicators?.quote?.[0]?.close || [];
+    let price, prevClose, dayLow, dayHigh, updatedTs;
+    let closes = [];
+
+    if (cfg.source === "naver") {
+      const q = await fetchJson("/api/kospi/quote");
+      price = q.price;
+      prevClose = q.prevClose;
+      dayLow = q.low;
+      dayHigh = q.high;
+      updatedTs = q.time;
+    } else {
+      const result = await fetchSeries(symbol);
+      const meta = result.meta;
+      price = meta.regularMarketPrice;
+      prevClose = meta.previousClose ?? meta.chartPreviousClose;
+      closes = result.indicators?.quote?.[0]?.close || [];
+      updatedTs = meta.regularMarketTime;
+      const validCloses = closes.filter((v) => v != null);
+      dayLow = meta.regularMarketDayLow || Math.min(...validCloses, price);
+      dayHigh = meta.regularMarketDayHigh || Math.max(...validCloses, price);
+    }
 
     const decimals = decimalsFor(cfg, price);
     const prefix = cfg.prefix ?? "$";
@@ -449,11 +472,8 @@ async function updateCard(key) {
 
     if (!cfg.withMA) drawSparkline(chartEl, closes);
 
-    updatedEl.textContent = "업데이트: " + fmtTime(meta.regularMarketTime);
-    const validCloses = closes.filter((v) => v != null);
-    const dayLow = meta.regularMarketDayLow || Math.min(...validCloses, price);
-    const dayHigh = meta.regularMarketDayHigh || Math.max(...validCloses, price);
-    rangeEl.textContent = validCloses.length
+    updatedEl.textContent = "업데이트: " + fmtTime(updatedTs);
+    rangeEl.textContent = (dayLow != null && dayHigh != null)
       ? `당일 ${fmtNum(dayLow, isYield, decimals, prefix)} ~ ${fmtNum(dayHigh, isYield, decimals, prefix)}`
       : "";
 
@@ -463,7 +483,7 @@ async function updateCard(key) {
 
     return true;
   } catch (e) {
-    errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message + " (네트워크 또는 CORS 차단 가능성)";
+    errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message;
     errorEl.classList.add("show");
     return false;
   }
