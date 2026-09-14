@@ -141,6 +141,7 @@
   .signal-summary.all-green { border-color: var(--tl-green); color: var(--tl-green); font-weight: 700; }
   .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 12px; }
   .section-head:not(:first-of-type) { margin-top: 28px; }
+  .section-head + .section-head { margin-top: 6px; }
   .section-title { font-size: 15px; font-weight: 700; margin: 0; }
   .grid[hidden] { display: none; }
   .collapse-btn {
@@ -208,6 +209,17 @@
         <span id="signalSummaryText">확인 중</span>
       </span>
       <button class="collapse-btn" id="macroCollapseBtn" aria-label="매크로 체크 접기/펼치기" aria-expanded="true">▾</button>
+    </div>
+  </div>
+
+  <div class="section-head">
+    <h2 class="section-title" id="stockSectionTitle">종목 체크(-)</h2>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="signal-summary" id="stockTopSummary">
+        <span class="dots" id="stockTopSummaryDots"></span>
+        <span id="stockTopSummaryText">확인 중</span>
+      </span>
+      <button class="collapse-btn" id="stockCollapseBtn" aria-label="종목 체크 접기/펼치기" aria-expanded="true">▾</button>
     </div>
   </div>
 
@@ -814,13 +826,14 @@ async function fetchProxyDir(kind, ref) {
 let currentStockCode = null;
 let currentStockName = null;
 
-async function runStockChecklist(code, displayName) {
+async function runStockChecklist(code, displayName, forceShow = true) {
   const cardEl = document.getElementById("stockCard");
   const errorEl = document.getElementById("stockError");
-  cardEl.hidden = false;
+  if (forceShow) cardEl.hidden = false;
   errorEl.classList.remove("show");
   document.getElementById("stockName").textContent = displayName || code;
   document.getElementById("stockCode").textContent = code;
+  document.getElementById("stockSectionTitle").textContent = `종목 체크(${displayName || code})`;
 
   try {
     const [quote, history, investors, themeResp] = await Promise.all([
@@ -982,6 +995,12 @@ async function runStockChecklist(code, displayName) {
       document.getElementById("stockSummaryText"),
       signals
     );
+    renderSignalSummary(
+      document.getElementById("stockTopSummary"),
+      document.getElementById("stockTopSummaryDots"),
+      document.getElementById("stockTopSummaryText"),
+      signals
+    );
   } catch (e) {
     errorEl.textContent = "종목 데이터를 불러오지 못했습니다: " + e.message;
     errorEl.classList.add("show");
@@ -1030,6 +1049,15 @@ macroCollapseBtn.addEventListener("click", () => {
   macroCollapseBtn.setAttribute("aria-expanded", String(!collapsed));
 });
 
+const stockCollapseBtn = document.getElementById("stockCollapseBtn");
+stockCollapseBtn.addEventListener("click", () => {
+  const cardEl = document.getElementById("stockCard");
+  const collapsed = !cardEl.hidden;
+  cardEl.hidden = collapsed;
+  stockCollapseBtn.classList.toggle("collapsed", collapsed);
+  stockCollapseBtn.setAttribute("aria-expanded", String(!collapsed));
+});
+
 refreshBtn.addEventListener("click", refreshAll);
 refreshAll();
 
@@ -1041,7 +1069,7 @@ runStockChecklist(currentStockCode, currentStockName);
 
 setInterval(() => {
   refreshAll();
-  if (currentStockCode) runStockChecklist(currentStockCode, currentStockName);
+  if (currentStockCode) runStockChecklist(currentStockCode, currentStockName, false);
 }, REFRESH_MS);
 </script>
 </body>
