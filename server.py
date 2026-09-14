@@ -35,10 +35,15 @@ NAVER_INVESTOR_URL = (
     "https://stock.naver.com/api/domestic/market/trend/daily"
     "?tradeType=KRX&marketType=KOSPI&startIdx=0&pageSize=1"
 )
-# KRX investor-type codes: 9000 individual, 8000/9001 foreign, everything else
-# (securities/insurance/trust/pension/etc.) rolls up into "institution".
-INVESTOR_INDIVIDUAL = {"9000"}
-INVESTOR_FOREIGN = {"8000", "9001"}
+# KRX investor-type codes. Verified against Naver's own displayed totals
+# (stock.naver.com's investor widget): 8000 individual, 9000/9001 foreign,
+# 1000/2000/3000/3100/4000/5000/6000 are the institution sub-types.
+# 7000 is an always-zero placeholder and 7100 (기타법인, other corporations)
+# is its own bucket that Naver's simplified 3-way view excludes entirely, so
+# neither is counted here.
+INVESTOR_INDIVIDUAL = {"8000"}
+INVESTOR_FOREIGN = {"9000", "9001"}
+INVESTOR_INSTITUTION = {"1000", "2000", "3000", "3100", "4000", "5000", "6000"}
 NAVER_HISTORY_ROW_RE = re.compile(
     rb'<td class="date">(\d{4})\.(\d{2})\.(\d{2})</td>\s*<td class="number_1">([\d,]+\.\d+)</td>'
 )
@@ -131,7 +136,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             amounts = {a["investorGubun"]: int(a["diffValue"]) for a in row["netAmounts"]}
             individual = sum(v for k, v in amounts.items() if k in INVESTOR_INDIVIDUAL)
             foreign = sum(v for k, v in amounts.items() if k in INVESTOR_FOREIGN)
-            institution = sum(amounts.values()) - individual - foreign
+            institution = sum(v for k, v in amounts.items() if k in INVESTOR_INSTITUTION)
             self.send_json(200, {
                 "date": row.get("bizdate"),
                 "individual": individual,
