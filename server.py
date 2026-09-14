@@ -100,10 +100,10 @@ STOCK_THEMES = {
                "krProxy": {"code": "091180", "name": "KODEX 자동차"},
                "usProxy": {"symbol": "CARZ", "name": "First Trust Future Vehicles & Tech ETF"}},
     "035420": {"name": "NAVER", "theme": "인터넷/플랫폼",
-               "krProxy": None,
+               "krProxy": {"code": "315270", "name": "TIGER 200커뮤니케이션서비스"},
                "usProxy": {"symbol": "XLK", "name": "Technology Select Sector SPDR"}},
     "035720": {"name": "카카오", "theme": "인터넷/플랫폼",
-               "krProxy": None,
+               "krProxy": {"code": "315270", "name": "TIGER 200커뮤니케이션서비스"},
                "usProxy": {"symbol": "XLK", "name": "Technology Select Sector SPDR"}},
     "068270": {"name": "셀트리온", "theme": "바이오",
                "krProxy": {"code": "266420", "name": "KODEX 헬스케어"},
@@ -129,6 +129,15 @@ STOCK_THEMES = {
                "krProxy": {"code": "0115D0", "name": "KODEX 조선TOP10"}, "usProxy": None},
     "090430": {"name": "아모레퍼시픽", "theme": "화장품",
                "krProxy": {"code": "228790", "name": "TIGER 화장품"}, "usProxy": None},
+    "009150": {"name": "삼성전기", "theme": "IT부품 (MLCC·반도체 기판)",
+               "krProxy": {"code": "266370", "name": "KODEX IT"},
+               "usProxy": {"symbol": "SOXX", "name": "iShares Semiconductor ETF"}},
+    "000810": {"name": "삼성화재", "theme": "보험",
+               "krProxy": {"code": "140700", "name": "KODEX 보험"},
+               "usProxy": {"symbol": "KIE", "name": "SPDR S&P Insurance ETF"}},
+    "032830": {"name": "삼성생명", "theme": "보험",
+               "krProxy": {"code": "140700", "name": "KODEX 보험"},
+               "usProxy": {"symbol": "KIE", "name": "SPDR S&P Insurance ETF"}},
 }
 
 
