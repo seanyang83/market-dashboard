@@ -978,7 +978,10 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       setFlow("stockFlowIndividual", investors.individual);
       setFlow("stockFlowForeign", investors.foreign);
       setFlow("stockFlowInstitution", investors.institution);
-      document.getElementById("stockFlowDate").textContent = "기준일: " + investors.date + " (최신 영업일, 당일 미반영일 수 있음, 금액은 종가 기준 추정치)";
+      const fd = investors.date || "";
+      const fdFmt = fd.length === 8 ? `${fd.slice(0, 4)}-${fd.slice(4, 6)}-${fd.slice(6, 8)}` : fd;
+      document.getElementById("stockFlowDate").textContent =
+        `${fdFmt} 하루 전체 마감 기준 (실시간 아님 · 오늘 데이터는 다음 거래일에 집계됨, 금액은 종가 기준 추정치)`;
 
       const foreignBuy = investors.foreign > 0, institutionBuy = investors.institution > 0;
       const flowSignal = foreignBuy && institutionBuy ? "green" : (!foreignBuy && !institutionBuy) ? "red" : "yellow";
