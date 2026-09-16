@@ -576,31 +576,76 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         code = self.require_stock_code()
         if not code:
             return
-        req = urllib.request.Request(NAVER_STOCK_INVESTOR_URL.format(code=code), headers=NAVER_HEADERS)
+        if KIS_APP_KEY and KIS_APP_SECRET:
+            try:
+                self.send_json(200, self._fetch_investors_kis(code))
+                return
+            except Exception:
+                pass  # fall through to the Naver-based approximation below
         try:
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read())
-            if not data:
-                raise ValueError("no data for code")
-            row = data[0]
-            close_price = int(row["closePrice"])
-            individual_qty = int(row["individualPureBuyQuant"])
-            foreign_qty = int(row["foreignerPureBuyQuant"])
-            institution_qty = int(row["organPureBuyQuant"])
-            # Naver only gives net share quantity per investor type, not won
-            # value, so approximate the money amount using that day's close
-            # price (same convention the market-wide /kospi/investors uses).
-            self.send_json(200, {
-                "date": row.get("bizdate"),
-                "individual": individual_qty * close_price,
-                "foreign": foreign_qty * close_price,
-                "institution": institution_qty * close_price,
-                "individualQty": individual_qty,
-                "foreignQty": foreign_qty,
-                "institutionQty": institution_qty,
-            })
+            self.send_json(200, self._fetch_investors_naver(code))
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def _fetch_investors_kis(self, code):
+        # Real prior-day net-buy amounts straight from KRX (via KIS), rather
+        # than Naver's share quantity approximated by qty x close price.
+        # FID_INPUT_DATE_1 left blank returns the most recently settled
+        # business day (today's isn't settled until after market close).
+        data = kis_get(
+            "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
+            "FHPTJ04160001",
+            {
+                "FID_COND_MRKT_DIV_CODE": "J",
+                "FID_INPUT_ISCD": code,
+                "FID_INPUT_DATE_1": "",
+                "FID_ORG_ADJ_PRC": "",
+                "FID_ETC_CLS_CODE": "",
+            },
+        )
+        rows = data.get("output2") or []
+        if not rows:
+            raise ValueError("데이터 없음")
+        row = rows[0]
+        individual_qty = int(row.get("prsn_ntby_qty", 0))
+        foreign_qty = int(row.get("frgn_ntby_qty", 0))
+        institution_qty = int(row.get("orgn_ntby_qty", 0))
+        # tr_pbmn fields are denominated in 백만원 (millions of won).
+        return {
+            "date": row.get("stck_bsop_date"),
+            "individual": int(row.get("prsn_ntby_tr_pbmn", 0)) * 1_000_000,
+            "foreign": int(row.get("frgn_ntby_tr_pbmn", 0)) * 1_000_000,
+            "institution": int(row.get("orgn_ntby_tr_pbmn", 0)) * 1_000_000,
+            "individualQty": individual_qty,
+            "foreignQty": foreign_qty,
+            "institutionQty": institution_qty,
+            "source": "kis",
+        }
+
+    def _fetch_investors_naver(self, code):
+        req = urllib.request.Request(NAVER_STOCK_INVESTOR_URL.format(code=code), headers=NAVER_HEADERS)
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read())
+        if not data:
+            raise ValueError("no data for code")
+        row = data[0]
+        close_price = int(row["closePrice"])
+        individual_qty = int(row["individualPureBuyQuant"])
+        foreign_qty = int(row["foreignerPureBuyQuant"])
+        institution_qty = int(row["organPureBuyQuant"])
+        # Naver only gives net share quantity per investor type, not won
+        # value, so approximate the money amount using that day's close
+        # price (same convention the market-wide /kospi/investors uses).
+        return {
+            "date": row.get("bizdate"),
+            "individual": individual_qty * close_price,
+            "foreign": foreign_qty * close_price,
+            "institution": institution_qty * close_price,
+            "individualQty": individual_qty,
+            "foreignQty": foreign_qty,
+            "institutionQty": institution_qty,
+            "source": "naver",
+        }
 
     def handle_stock_theme(self):
         code = self.require_stock_code()

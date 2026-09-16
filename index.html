@@ -1065,8 +1065,11 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       setFlow("stockFlowInstitution", investors.institution);
       const fd = investors.date || "";
       const fdFmt = fd.length === 8 ? `${fd.slice(0, 4)}-${fd.slice(4, 6)}-${fd.slice(6, 8)}` : fd;
+      const srcNote = investors.source === "kis"
+        ? "한국투자증권 API 실거래 확정치"
+        : "네이버 금융 기준, 금액은 종가 기준 추정치";
       document.getElementById("stockFlowDate").textContent =
-        `${fdFmt} 하루 전체 마감 기준 (실시간 아님 · 오늘 데이터는 다음 거래일에 집계됨, 금액은 종가 기준 추정치, 점수 미반영 참고용)`;
+        `${fdFmt} 하루 전체 마감 기준 (실시간 아님 · 오늘 데이터는 다음 거래일에 집계됨, ${srcNote}, 점수 미반영 참고용)`;
     } else {
       document.getElementById("stockFlowDate").textContent = "수급 데이터를 불러오지 못했습니다";
     }
