@@ -16,6 +16,7 @@ import json
 import os
 import re
 import socketserver
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -27,6 +28,54 @@ PORT = int(os.environ.get("PORT", 8934))
 YAHOO_HOSTS = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"]
 ALLOWED_RANGES = {"1d", "5d", "1mo", "2mo", "3mo", "6mo", "1y"}
 ALLOWED_INTERVALS = {"1m", "2m", "5m", "15m", "1d"}
+
+# --- Korea Investment & Securities (KIS) Open API: live per-stock signals ---
+# Naver has no live per-stock investor-type flow (only settled prior-day data),
+# but KIS's own "추정가집계"/program-trade endpoints update intraday.
+KIS_APP_KEY = os.environ.get("KIS_APP_KEY", "")
+KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET", "")
+KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
+_kis_token_cache = {"token": None, "expires_at": 0}
+_kis_token_lock = threading.Lock()
+
+
+def kis_get_token():
+    now = time.time()
+    with _kis_token_lock:
+        if _kis_token_cache["token"] and now < _kis_token_cache["expires_at"] - 300:
+            return _kis_token_cache["token"]
+        body = json.dumps({
+            "grant_type": "client_credentials",
+            "appkey": KIS_APP_KEY,
+            "appsecret": KIS_APP_SECRET,
+        }).encode()
+        req = urllib.request.Request(
+            f"{KIS_BASE_URL}/oauth2/tokenP",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        token = data["access_token"]
+        _kis_token_cache["token"] = token
+        _kis_token_cache["expires_at"] = now + int(data.get("expires_in", 86400))
+        return token
+
+
+def kis_get(path, tr_id, params):
+    token = kis_get_token()
+    url = f"{KIS_BASE_URL}{path}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers={
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+        "appkey": KIS_APP_KEY,
+        "appsecret": KIS_APP_SECRET,
+        "tr_id": tr_id,
+        "custtype": "P",
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com"}
 NAVER_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI"
@@ -161,6 +210,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_stock_investors()
         elif self.path.startswith("/api/stock/theme"):
             self.handle_stock_theme()
+        elif self.path.startswith("/api/stock/investor-live"):
+            self.handle_stock_investor_live()
+        elif self.path.startswith("/api/stock/program-trade"):
+            self.handle_stock_program_trade()
         else:
             super().do_GET()
 
@@ -410,6 +463,57 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         info = STOCK_THEMES.get(code)
         self.send_json(200, {"found": info is not None, "info": info})
+
+    def handle_stock_investor_live(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        if not KIS_APP_KEY or not KIS_APP_SECRET:
+            self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
+            return
+        try:
+            data = kis_get(
+                "/uapi/domestic-stock/v1/quotations/investor-trend-estimate",
+                "HHPTJ04160200",
+                {"MKSC_SHRN_ISCD": code},
+            )
+            rows = data.get("output2") or []
+            if not rows:
+                raise ValueError("데이터 없음 (장 시작 전이거나 첫 집계 전일 수 있음)")
+            latest = max(rows, key=lambda r: int(r.get("bsop_hour_gb", 0) or 0))
+            self.send_json(200, {
+                "checkpoint": latest.get("bsop_hour_gb"),
+                "foreignQty": int(latest.get("frgn_fake_ntby_qty", 0)),
+                "institutionQty": int(latest.get("orgn_fake_ntby_qty", 0)),
+                "sumQty": int(latest.get("sum_fake_ntby_qty", 0)),
+            })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_stock_program_trade(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        if not KIS_APP_KEY or not KIS_APP_SECRET:
+            self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
+            return
+        try:
+            data = kis_get(
+                "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
+                "FHPPG04650101",
+                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
+            )
+            rows = data.get("output") or []
+            if not rows:
+                raise ValueError("데이터 없음")
+            latest = rows[0]
+            self.send_json(200, {
+                "time": latest.get("bsop_hour"),
+                "netQty": int(latest.get("whol_smtn_ntby_qty", 0)),
+                "netAmount": int(latest.get("whol_smtn_ntby_tr_pbmn", 0)),
+            })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
 
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()

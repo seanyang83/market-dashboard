@@ -402,8 +402,47 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">4. 수급 (개인 · 외국인 · 기관)</div>
-          <span class="signal-dot" id="stockFlowSignal"></span>
+          <div class="checklist-title">4. 실시간 수급 추정 (외국인 · 기관)</div>
+          <span class="signal-dot" id="stockLiveFlowSignal"></span>
+        </div>
+        <div class="flow-row">
+          <div class="flow-item">
+            <span class="flow-label">외국인</span>
+            <span class="flow-value flat" id="stockLiveFlowForeign">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">기관</span>
+            <span class="flow-value flat" id="stockLiveFlowInstitution">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">합계</span>
+            <span class="flow-value flat" id="stockLiveFlowSum">-</span>
+          </div>
+        </div>
+        <div class="meta-row"><span id="stockLiveFlowNote">-</span></div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title-row">
+          <div class="checklist-title">5. 프로그램매매 (누적)</div>
+          <span class="signal-dot" id="stockProgramSignal"></span>
+        </div>
+        <div class="flow-row">
+          <div class="flow-item">
+            <span class="flow-label">순매수 수량</span>
+            <span class="flow-value flat" id="stockProgramQty">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">순매수 대금</span>
+            <span class="flow-value flat" id="stockProgramAmount">-</span>
+          </div>
+        </div>
+        <div class="meta-row"><span id="stockProgramNote">-</span></div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title-row">
+          <div class="checklist-title">참고: 전일 수급 (개인 · 외국인 · 기관)</div>
         </div>
         <div class="flow-row">
           <div class="flow-item">
@@ -836,11 +875,13 @@ async function runStockChecklist(code, displayName, forceShow = true) {
   document.getElementById("stockSectionTitle").textContent = `종목 체크(${displayName || code})`;
 
   try {
-    const [quote, history, investors, themeResp] = await Promise.all([
+    const [quote, history, investors, themeResp, liveFlow, programTrade] = await Promise.all([
       fetchJson(`/api/stock/quote?code=${code}`),
       fetchJson(`/api/stock/history?code=${code}`),
       fetchJson(`/api/stock/investors?code=${code}`).catch(() => null),
       fetchJson(`/api/stock/theme?code=${code}`),
+      fetchJson(`/api/stock/investor-live?code=${code}`).catch((e) => ({ error: e.message })),
+      fetchJson(`/api/stock/program-trade?code=${code}`).catch((e) => ({ error: e.message })),
     ]);
 
     const signals = [];
@@ -981,15 +1022,56 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       const fd = investors.date || "";
       const fdFmt = fd.length === 8 ? `${fd.slice(0, 4)}-${fd.slice(4, 6)}-${fd.slice(6, 8)}` : fd;
       document.getElementById("stockFlowDate").textContent =
-        `${fdFmt} 하루 전체 마감 기준 (실시간 아님 · 오늘 데이터는 다음 거래일에 집계됨, 금액은 종가 기준 추정치)`;
-
-      const foreignBuy = investors.foreign > 0, institutionBuy = investors.institution > 0;
-      const flowSignal = foreignBuy && institutionBuy ? "green" : (!foreignBuy && !institutionBuy) ? "red" : "yellow";
-      document.getElementById("stockFlowSignal").className = "signal-dot " + flowSignal;
-      signals.push(flowSignal);
+        `${fdFmt} 하루 전체 마감 기준 (실시간 아님 · 오늘 데이터는 다음 거래일에 집계됨, 금액은 종가 기준 추정치, 점수 미반영 참고용)`;
     } else {
       document.getElementById("stockFlowDate").textContent = "수급 데이터를 불러오지 못했습니다";
-      document.getElementById("stockFlowSignal").className = "signal-dot";
+    }
+
+    const CHECKPOINT_LABELS = { "1": "09:30", "2": "11:20", "3": "13:20", "4": "14:30" };
+    if (liveFlow && !liveFlow.error) {
+      const setFlow = (id, v) => {
+        const el = document.getElementById(id);
+        const d = v > 0 ? "up" : v < 0 ? "down" : "flat";
+        el.textContent = (v > 0 ? "+" : "") + Math.round(v).toLocaleString("ko-KR") + "주";
+        el.className = "flow-value " + d;
+      };
+      setFlow("stockLiveFlowForeign", liveFlow.foreignQty);
+      setFlow("stockLiveFlowInstitution", liveFlow.institutionQty);
+      setFlow("stockLiveFlowSum", liveFlow.sumQty);
+      const cp = CHECKPOINT_LABELS[String(liveFlow.checkpoint)] || liveFlow.checkpoint;
+      document.getElementById("stockLiveFlowNote").textContent =
+        `장중 추정치 · 기준시각 약 ${cp} (한국투자증권 API, 하루 4회 갱신)`;
+
+      const foreignBuy = liveFlow.foreignQty > 0, institutionBuy = liveFlow.institutionQty > 0;
+      const liveFlowSignal = foreignBuy && institutionBuy ? "green" : (!foreignBuy && !institutionBuy) ? "red" : "yellow";
+      document.getElementById("stockLiveFlowSignal").className = "signal-dot " + liveFlowSignal;
+      signals.push(liveFlowSignal);
+    } else {
+      document.getElementById("stockLiveFlowNote").textContent =
+        (liveFlow && liveFlow.error) ? `실시간 수급 데이터를 불러오지 못했습니다: ${liveFlow.error}` : "실시간 수급 데이터를 불러오지 못했습니다";
+      document.getElementById("stockLiveFlowSignal").className = "signal-dot";
+    }
+
+    if (programTrade && !programTrade.error) {
+      const qtyEl = document.getElementById("stockProgramQty");
+      const amtEl = document.getElementById("stockProgramAmount");
+      const qtyDir = programTrade.netQty > 0 ? "up" : programTrade.netQty < 0 ? "down" : "flat";
+      const amtDir = programTrade.netAmount > 0 ? "up" : programTrade.netAmount < 0 ? "down" : "flat";
+      qtyEl.textContent = (programTrade.netQty > 0 ? "+" : "") + Math.round(programTrade.netQty).toLocaleString("ko-KR") + "주";
+      qtyEl.className = "flow-value " + qtyDir;
+      amtEl.textContent = fmtEok(programTrade.netAmount);
+      amtEl.className = "flow-value " + amtDir;
+      const t = String(programTrade.time || "");
+      const tFmt = t.length === 6 ? `${t.slice(0, 2)}:${t.slice(2, 4)}:${t.slice(4, 6)}` : t;
+      document.getElementById("stockProgramNote").textContent = `기준시각 ${tFmt} (실시간, 당일 누적)`;
+
+      const programSignal = programTrade.netAmount > 0 ? "green" : programTrade.netAmount < 0 ? "red" : "yellow";
+      document.getElementById("stockProgramSignal").className = "signal-dot " + programSignal;
+      signals.push(programSignal);
+    } else {
+      document.getElementById("stockProgramNote").textContent =
+        (programTrade && programTrade.error) ? `프로그램매매 데이터를 불러오지 못했습니다: ${programTrade.error}` : "프로그램매매 데이터를 불러오지 못했습니다";
+      document.getElementById("stockProgramSignal").className = "signal-dot";
     }
 
     renderSignalSummary(
