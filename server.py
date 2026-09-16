@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -142,8 +143,76 @@ NAVER_HISTORY_ROW_RE = re.compile(
 )
 KOSPI_HISTORY_MIN_DAYS = 150
 KOSPI_HISTORY_MAX_PAGES = 30
-KOSPI_HISTORY_CACHE_TTL = 300
-_kospi_history_cache = {"data": None, "ts": 0}
+# Naver only gives ~10 rows per page, so a cold cache needs ~15 sequential
+# page fetches to reach KOSPI_HISTORY_MIN_DAYS - that's the single biggest
+# source of slow/laggy KOSPI loads. Keep the scraped history in a
+# long-lived by-date cache instead of expiring the whole thing every few
+# minutes: once populated, only page 1 (the most recent days, including
+# today's still-forming close) needs to be re-fetched periodically, and
+# requests are served from cache instantly while that refresh happens in
+# the background.
+KOSPI_HISTORY_REFRESH_TTL = 45
+_kospi_history_by_date = {}
+_kospi_history_lock = threading.Lock()
+_kospi_history_meta = {"last_refresh": 0, "refreshing": False}
+_kospi_scrape_lock = threading.Lock()
+
+
+def _kospi_fetch_page(page):
+    req = urllib.request.Request(NAVER_HISTORY_URL.format(page=page), headers=NAVER_HEADERS)
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        body = resp.read()
+    return NAVER_HISTORY_ROW_RE.findall(body)
+
+
+def _kospi_merge_matches(matches):
+    with _kospi_history_lock:
+        for y, m, d, price in matches:
+            date = f"{y.decode()}-{m.decode()}-{d.decode()}"
+            _kospi_history_by_date[date] = float(price.decode().replace(",", ""))
+
+
+def _kospi_ensure_full_history():
+    with _kospi_scrape_lock:
+        with _kospi_history_lock:
+            if len(_kospi_history_by_date) >= 20:
+                return  # another thread already filled it in while we waited
+        got_any = False
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = [ex.submit(_kospi_fetch_page, p) for p in range(1, KOSPI_HISTORY_MAX_PAGES + 1)]
+            for fut in as_completed(futures):
+                try:
+                    matches = fut.result()
+                except Exception:
+                    continue
+                if matches:
+                    _kospi_merge_matches(matches)
+                    got_any = True
+        with _kospi_history_lock:
+            enough = len(_kospi_history_by_date) >= 20
+        if not enough:
+            raise ValueError("insufficient history rows scraped" if got_any else "upstream unavailable")
+        _kospi_history_meta["last_refresh"] = time.time()
+
+
+def _kospi_maybe_refresh_recent_async():
+    now = time.time()
+    if now - _kospi_history_meta["last_refresh"] < KOSPI_HISTORY_REFRESH_TTL or _kospi_history_meta["refreshing"]:
+        return
+    _kospi_history_meta["refreshing"] = True
+
+    def _bg():
+        try:
+            matches = _kospi_fetch_page(1)
+            if matches:
+                _kospi_merge_matches(matches)
+        except Exception:
+            pass
+        finally:
+            _kospi_history_meta["last_refresh"] = time.time()
+            _kospi_history_meta["refreshing"] = False
+
+    threading.Thread(target=_bg, daemon=True).start()
 
 # --- Single-stock checklist feature ---
 NAVER_STOCK_SEARCH_URL = "https://ac.stock.naver.com/ac?q={query}&target=stock"
@@ -353,37 +422,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(502, {"error": str(e)})
 
     def handle_kospi_history(self):
-        now = time.time()
-        cached = _kospi_history_cache["data"]
-        if cached and now - _kospi_history_cache["ts"] < KOSPI_HISTORY_CACHE_TTL:
-            self.send_json(200, {"closes": cached})
-            return
-        try:
-            by_date = {}
-            for page in range(1, KOSPI_HISTORY_MAX_PAGES + 1):
-                req = urllib.request.Request(NAVER_HISTORY_URL.format(page=page), headers=NAVER_HEADERS)
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    body = resp.read()
-                matches = NAVER_HISTORY_ROW_RE.findall(body)
-                if not matches:
-                    break
-                for y, m, d, price in matches:
-                    date = f"{y.decode()}-{m.decode()}-{d.decode()}"
-                    by_date[date] = float(price.decode().replace(",", ""))
-                if len(by_date) >= KOSPI_HISTORY_MIN_DAYS:
-                    break
+        with _kospi_history_lock:
+            have_enough = len(_kospi_history_by_date) >= 20
 
-            closes = [{"date": d, "close": by_date[d]} for d in sorted(by_date)]
-            if len(closes) < 20:
-                raise ValueError("insufficient history rows scraped")
-            _kospi_history_cache["data"] = closes
-            _kospi_history_cache["ts"] = now
-            self.send_json(200, {"closes": closes})
-        except Exception as e:
-            if cached:
-                self.send_json(200, {"closes": cached})
-            else:
+        if not have_enough:
+            # Cold start: nothing usable cached yet, so this request has to
+            # wait for a scrape. Fan the page fetches out concurrently
+            # (rather than one-by-one) to cut that one-time wait way down.
+            try:
+                _kospi_ensure_full_history()
+            except Exception as e:
                 self.send_json(502, {"error": str(e)})
+                return
+        else:
+            _kospi_maybe_refresh_recent_async()
+
+        with _kospi_history_lock:
+            closes = [{"date": d, "close": _kospi_history_by_date[d]} for d in sorted(_kospi_history_by_date)]
+        if len(closes) < 20:
+            self.send_json(502, {"error": "insufficient history rows scraped"})
+            return
+        self.send_json(200, {"closes": closes})
 
     def handle_stock_search(self):
         q = self.query_param("q").strip()
