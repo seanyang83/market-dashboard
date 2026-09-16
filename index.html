@@ -306,15 +306,18 @@
         <span class="badge flat" id="kospiMa5Badge">확인 중</span>
         <span class="badge up" id="kospiReboundBadge" hidden>이평선 반등</span>
       </div>
-      <div class="rank-compare">
-        <div class="rank-compare-row">
-          <span class="rank-compare-label">오늘</span>
-          <span class="badge flat" id="kospiAlignBadge">순위 확인 중</span>
+      <div class="checklist-title-row">
+        <div class="rank-compare">
+          <div class="rank-compare-row">
+            <span class="rank-compare-label">오늘</span>
+            <span class="badge flat" id="kospiAlignBadge">순위 확인 중</span>
+          </div>
+          <div class="rank-compare-row">
+            <span class="rank-compare-label">어제</span>
+            <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
+          </div>
         </div>
-        <div class="rank-compare-row">
-          <span class="rank-compare-label">어제</span>
-          <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
-        </div>
+        <span class="signal-dot" id="kospiMa5Signal"></span>
       </div>
       <canvas id="kospiChart" class="chart-lg"></canvas>
       <div class="legend">
@@ -667,6 +670,7 @@ async function updateIndexPanel(key, dayLow) {
   const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
   const prevAlignBadgeEl = document.getElementById(key + "PrevAlignBadge");
+  const ma5SignalEl = document.getElementById(key + "Ma5Signal");
   const reboundEl = document.getElementById(key + "ReboundBadge");
   const chartEl = document.getElementById(key + "Chart");
   if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return null;
@@ -706,17 +710,19 @@ async function updateIndexPanel(key, dayLow) {
     alignBadgeEl.className = "badge flat";
     alignBadgeEl.innerHTML = buildRankChain(last, maList);
 
+    const prevIdx = closes.length - 2;
+    const prevLast = closes[prevIdx];
+    const prevMaList = [
+      { label: "5", value: ma5Arr[prevIdx] },
+      { label: "10", value: ma10Arr[prevIdx] },
+      { label: "20", value: ma20Arr[prevIdx] },
+      { label: "60", value: ma60Arr[prevIdx] },
+      { label: "120", value: ma120Arr[prevIdx] },
+    ];
+    const havePrev = prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null);
+
     if (prevAlignBadgeEl) {
-      const prevIdx = closes.length - 2;
-      const prevLast = closes[prevIdx];
-      const prevMaList = [
-        { label: "5", value: ma5Arr[prevIdx] },
-        { label: "10", value: ma10Arr[prevIdx] },
-        { label: "20", value: ma20Arr[prevIdx] },
-        { label: "60", value: ma60Arr[prevIdx] },
-        { label: "120", value: ma120Arr[prevIdx] },
-      ];
-      if (prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null)) {
+      if (havePrev) {
         prevAlignBadgeEl.className = "badge flat";
         prevAlignBadgeEl.innerHTML = buildRankChain(prevLast, prevMaList);
       } else {
@@ -724,6 +730,20 @@ async function updateIndexPanel(key, dayLow) {
         prevAlignBadgeEl.className = "badge flat";
       }
     }
+
+    // Same rank-aware rule as the per-stock chart signal (3. 차트 5일선 위):
+    // green above MA5; otherwise yellow if today ranks above more MAs than
+    // yesterday (an improving position even while still under MA5), red if
+    // standing still or slipping further.
+    let ma5Signal;
+    if (last >= ma5) {
+      ma5Signal = "green";
+    } else if (havePrev && rankIndexOf(last, maList) < rankIndexOf(prevLast, prevMaList)) {
+      ma5Signal = "yellow";
+    } else {
+      ma5Signal = "red";
+    }
+    if (ma5SignalEl) ma5SignalEl.className = "signal-dot " + ma5Signal;
 
     if (reboundEl) reboundEl.hidden = !(dayLow != null && dayLow <= ma5 && last > ma5);
 
@@ -737,7 +757,7 @@ async function updateIndexPanel(key, dayLow) {
       { values: ma5Arr.slice(sliceFrom), color: cssVar("--ma5"), width: 1.5 },
       { values: closes.slice(sliceFrom), color: cssVar("--up"), width: 2 },
     ]);
-    return zoneSignal;
+    return ma5Signal;
   } catch (e) {
     ma5BadgeEl.textContent = "확인 오류";
     ma5BadgeEl.className = "badge flat";
@@ -747,6 +767,7 @@ async function updateIndexPanel(key, dayLow) {
       prevAlignBadgeEl.textContent = "순위 오류";
       prevAlignBadgeEl.className = "badge flat";
     }
+    if (ma5SignalEl) ma5SignalEl.className = "signal-dot";
     if (reboundEl) reboundEl.hidden = true;
     return null;
   }
@@ -831,7 +852,13 @@ async function updateCard(key) {
     changeEl.className = "change-row " + dir;
     changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${diffFmt}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
 
-    let signal = computeSignal(dir, cfg.sentiment);
+    // Title-row dot: plain up/down direction, same convention as every
+    // other macro card. KOSPI's contribution to the macro score instead
+    // uses the rank-aware MA5 signal from updateIndexPanel (shown on its
+    // own dot next to the 오늘/어제 badges), since that's a more meaningful
+    // read on the index than today's raw price direction.
+    const dirSignal = computeSignal(dir, cfg.sentiment);
+    let scoreSignal = dirSignal;
 
     if (!cfg.withMA) drawSparkline(chartEl, closes);
 
@@ -843,13 +870,13 @@ async function updateCard(key) {
     errorEl.classList.remove("show");
 
     if (cfg.withMA) {
-      const [zoneSignal] = await Promise.all([updateIndexPanel(key, dayLow), updateInvestorFlow(key)]);
-      if (zoneSignal) signal = zoneSignal;
+      const [ma5Signal] = await Promise.all([updateIndexPanel(key, dayLow), updateInvestorFlow(key)]);
+      if (ma5Signal) scoreSignal = ma5Signal;
     }
 
-    if (signalEl) signalEl.className = "signal-dot " + signal;
+    if (signalEl) signalEl.className = "signal-dot " + dirSignal;
 
-    return { ok: true, signal };
+    return { ok: true, signal: scoreSignal };
   } catch (e) {
     errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message;
     errorEl.classList.add("show");
