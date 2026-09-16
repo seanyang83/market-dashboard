@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8934))
@@ -43,117 +43,6 @@ KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
 KIS_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".kis_token_cache.json")
 _kis_token_cache = {"token": None, "expires_at": 0}
 _kis_token_lock = threading.Lock()
-
-KST_OFFSET = timedelta(hours=9)
-
-
-def kst_today():
-    return (datetime.now(timezone.utc) + KST_OFFSET).strftime("%Y%m%d")
-
-
-# Per-code, per-day cache of program-trade snapshots, bucketed to 30 minutes:
-# {code: {"date": "20260916", "points": {"093000": {"time": "093012", ...}}}}
-# KIS's program-trade endpoint only ever returns a short recent rolling
-# window (~3-4 minutes), never the full trading day, so the only way to
-# reconstruct a whole-day trend is to keep polling while the process is
-# alive and accumulate what each call returns. Only a rough increasing/
-# decreasing trend is needed (not tick-level detail), so only the latest
-# value seen within each 30-minute bucket is kept - one point per bucket,
-# ~13 for a full trading day, rather than thousands of raw ticks.
-# Persisted to disk so a process restart (Render redeploy, or waking from
-# an inactivity sleep) doesn't throw away the day's progress so far.
-BUCKET_MINUTES = 30
-PROGRAM_TRADE_HISTORY_FILE = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), ".program_trade_history.json"
-)
-_program_trade_history = {}
-_program_trade_lock = threading.Lock()
-
-
-def _load_program_trade_history():
-    try:
-        with open(PROGRAM_TRADE_HISTORY_FILE) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return {}
-
-
-def _save_program_trade_history():
-    try:
-        with open(PROGRAM_TRADE_HISTORY_FILE, "w") as f:
-            json.dump(_program_trade_history, f)
-    except OSError:
-        pass
-
-
-_program_trade_history = _load_program_trade_history()
-
-# Whatever stock code a client most recently asked about, so the background
-# poller (below) keeps building that stock's history even after the browser
-# tab closes, as long as the process itself stays alive.
-_last_requested_code = {"code": None}
-
-
-def _bucket_key(bsop_hour):
-    hh, mm = bsop_hour[0:2], int(bsop_hour[2:4])
-    bucket_mm = "00" if mm < BUCKET_MINUTES else "30"
-    return f"{hh}{bucket_mm}00"
-
-
-def merge_program_trade_rows(code, rows):
-    """Merge freshly-fetched ticks into the per-code/day history cache,
-    keeping only the latest value seen within each 30-minute bucket."""
-    today = kst_today()
-    with _program_trade_lock:
-        entry = _program_trade_history.setdefault(code, {"date": today, "points": {}})
-        if entry["date"] != today:
-            entry["date"] = today
-            entry["points"] = {}
-        changed = False
-        for r in rows:
-            t = r.get("bsop_hour")
-            if not t:
-                continue
-            bucket = _bucket_key(t)
-            existing = entry["points"].get(bucket)
-            if existing is not None and existing.get("time", "") >= t:
-                continue
-            entry["points"][bucket] = {
-                "time": t,
-                "netQty": int(r.get("whol_smtn_ntby_qty", 0)),
-                "netAmount": int(r.get("whol_smtn_ntby_tr_pbmn", 0)),
-            }
-            changed = True
-        history = [entry["points"][b] for b in sorted(entry["points"])]
-        if changed:
-            _save_program_trade_history()
-    return history
-
-
-def _program_trade_background_loop():
-    # Keeps accumulating history for the last-viewed stock even when no
-    # browser is connected, so the day's chart stays complete as long as
-    # this process is awake (see the GitHub Actions keep-alive workflow,
-    # which pings the site during market hours so Render doesn't sleep it).
-    # Only one snapshot per 30-minute bucket is kept, so polling every few
-    # minutes (well under the bucket width) is more than enough - no need
-    # to poll every few seconds for a rough increasing/decreasing trend.
-    while True:
-        time.sleep(300)
-        code = _last_requested_code["code"]
-        if not code or not KIS_APP_KEY or not KIS_APP_SECRET:
-            continue
-        try:
-            data = kis_get(
-                "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
-                "FHPPG04650101",
-                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
-            )
-            rows = data.get("output") or []
-            if rows:
-                merge_program_trade_rows(code, rows)
-        except Exception:
-            pass
 
 
 def _kis_load_cached_token():
@@ -696,7 +585,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not KIS_APP_KEY or not KIS_APP_SECRET:
             self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
             return
-        _last_requested_code["code"] = code
         try:
             data = kis_get(
                 "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
@@ -707,12 +595,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not rows:
                 raise ValueError("데이터 없음")
             latest = rows[0]
-            history = merge_program_trade_rows(code, rows)
             self.send_json(200, {
                 "time": latest.get("bsop_hour"),
                 "netQty": int(latest.get("whol_smtn_ntby_qty", 0)),
                 "netAmount": int(latest.get("whol_smtn_ntby_tr_pbmn", 0)),
-                "history": history,
             })
         except Exception as e:
             self.send_json(502, {"error": str(e)})
@@ -738,8 +624,6 @@ class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 if __name__ == "__main__":
-    if KIS_APP_KEY and KIS_APP_SECRET:
-        threading.Thread(target=_program_trade_background_loop, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()

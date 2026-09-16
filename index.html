@@ -91,7 +91,6 @@
   .flat { color: var(--flat); }
   canvas { width: 100%; height: 60px; display: block; margin-top: 14px; }
   canvas.chart-lg { height: 130px; }
-  canvas.chart-sm { height: 70px; margin-top: 12px; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--sub); margin-top: 8px; }
   .legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
   .meta-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 11.5px; color: var(--sub); margin-top: 10px; }
@@ -459,9 +458,7 @@
             <span class="flow-value flat" id="stockProgramAmount">-</span>
           </div>
         </div>
-        <canvas id="stockProgramChart" class="chart-sm"></canvas>
         <div class="meta-row"><span id="stockProgramNote">-</span></div>
-        <div class="meta-row"><span style="font-size:10.5px;">그래프: 서버가 깨어있는 동안 누적된 당일 순매수 대금 추이 (하단 참고)</span></div>
       </div>
 
       <div class="error-msg" id="stockError"></div>
@@ -616,47 +613,6 @@ function drawMultiLine(canvas, series) {
     });
     ctx.stroke();
   });
-}
-
-function drawZeroLineChart(canvas, values) {
-  const ctx = canvas.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  canvas.width = w * dpr; canvas.height = h * dpr;
-  ctx.scale(dpr, dpr);
-  ctx.clearRect(0, 0, w, h);
-
-  const pts = values.filter((v) => v != null);
-  if (pts.length < 2) return;
-
-  const pad = 4;
-  const min = Math.min(...pts, 0), max = Math.max(...pts, 0);
-  const range = max - min || 1;
-  const stepX = (w - pad * 2) / (values.length - 1);
-  const yFor = (v) => h - pad - ((v - min) / range) * (h - pad * 2);
-
-  ctx.strokeStyle = cssVar("--border");
-  ctx.setLineDash([3, 3]);
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(pad, yFor(0));
-  ctx.lineTo(w - pad, yFor(0));
-  ctx.stroke();
-  ctx.setLineDash([]);
-
-  const last = pts[pts.length - 1];
-  ctx.strokeStyle = last >= 0 ? cssVar("--up") : cssVar("--down");
-  ctx.lineWidth = 1.75;
-  ctx.beginPath();
-  let started = false;
-  values.forEach((v, i) => {
-    if (v == null) return;
-    const x = pad + i * stepX;
-    const y = yFor(v);
-    if (!started) { ctx.moveTo(x, y); started = true; }
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
 }
 
 function computeAlignmentVerdict(mas) {
@@ -1116,9 +1072,6 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       const programSignal = programTrade.netAmount > 0 ? "green" : programTrade.netAmount < 0 ? "red" : "yellow";
       document.getElementById("stockProgramSignal").className = "signal-dot " + programSignal;
       signals.push(programSignal);
-
-      const hist = programTrade.history || [];
-      drawZeroLineChart(document.getElementById("stockProgramChart"), hist.map((r) => r.netAmount));
     } else {
       document.getElementById("stockProgramNote").textContent =
         (programTrade && programTrade.error) ? `프로그램매매 데이터를 불러오지 못했습니다: ${programTrade.error}` : "프로그램매매 데이터를 불러오지 못했습니다";
