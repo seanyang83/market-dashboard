@@ -656,6 +656,13 @@ function buildRankChain(price, mas, priceLabel) {
     .join(` <span class="flat">&gt;</span> `);
 }
 
+// 0 = price sits above every MA (best); higher = price ranks below more MAs.
+function rankIndexOf(price, mas) {
+  const items = [{ isPrice: true, value: price }, ...mas];
+  items.sort((a, b) => b.value - a.value);
+  return items.findIndex((it) => it.isPrice);
+}
+
 async function updateIndexPanel(key, dayLow) {
   const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
@@ -1027,18 +1034,20 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       rankEl.className = "badge flat";
       rankEl.innerHTML = buildRankChain(last, maList, displayName || code);
 
+      const prevIdx = closes.length - 2;
+      const prevLast = closes[prevIdx];
+      const prevMaList = [
+        { label: "5", value: ma5Arr[prevIdx] },
+        { label: "10", value: ma10Arr[prevIdx] },
+        { label: "20", value: ma20Arr[prevIdx] },
+        { label: "60", value: ma60Arr[prevIdx] },
+        { label: "120", value: ma120Arr[prevIdx] },
+      ];
+      const havePrev = prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null);
+
       const prevRankEl = document.getElementById("stockPrevRank");
       if (prevRankEl) {
-        const prevIdx = closes.length - 2;
-        const prevLast = closes[prevIdx];
-        const prevMaList = [
-          { label: "5", value: ma5Arr[prevIdx] },
-          { label: "10", value: ma10Arr[prevIdx] },
-          { label: "20", value: ma20Arr[prevIdx] },
-          { label: "60", value: ma60Arr[prevIdx] },
-          { label: "120", value: ma120Arr[prevIdx] },
-        ];
-        if (prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null)) {
+        if (havePrev) {
           prevRankEl.className = "badge flat";
           prevRankEl.innerHTML = buildRankChain(prevLast, prevMaList, displayName || code);
         } else {
@@ -1047,8 +1056,19 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         }
       }
 
+      // Green: price above the 5-day MA outright. Otherwise, compare how
+      // many MAs the price ranks above today vs. yesterday - climbing past
+      // more of them (even while still under MA5) is a improving position
+      // worth flagging yellow; standing still or slipping further is red.
       const aboveMa5 = last >= maList[0].value;
-      const chartSignal = aboveMa5 ? "green" : "red";
+      let chartSignal;
+      if (aboveMa5) {
+        chartSignal = "green";
+      } else if (havePrev && rankIndexOf(last, maList) < rankIndexOf(prevLast, prevMaList)) {
+        chartSignal = "yellow";
+      } else {
+        chartSignal = "red";
+      }
       document.getElementById("stockChartSignal").className = "signal-dot " + chartSignal;
       signals.push(chartSignal);
 
