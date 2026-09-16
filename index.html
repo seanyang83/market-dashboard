@@ -644,12 +644,31 @@ function drawMultiLine(canvas, series) {
   });
 }
 
-function computeAlignmentVerdict(mas) {
-  const bull = mas.every((m, i) => i === 0 || mas[i - 1].value > m.value);
-  const bear = mas.every((m, i) => i === 0 || mas[i - 1].value < m.value);
-  if (bull) return { text: "정배열", cls: "up" };
-  if (bear) return { text: "역배열", cls: "down" };
-  return { text: "혼조", cls: "flat" };
+// Summarizes how price's position among the MAs changed vs. yesterday:
+// which MAs it crossed above/below, or if none, whether its overall rank
+// improved, worsened, or held - more useful at a glance than a static
+// 정배열/역배열/혼조 label that ignores yesterday entirely.
+function describeRankChange(last, maList, prevLast, prevMaList) {
+  const crossedUp = [];
+  const crossedDown = [];
+  maList.forEach((m, i) => {
+    const prevM = prevMaList[i];
+    const wasAbove = prevLast > prevM.value;
+    const isAbove = last > m.value;
+    if (isAbove && !wasAbove) crossedUp.push(m.label + "일선");
+    else if (!isAbove && wasAbove) crossedDown.push(m.label + "일선");
+  });
+
+  if (crossedUp.length && crossedDown.length) {
+    return { text: `${crossedUp.join("·")} 돌파, ${crossedDown.join("·")} 이탈`, cls: "flat" };
+  }
+  if (crossedUp.length) return { text: `${crossedUp.join("·")} 상향 돌파`, cls: "up" };
+  if (crossedDown.length) return { text: `${crossedDown.join("·")} 하향 돌파`, cls: "down" };
+
+  const stepsUp = rankIndexOf(prevLast, prevMaList) - rankIndexOf(last, maList);
+  if (stepsUp > 0) return { text: `어제보다 ${stepsUp}단계 상승`, cls: "up" };
+  if (stepsUp < 0) return { text: `어제보다 ${-stepsUp}단계 하락`, cls: "down" };
+  return { text: "어제와 동일한 위치", cls: "flat" };
 }
 
 function buildRankChain(price, mas, priceLabel) {
@@ -1061,9 +1080,6 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         { label: "60", value: ma60Arr[ma60Arr.length - 1] },
         { label: "120", value: ma120Arr[ma120Arr.length - 1] },
       ];
-      const verdict = computeAlignmentVerdict(maList);
-      verdictEl.textContent = verdict.text;
-      verdictEl.className = "badge " + verdict.cls;
       rankEl.className = "badge flat";
       rankEl.innerHTML = buildRankChain(last, maList, displayName || code);
 
@@ -1077,6 +1093,15 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         { label: "120", value: ma120Arr[prevIdx] },
       ];
       const havePrev = prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null);
+
+      if (havePrev) {
+        const verdict = describeRankChange(last, maList, prevLast, prevMaList);
+        verdictEl.textContent = verdict.text;
+        verdictEl.className = "badge " + verdict.cls;
+      } else {
+        verdictEl.textContent = "데이터 부족";
+        verdictEl.className = "badge flat";
+      }
 
       const prevRankEl = document.getElementById("stockPrevRank");
       if (prevRankEl) {
