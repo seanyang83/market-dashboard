@@ -878,12 +878,15 @@ async function updateCard(key) {
 
     if (signalEl) signalEl.className = "signal-dot " + dirSignal;
 
-    return { ok: true, signal: scoreSignal };
+    // KOSPI shows two independent signals (direction + MA5 rank), so both
+    // count toward the macro score; every other card counts once.
+    const signals = cfg.withMA ? [dirSignal, scoreSignal] : [dirSignal];
+    return { ok: true, signals };
   } catch (e) {
     errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message;
     errorEl.classList.add("show");
     if (signalEl) signalEl.className = "signal-dot";
-    return { ok: false, signal: null };
+    return { ok: false, signals: cfg.withMA ? [null, null] : [null] };
   }
 }
 
@@ -916,7 +919,7 @@ async function refreshAll() {
   const results = await Promise.all(keys.map(updateCard));
   const okCount = results.filter((r) => r.ok).length;
 
-  updateSignalSummary(results.map((r) => r.signal));
+  updateSignalSummary(results.flatMap((r) => r.signals));
 
   if (okCount === results.length) {
     statusDot.className = "dot live";
