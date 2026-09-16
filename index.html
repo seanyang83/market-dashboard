@@ -903,8 +903,9 @@ function renderSignalSummary(summaryEl, dotsEl, textEl, signals) {
 
   const score = signals.reduce((sum, s) => sum + scoreFor(s), 0);
   const maxScore = signals.length * 20;
+  const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
   const allGreen = known.length === signals.length && known.every((s) => s === "green");
-  textEl.textContent = `${score}/${maxScore}점`;
+  textEl.textContent = `${pct}%`;
   summaryEl.className = "signal-summary" + (allGreen ? " all-green" : "");
 }
 
