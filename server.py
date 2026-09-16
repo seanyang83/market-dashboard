@@ -45,6 +45,39 @@ KIS_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".kis_
 _kis_token_cache = {"token": None, "expires_at": 0}
 _kis_token_lock = threading.Lock()
 
+# Render wipes the local disk on every new deploy, so KIS_TOKEN_FILE alone
+# only survives a sleep/wake cycle, not a redeploy - and each redeploy that
+# misses it re-issues a token, which is what was triggering KIS's SMS
+# notices during active development (many deploys in one day). Render env
+# vars, in contrast, are stored on the platform and are already present in
+# os.environ on every fresh process, so reading them costs nothing extra;
+# only *writing* a newly-issued token back needs a Render API call, done
+# here so the next deploy (within the token's ~24h validity) can reuse it.
+RENDER_API_KEY = os.environ.get("RENDER_API_KEY", "")
+RENDER_SERVICE_ID = os.environ.get("RENDER_SERVICE_ID", "")
+RENDER_API_BASE = "https://api.render.com/v1"
+
+
+def _render_set_env_var(key, value):
+    if not RENDER_API_KEY or not RENDER_SERVICE_ID:
+        return
+    try:
+        url = f"{RENDER_API_BASE}/services/{RENDER_SERVICE_ID}/env-vars/{key}"
+        req = urllib.request.Request(
+            url,
+            data=json.dumps({"value": value}).encode(),
+            method="PUT",
+            headers={
+                "Authorization": f"Bearer {RENDER_API_KEY}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+    except Exception:
+        pass  # persisting for next time is a bonus - never block on it
+
 
 def _kis_load_cached_token():
     try:
@@ -71,6 +104,17 @@ def kis_get_token():
         if _kis_token_cache["token"] and now < _kis_token_cache["expires_at"] - 300:
             return _kis_token_cache["token"]
 
+        env_token = os.environ.get("KIS_CACHED_TOKEN")
+        env_expires_at = os.environ.get("KIS_CACHED_TOKEN_EXPIRES_AT")
+        if env_token and env_expires_at:
+            try:
+                if now < float(env_expires_at) - 300:
+                    _kis_token_cache["token"] = env_token
+                    _kis_token_cache["expires_at"] = float(env_expires_at)
+                    return env_token
+            except ValueError:
+                pass
+
         cached = _kis_load_cached_token()
         if cached:
             _kis_token_cache["token"] = cached["token"]
@@ -95,6 +139,8 @@ def kis_get_token():
         _kis_token_cache["token"] = token
         _kis_token_cache["expires_at"] = expires_at
         _kis_save_cached_token(token, expires_at)
+        _render_set_env_var("KIS_CACHED_TOKEN", token)
+        _render_set_env_var("KIS_CACHED_TOKEN_EXPIRES_AT", str(expires_at))
         return token
 
 
