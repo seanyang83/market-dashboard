@@ -115,6 +115,9 @@
     border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
   }
   .badge[hidden] { display: none; }
+  .badge.green { color: var(--tl-green); }
+  .badge.red { color: var(--tl-red); }
+  .badge.yellow { color: var(--tl-yellow); }
   .badge-alert { font-weight: 800; animation: badgeAlertPulse 1.6s ease-in-out infinite; }
   @keyframes badgeAlertPulse {
     0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
@@ -309,6 +312,10 @@
         <span><i class="dot" style="background:var(--ma20)"></i>20일선</span>
         <span><i class="dot" style="background:var(--ma60)"></i>60일선</span>
         <span><i class="dot" style="background:var(--ma120)"></i>120일선</span>
+      </div>
+      <div class="meta-row" style="margin-top:10px;"><span>어제 이평선 위치</span></div>
+      <div class="ma-badges">
+        <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
       </div>
       <div class="flow-row">
         <div class="flow-item">
@@ -635,6 +642,7 @@ function buildRankChain(price, mas, priceLabel) {
 async function updateIndexPanel(key, dayLow) {
   const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
+  const prevAlignBadgeEl = document.getElementById(key + "PrevAlignBadge");
   const reboundEl = document.getElementById(key + "ReboundBadge");
   const chartEl = document.getElementById(key + "Chart");
   if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return null;
@@ -667,12 +675,31 @@ async function updateIndexPanel(key, dayLow) {
     let zoneLabel, zoneSignal;
     if (last >= ma5) { zoneLabel = "2배베팅"; zoneSignal = "green"; }
     else if (last > ma20) { zoneLabel = "현금베팅"; zoneSignal = "yellow"; }
-    else { zoneLabel = "🔻 저점 현금베팅"; zoneSignal = "red"; }
+    else { zoneLabel = "저점 현금베팅"; zoneSignal = "red"; }
     ma5BadgeEl.textContent = zoneLabel;
     ma5BadgeEl.className = "badge " + zoneSignal + (zoneSignal === "red" ? " badge-alert" : "");
 
     alignBadgeEl.className = "badge flat";
     alignBadgeEl.innerHTML = buildRankChain(last, maList);
+
+    if (prevAlignBadgeEl) {
+      const prevIdx = closes.length - 2;
+      const prevLast = closes[prevIdx];
+      const prevMaList = [
+        { label: "5", value: ma5Arr[prevIdx] },
+        { label: "10", value: ma10Arr[prevIdx] },
+        { label: "20", value: ma20Arr[prevIdx] },
+        { label: "60", value: ma60Arr[prevIdx] },
+        { label: "120", value: ma120Arr[prevIdx] },
+      ];
+      if (prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null)) {
+        prevAlignBadgeEl.className = "badge flat";
+        prevAlignBadgeEl.innerHTML = buildRankChain(prevLast, prevMaList);
+      } else {
+        prevAlignBadgeEl.textContent = "데이터 부족";
+        prevAlignBadgeEl.className = "badge flat";
+      }
+    }
 
     if (reboundEl) reboundEl.hidden = !(dayLow != null && dayLow <= ma5 && last > ma5);
 
@@ -692,6 +719,10 @@ async function updateIndexPanel(key, dayLow) {
     ma5BadgeEl.className = "badge flat";
     alignBadgeEl.textContent = "순위 오류";
     alignBadgeEl.className = "badge flat";
+    if (prevAlignBadgeEl) {
+      prevAlignBadgeEl.textContent = "순위 오류";
+      prevAlignBadgeEl.className = "badge flat";
+    }
     if (reboundEl) reboundEl.hidden = true;
     return null;
   }
