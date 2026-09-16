@@ -425,26 +425,6 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">5. 프로그램매매 (누적)</div>
-          <span class="signal-dot" id="stockProgramSignal"></span>
-        </div>
-        <div class="flow-row">
-          <div class="flow-item">
-            <span class="flow-label">순매수 수량</span>
-            <span class="flow-value flat" id="stockProgramQty">-</span>
-          </div>
-          <div class="flow-item">
-            <span class="flow-label">순매수 대금</span>
-            <span class="flow-value flat" id="stockProgramAmount">-</span>
-          </div>
-        </div>
-        <canvas id="stockProgramChart" class="chart-sm"></canvas>
-        <div class="meta-row"><span id="stockProgramNote">-</span></div>
-        <div class="meta-row"><span style="font-size:10.5px;">그래프: 대시보드를 열어 둔 동안 누적된 당일 순매수 대금 추이 (서버 재시작 시 초기화)</span></div>
-      </div>
-
-      <div class="checklist-item">
-        <div class="checklist-title-row">
           <div class="checklist-title">참고: 전일 수급 (개인 · 외국인 · 기관)</div>
         </div>
         <div class="flow-row">
@@ -462,6 +442,26 @@
           </div>
         </div>
         <div class="meta-row"><span id="stockFlowDate">-</span></div>
+      </div>
+
+      <div class="checklist-item">
+        <div class="checklist-title-row">
+          <div class="checklist-title">5. 프로그램매매 (누적)</div>
+          <span class="signal-dot" id="stockProgramSignal"></span>
+        </div>
+        <div class="flow-row">
+          <div class="flow-item">
+            <span class="flow-label">순매수 수량</span>
+            <span class="flow-value flat" id="stockProgramQty">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">순매수 대금</span>
+            <span class="flow-value flat" id="stockProgramAmount">-</span>
+          </div>
+        </div>
+        <canvas id="stockProgramChart" class="chart-sm"></canvas>
+        <div class="meta-row"><span id="stockProgramNote">-</span></div>
+        <div class="meta-row"><span style="font-size:10.5px;">그래프: 서버가 깨어있는 동안 누적된 당일 순매수 대금 추이 (하단 참고)</span></div>
       </div>
 
       <div class="error-msg" id="stockError"></div>
@@ -1073,10 +1073,11 @@ async function runStockChecklist(code, displayName, forceShow = true) {
 
     const CHECKPOINT_LABELS = { "1": "09:30", "2": "11:20", "3": "13:20", "4": "14:30" };
     if (liveFlow && !liveFlow.error) {
-      const setFlow = (id, v) => {
+      const setFlow = (id, qty) => {
         const el = document.getElementById(id);
-        const d = v > 0 ? "up" : v < 0 ? "down" : "flat";
-        el.textContent = (v > 0 ? "+" : "") + Math.round(v).toLocaleString("ko-KR") + "주";
+        const won = qty * price;
+        const d = won > 0 ? "up" : won < 0 ? "down" : "flat";
+        el.textContent = fmtEok(won);
         el.className = "flow-value " + d;
       };
       setFlow("stockLiveFlowIndividual", liveFlow.individualQtyEstimated);
@@ -1084,7 +1085,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       setFlow("stockLiveFlowInstitution", liveFlow.institutionQty);
       const cp = CHECKPOINT_LABELS[String(liveFlow.checkpoint)] || liveFlow.checkpoint;
       document.getElementById("stockLiveFlowNote").textContent =
-        `장중 추정치 · 기준시각 약 ${cp} (한국투자증권 API, 하루 4회 갱신 · 개인은 외국인+기관 합계의 반대부호로 추정한 값)`;
+        `장중 추정치 · 기준시각 약 ${cp} (한국투자증권 API, 하루 4회 갱신 · 개인은 외국인+기관 합계의 반대부호로 추정, 금액은 현재가 기준 환산치)`;
 
       const foreignBuy = liveFlow.foreignQty > 0, institutionBuy = liveFlow.institutionQty > 0;
       const liveFlowSignal = foreignBuy && institutionBuy ? "green" : (!foreignBuy && !institutionBuy) ? "red" : "yellow";

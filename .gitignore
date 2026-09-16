@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .DS_Store
 .kis_token_cache.json
+.program_trade_history.json

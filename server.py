@@ -52,8 +52,93 @@ def kst_today():
 
 
 # Per-code, per-day cache of program-trade ticks: {code: {"date": "20260916", "points": {"090134": {...}}}}
+# KIS's program-trade endpoint only ever returns a short recent rolling
+# window (~3-4 minutes), never the full trading day, so the only way to
+# reconstruct a whole-day trend is to keep polling while the process is
+# alive and accumulate what each call returns. Persisted to disk so a
+# process restart (Render redeploy, or waking from an inactivity sleep)
+# doesn't throw away the day's progress so far.
+PROGRAM_TRADE_HISTORY_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".program_trade_history.json"
+)
 _program_trade_history = {}
 _program_trade_lock = threading.Lock()
+
+
+def _load_program_trade_history():
+    try:
+        with open(PROGRAM_TRADE_HISTORY_FILE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_program_trade_history():
+    try:
+        with open(PROGRAM_TRADE_HISTORY_FILE, "w") as f:
+            json.dump(_program_trade_history, f)
+    except OSError:
+        pass
+
+
+_program_trade_history = _load_program_trade_history()
+
+# Whatever stock code a client most recently asked about, so the background
+# poller (below) keeps building that stock's history even after the browser
+# tab closes, as long as the process itself stays alive.
+_last_requested_code = {"code": None}
+
+
+def merge_program_trade_rows(code, rows):
+    """Merge freshly-fetched ticks into the per-code/day history cache."""
+    today = kst_today()
+    with _program_trade_lock:
+        entry = _program_trade_history.setdefault(code, {"date": today, "points": {}})
+        if entry["date"] != today:
+            entry["date"] = today
+            entry["points"] = {}
+        changed = False
+        for r in rows:
+            t = r.get("bsop_hour")
+            if not t:
+                continue
+            point = {
+                "netQty": int(r.get("whol_smtn_ntby_qty", 0)),
+                "netAmount": int(r.get("whol_smtn_ntby_tr_pbmn", 0)),
+            }
+            if entry["points"].get(t) != point:
+                changed = True
+            entry["points"][t] = point
+        if len(entry["points"]) > 3000:
+            for k in sorted(entry["points"])[:-3000]:
+                del entry["points"][k]
+        history = [{"time": t, **entry["points"][t]} for t in sorted(entry["points"])]
+        if changed:
+            _save_program_trade_history()
+    return history
+
+
+def _program_trade_background_loop():
+    # Keeps accumulating history for the last-viewed stock even when no
+    # browser is connected, so the day's chart stays complete as long as
+    # this process is awake (see the GitHub Actions keep-alive workflow,
+    # which pings the site during market hours so Render doesn't sleep it).
+    while True:
+        time.sleep(20)
+        code = _last_requested_code["code"]
+        if not code or not KIS_APP_KEY or not KIS_APP_SECRET:
+            continue
+        try:
+            data = kis_get(
+                "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
+                "FHPPG04650101",
+                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
+            )
+            rows = data.get("output") or []
+            if rows:
+                merge_program_trade_rows(code, rows)
+        except Exception:
+            pass
 
 
 def _kis_load_cached_token():
@@ -551,6 +636,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not KIS_APP_KEY or not KIS_APP_SECRET:
             self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
             return
+        _last_requested_code["code"] = code
         try:
             data = kis_get(
                 "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
@@ -561,33 +647,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not rows:
                 raise ValueError("데이터 없음")
             latest = rows[0]
-
-            # Each call returns only a short recent window (~30 ticks). Merge
-            # every call's rows into a per-code, per-day cache keyed by
-            # timestamp so repeated polling (every 30s, from the dashboard's
-            # auto-refresh) reconstructs the full trading day's cumulative
-            # trend without any extra KIS API calls.
-            today = kst_today()
-            with _program_trade_lock:
-                entry = _program_trade_history.setdefault(code, {"date": today, "points": {}})
-                if entry["date"] != today:
-                    entry["date"] = today
-                    entry["points"] = {}
-                for r in rows:
-                    t = r.get("bsop_hour")
-                    if not t:
-                        continue
-                    entry["points"][t] = {
-                        "netQty": int(r.get("whol_smtn_ntby_qty", 0)),
-                        "netAmount": int(r.get("whol_smtn_ntby_tr_pbmn", 0)),
-                    }
-                if len(entry["points"]) > 3000:
-                    for k in sorted(entry["points"])[:-3000]:
-                        del entry["points"][k]
-                history = [
-                    {"time": t, **entry["points"][t]} for t in sorted(entry["points"])
-                ]
-
+            history = merge_program_trade_rows(code, rows)
             self.send_json(200, {
                 "time": latest.get("bsop_hour"),
                 "netQty": int(latest.get("whol_smtn_ntby_qty", 0)),
@@ -618,6 +678,8 @@ class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 if __name__ == "__main__":
+    if KIS_APP_KEY and KIS_APP_SECRET:
+        threading.Thread(target=_program_trade_background_loop, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()
