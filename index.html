@@ -308,6 +308,9 @@
         <span class="badge flat" id="kospiMa5Badge">확인 중</span>
         <span class="badge up" id="kospiReboundBadge" hidden>이평선 반등</span>
       </div>
+      <div class="ma-badges">
+        <span class="badge flat" id="kospiRankChange">확인 중</span>
+      </div>
       <div class="checklist-title-row">
         <div class="rank-compare">
           <div class="rank-compare-row">
@@ -692,6 +695,7 @@ async function updateIndexPanel(key, dayLow) {
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
   const prevAlignBadgeEl = document.getElementById(key + "PrevAlignBadge");
   const ma5SignalEl = document.getElementById(key + "Ma5Signal");
+  const rankChangeEl = document.getElementById(key + "RankChange");
   const reboundEl = document.getElementById(key + "ReboundBadge");
   const chartEl = document.getElementById(key + "Chart");
   if (!ma5BadgeEl || !alignBadgeEl || !chartEl) return null;
@@ -752,6 +756,17 @@ async function updateIndexPanel(key, dayLow) {
       }
     }
 
+    if (rankChangeEl) {
+      if (havePrev) {
+        const change = describeRankChange(last, maList, prevLast, prevMaList);
+        rankChangeEl.textContent = change.text;
+        rankChangeEl.className = "badge " + change.cls;
+      } else {
+        rankChangeEl.textContent = "데이터 부족";
+        rankChangeEl.className = "badge flat";
+      }
+    }
+
     // Same rank-aware rule as the per-stock chart signal (3. 차트 5일선 위):
     // green above MA5; otherwise yellow if today ranks above more MAs than
     // yesterday (an improving position even while still under MA5), red if
@@ -787,6 +802,10 @@ async function updateIndexPanel(key, dayLow) {
     if (prevAlignBadgeEl) {
       prevAlignBadgeEl.textContent = "순위 오류";
       prevAlignBadgeEl.className = "badge flat";
+    }
+    if (rankChangeEl) {
+      rankChangeEl.textContent = "확인 오류";
+      rankChangeEl.className = "badge flat";
     }
     if (ma5SignalEl) ma5SignalEl.className = "signal-dot";
     if (reboundEl) reboundEl.hidden = true;
