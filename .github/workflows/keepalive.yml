@@ -1,17 +1,8 @@
 name: Keep dashboard awake
 
-# Render's free tier spins the app down after ~15 min of no traffic, and
-# each spin-down loses the in-progress 프로그램매매 intraday chart (KIS's
-# API only ever returns a short recent window, so the chart is only as
-# complete as however long the server has been continuously running).
-#
-# Pinging the program-trade endpoint itself (not just "/") both keeps
-# Render awake AND seeds _last_requested_code with the default stock, so
-# the server's background poller starts accumulating from market open
-# (08:50 KST) even if nobody opens the dashboard that early. While someone
-# has the page open for a different stock, their own polling (every 30s)
-# keeps overriding this back to whatever they're actually watching; this
-# ping is just the fallback for whenever no one is looking.
+# Render's free tier spins the app down after ~15 min of no traffic, which
+# makes the next real visit wait through a cold start. Ping it every 10 min
+# during Korean market hours so it stays warm.
 on:
   schedule:
     # 08:50-15:59 KST, Mon-Fri (cron times are UTC)
@@ -23,5 +14,5 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping dashboard (default stock: SK하이닉스, 000660)
-        run: curl -sf -o /dev/null -m 20 "https://market-dashboard-gqxq.onrender.com/api/stock/program-trade?code=000660" || true
+      - name: Ping dashboard
+        run: curl -sf -o /dev/null -m 20 "https://market-dashboard-gqxq.onrender.com/" || true
