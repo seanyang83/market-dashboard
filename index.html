@@ -297,11 +297,13 @@
     <div class="card card-index">
       <div class="card-head">
         <div class="label">코스피 지수</div>
-        <span class="signal-dot" id="kospiSignal"></span>
       </div>
       <div class="sub-label">KOSPI Composite Index · ^KS11</div>
       <div class="price loading" id="kospiPrice">—</div>
-      <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
+      <div class="price-row">
+        <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
+        <span class="signal-dot" id="kospiSignal"></span>
+      </div>
       <div class="ma-badges">
         <span class="badge flat" id="kospiMa5Badge">확인 중</span>
         <span class="badge up" id="kospiReboundBadge" hidden>이평선 반등</span>
@@ -701,9 +703,9 @@ async function updateIndexPanel(key, dayLow) {
     ];
 
     let zoneLabel, zoneSignal;
-    if (last >= ma5) { zoneLabel = "2배베팅"; zoneSignal = "green"; }
-    else if (last > ma20) { zoneLabel = "현금베팅"; zoneSignal = "yellow"; }
-    else { zoneLabel = "저점 현금베팅"; zoneSignal = "red"; }
+    if (last >= ma5) { zoneLabel = "5일선 위=2배 베팅"; zoneSignal = "green"; }
+    else if (last > ma20) { zoneLabel = "5일선 아래=현금 베팅"; zoneSignal = "yellow"; }
+    else { zoneLabel = "20일선 아래=저점 현금베팅"; zoneSignal = "red"; }
     ma5BadgeEl.textContent = zoneLabel;
     ma5BadgeEl.className = "badge " + zoneSignal + (zoneSignal === "red" ? " badge-alert" : "");
 
