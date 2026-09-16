@@ -51,13 +51,18 @@ def kst_today():
     return (datetime.now(timezone.utc) + KST_OFFSET).strftime("%Y%m%d")
 
 
-# Per-code, per-day cache of program-trade ticks: {code: {"date": "20260916", "points": {"090134": {...}}}}
+# Per-code, per-day cache of program-trade snapshots, bucketed to 30 minutes:
+# {code: {"date": "20260916", "points": {"093000": {"time": "093012", ...}}}}
 # KIS's program-trade endpoint only ever returns a short recent rolling
 # window (~3-4 minutes), never the full trading day, so the only way to
 # reconstruct a whole-day trend is to keep polling while the process is
-# alive and accumulate what each call returns. Persisted to disk so a
-# process restart (Render redeploy, or waking from an inactivity sleep)
-# doesn't throw away the day's progress so far.
+# alive and accumulate what each call returns. Only a rough increasing/
+# decreasing trend is needed (not tick-level detail), so only the latest
+# value seen within each 30-minute bucket is kept - one point per bucket,
+# ~13 for a full trading day, rather than thousands of raw ticks.
+# Persisted to disk so a process restart (Render redeploy, or waking from
+# an inactivity sleep) doesn't throw away the day's progress so far.
+BUCKET_MINUTES = 30
 PROGRAM_TRADE_HISTORY_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), ".program_trade_history.json"
 )
@@ -89,8 +94,15 @@ _program_trade_history = _load_program_trade_history()
 _last_requested_code = {"code": None}
 
 
+def _bucket_key(bsop_hour):
+    hh, mm = bsop_hour[0:2], int(bsop_hour[2:4])
+    bucket_mm = "00" if mm < BUCKET_MINUTES else "30"
+    return f"{hh}{bucket_mm}00"
+
+
 def merge_program_trade_rows(code, rows):
-    """Merge freshly-fetched ticks into the per-code/day history cache."""
+    """Merge freshly-fetched ticks into the per-code/day history cache,
+    keeping only the latest value seen within each 30-minute bucket."""
     today = kst_today()
     with _program_trade_lock:
         entry = _program_trade_history.setdefault(code, {"date": today, "points": {}})
@@ -102,17 +114,17 @@ def merge_program_trade_rows(code, rows):
             t = r.get("bsop_hour")
             if not t:
                 continue
-            point = {
+            bucket = _bucket_key(t)
+            existing = entry["points"].get(bucket)
+            if existing is not None and existing.get("time", "") >= t:
+                continue
+            entry["points"][bucket] = {
+                "time": t,
                 "netQty": int(r.get("whol_smtn_ntby_qty", 0)),
                 "netAmount": int(r.get("whol_smtn_ntby_tr_pbmn", 0)),
             }
-            if entry["points"].get(t) != point:
-                changed = True
-            entry["points"][t] = point
-        if len(entry["points"]) > 3000:
-            for k in sorted(entry["points"])[:-3000]:
-                del entry["points"][k]
-        history = [{"time": t, **entry["points"][t]} for t in sorted(entry["points"])]
+            changed = True
+        history = [entry["points"][b] for b in sorted(entry["points"])]
         if changed:
             _save_program_trade_history()
     return history
@@ -123,8 +135,11 @@ def _program_trade_background_loop():
     # browser is connected, so the day's chart stays complete as long as
     # this process is awake (see the GitHub Actions keep-alive workflow,
     # which pings the site during market hours so Render doesn't sleep it).
+    # Only one snapshot per 30-minute bucket is kept, so polling every few
+    # minutes (well under the bucket width) is more than enough - no need
+    # to poll every few seconds for a rough increasing/decreasing trend.
     while True:
-        time.sleep(20)
+        time.sleep(300)
         code = _last_requested_code["code"]
         if not code or not KIS_APP_KEY or not KIS_APP_SECRET:
             continue
