@@ -401,8 +401,17 @@
         </div>
         <div class="ma-badges">
           <span class="badge flat" id="stockVerdict">확인 중</span>
-          <span class="badge flat" id="stockRank">확인 중</span>
           <span class="badge up" id="stockReboundBadge" hidden>이평선 반등</span>
+        </div>
+        <div class="rank-compare">
+          <div class="rank-compare-row">
+            <span class="rank-compare-label">오늘</span>
+            <span class="badge flat" id="stockRank">확인 중</span>
+          </div>
+          <div class="rank-compare-row">
+            <span class="rank-compare-label">어제</span>
+            <span class="badge flat" id="stockPrevRank">확인 중</span>
+          </div>
         </div>
         <canvas id="stockChart" class="chart-lg"></canvas>
         <div class="legend">
@@ -1018,6 +1027,26 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       rankEl.className = "badge flat";
       rankEl.innerHTML = buildRankChain(last, maList, displayName || code);
 
+      const prevRankEl = document.getElementById("stockPrevRank");
+      if (prevRankEl) {
+        const prevIdx = closes.length - 2;
+        const prevLast = closes[prevIdx];
+        const prevMaList = [
+          { label: "5", value: ma5Arr[prevIdx] },
+          { label: "10", value: ma10Arr[prevIdx] },
+          { label: "20", value: ma20Arr[prevIdx] },
+          { label: "60", value: ma60Arr[prevIdx] },
+          { label: "120", value: ma120Arr[prevIdx] },
+        ];
+        if (prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null)) {
+          prevRankEl.className = "badge flat";
+          prevRankEl.innerHTML = buildRankChain(prevLast, prevMaList, displayName || code);
+        } else {
+          prevRankEl.textContent = "데이터 부족";
+          prevRankEl.className = "badge flat";
+        }
+      }
+
       const aboveMa5 = last >= maList[0].value;
       const chartSignal = aboveMa5 ? "green" : "red";
       document.getElementById("stockChartSignal").className = "signal-dot " + chartSignal;
@@ -1043,6 +1072,11 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       verdictEl.className = "badge flat";
       rankEl.textContent = "-";
       rankEl.className = "badge flat";
+      const prevRankEl = document.getElementById("stockPrevRank");
+      if (prevRankEl) {
+        prevRankEl.textContent = "-";
+        prevRankEl.className = "badge flat";
+      }
       document.getElementById("stockChartSignal").className = "signal-dot";
       const stockReboundEl = document.getElementById("stockReboundBadge");
       if (stockReboundEl) stockReboundEl.hidden = true;
