@@ -108,6 +108,9 @@
   .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
   .refresh-btn:disabled { opacity: .5; cursor: default; }
   .ma-badges { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .rank-compare { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .rank-compare-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .rank-compare-label { font-size: 11px; color: var(--sub); width: 28px; flex-shrink: 0; }
   .badge {
     display: inline-flex; align-items: center; white-space: nowrap;
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
@@ -301,8 +304,17 @@
       <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
       <div class="ma-badges">
         <span class="badge flat" id="kospiMa5Badge">확인 중</span>
-        <span class="badge flat" id="kospiAlignBadge">순위 확인 중</span>
         <span class="badge up" id="kospiReboundBadge" hidden>이평선 반등</span>
+      </div>
+      <div class="rank-compare">
+        <div class="rank-compare-row">
+          <span class="rank-compare-label">오늘</span>
+          <span class="badge flat" id="kospiAlignBadge">순위 확인 중</span>
+        </div>
+        <div class="rank-compare-row">
+          <span class="rank-compare-label">어제</span>
+          <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
+        </div>
       </div>
       <canvas id="kospiChart" class="chart-lg"></canvas>
       <div class="legend">
@@ -312,10 +324,6 @@
         <span><i class="dot" style="background:var(--ma20)"></i>20일선</span>
         <span><i class="dot" style="background:var(--ma60)"></i>60일선</span>
         <span><i class="dot" style="background:var(--ma120)"></i>120일선</span>
-      </div>
-      <div class="meta-row" style="margin-top:10px;"><span>어제 이평선 위치</span></div>
-      <div class="ma-badges">
-        <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
       </div>
       <div class="flow-row">
         <div class="flow-item">
