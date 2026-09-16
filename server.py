@@ -97,7 +97,7 @@ def kis_get_token():
         return token
 
 
-def kis_get(path, tr_id, params):
+def kis_get(path, tr_id, params, retries=2):
     token = kis_get_token()
     url = f"{KIS_BASE_URL}{path}?{urllib.parse.urlencode(params)}"
     req = urllib.request.Request(url, headers={
@@ -108,8 +108,18 @@ def kis_get(path, tr_id, params):
         "tr_id": tr_id,
         "custtype": "P",
     })
-    with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read())
+    # KIS occasionally answers with a bare HTTP 5xx (no JSON body) under
+    # load rather than an actual data problem - retry a couple of times
+    # with a short backoff before giving up, so a momentary blip doesn't
+    # surface as an error to the user.
+    for attempt in range(retries + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code < 500 or attempt == retries:
+                raise
+            time.sleep(0.4 * (attempt + 1))
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com"}
 NAVER_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI"
