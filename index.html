@@ -91,6 +91,7 @@
   .flat { color: var(--flat); }
   canvas { width: 100%; height: 60px; display: block; margin-top: 14px; }
   canvas.chart-lg { height: 130px; }
+  canvas.chart-sm { height: 70px; margin-top: 12px; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--sub); margin-top: 8px; }
   .legend .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
   .meta-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 11.5px; color: var(--sub); margin-top: 10px; }
@@ -402,10 +403,14 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">4. 실시간 수급 추정 (외국인 · 기관)</div>
+          <div class="checklist-title">4. 실시간 수급 추정 (개인 · 외국인 · 기관)</div>
           <span class="signal-dot" id="stockLiveFlowSignal"></span>
         </div>
         <div class="flow-row">
+          <div class="flow-item">
+            <span class="flow-label">개인(추정)</span>
+            <span class="flow-value flat" id="stockLiveFlowIndividual">-</span>
+          </div>
           <div class="flow-item">
             <span class="flow-label">외국인</span>
             <span class="flow-value flat" id="stockLiveFlowForeign">-</span>
@@ -413,10 +418,6 @@
           <div class="flow-item">
             <span class="flow-label">기관</span>
             <span class="flow-value flat" id="stockLiveFlowInstitution">-</span>
-          </div>
-          <div class="flow-item">
-            <span class="flow-label">합계</span>
-            <span class="flow-value flat" id="stockLiveFlowSum">-</span>
           </div>
         </div>
         <div class="meta-row"><span id="stockLiveFlowNote">-</span></div>
@@ -437,7 +438,9 @@
             <span class="flow-value flat" id="stockProgramAmount">-</span>
           </div>
         </div>
+        <canvas id="stockProgramChart" class="chart-sm"></canvas>
         <div class="meta-row"><span id="stockProgramNote">-</span></div>
+        <div class="meta-row"><span style="font-size:10.5px;">그래프: 대시보드를 열어 둔 동안 누적된 당일 순매수 대금 추이 (서버 재시작 시 초기화)</span></div>
       </div>
 
       <div class="checklist-item">
@@ -613,6 +616,47 @@ function drawMultiLine(canvas, series) {
     });
     ctx.stroke();
   });
+}
+
+function drawZeroLineChart(canvas, values) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+
+  const pts = values.filter((v) => v != null);
+  if (pts.length < 2) return;
+
+  const pad = 4;
+  const min = Math.min(...pts, 0), max = Math.max(...pts, 0);
+  const range = max - min || 1;
+  const stepX = (w - pad * 2) / (values.length - 1);
+  const yFor = (v) => h - pad - ((v - min) / range) * (h - pad * 2);
+
+  ctx.strokeStyle = cssVar("--border");
+  ctx.setLineDash([3, 3]);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, yFor(0));
+  ctx.lineTo(w - pad, yFor(0));
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const last = pts[pts.length - 1];
+  ctx.strokeStyle = last >= 0 ? cssVar("--up") : cssVar("--down");
+  ctx.lineWidth = 1.75;
+  ctx.beginPath();
+  let started = false;
+  values.forEach((v, i) => {
+    if (v == null) return;
+    const x = pad + i * stepX;
+    const y = yFor(v);
+    if (!started) { ctx.moveTo(x, y); started = true; }
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
 }
 
 function computeAlignmentVerdict(mas) {
@@ -1035,12 +1079,12 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         el.textContent = (v > 0 ? "+" : "") + Math.round(v).toLocaleString("ko-KR") + "주";
         el.className = "flow-value " + d;
       };
+      setFlow("stockLiveFlowIndividual", liveFlow.individualQtyEstimated);
       setFlow("stockLiveFlowForeign", liveFlow.foreignQty);
       setFlow("stockLiveFlowInstitution", liveFlow.institutionQty);
-      setFlow("stockLiveFlowSum", liveFlow.sumQty);
       const cp = CHECKPOINT_LABELS[String(liveFlow.checkpoint)] || liveFlow.checkpoint;
       document.getElementById("stockLiveFlowNote").textContent =
-        `장중 추정치 · 기준시각 약 ${cp} (한국투자증권 API, 하루 4회 갱신)`;
+        `장중 추정치 · 기준시각 약 ${cp} (한국투자증권 API, 하루 4회 갱신 · 개인은 외국인+기관 합계의 반대부호로 추정한 값)`;
 
       const foreignBuy = liveFlow.foreignQty > 0, institutionBuy = liveFlow.institutionQty > 0;
       const liveFlowSignal = foreignBuy && institutionBuy ? "green" : (!foreignBuy && !institutionBuy) ? "red" : "yellow";
@@ -1068,6 +1112,9 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       const programSignal = programTrade.netAmount > 0 ? "green" : programTrade.netAmount < 0 ? "red" : "yellow";
       document.getElementById("stockProgramSignal").className = "signal-dot " + programSignal;
       signals.push(programSignal);
+
+      const hist = programTrade.history || [];
+      drawZeroLineChart(document.getElementById("stockProgramChart"), hist.map((r) => r.netAmount));
     } else {
       document.getElementById("stockProgramNote").textContent =
         (programTrade && programTrade.error) ? `프로그램매매 데이터를 불러오지 못했습니다: ${programTrade.error}` : "프로그램매매 데이터를 불러오지 못했습니다";

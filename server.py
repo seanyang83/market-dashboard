@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8934))
@@ -35,8 +35,44 @@ ALLOWED_INTERVALS = {"1m", "2m", "5m", "15m", "1d"}
 KIS_APP_KEY = os.environ.get("KIS_APP_KEY", "")
 KIS_APP_SECRET = os.environ.get("KIS_APP_SECRET", "")
 KIS_BASE_URL = "https://openapi.koreainvestment.com:9443"
+# KIS rate-limits how often a new access token may be issued (frequent
+# re-issuance can trigger a usage restriction), and each token is valid for
+# ~24h. Cache it on disk too, so a process restart (local dev reload, Render
+# redeploy/spin-down) reuses the still-valid token instead of requesting a
+# fresh one every time.
+KIS_TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".kis_token_cache.json")
 _kis_token_cache = {"token": None, "expires_at": 0}
 _kis_token_lock = threading.Lock()
+
+KST_OFFSET = timedelta(hours=9)
+
+
+def kst_today():
+    return (datetime.now(timezone.utc) + KST_OFFSET).strftime("%Y%m%d")
+
+
+# Per-code, per-day cache of program-trade ticks: {code: {"date": "20260916", "points": {"090134": {...}}}}
+_program_trade_history = {}
+_program_trade_lock = threading.Lock()
+
+
+def _kis_load_cached_token():
+    try:
+        with open(KIS_TOKEN_FILE) as f:
+            data = json.load(f)
+        if data.get("token") and time.time() < data.get("expires_at", 0) - 300:
+            return data
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _kis_save_cached_token(token, expires_at):
+    try:
+        with open(KIS_TOKEN_FILE, "w") as f:
+            json.dump({"token": token, "expires_at": expires_at}, f)
+    except OSError:
+        pass
 
 
 def kis_get_token():
@@ -44,6 +80,13 @@ def kis_get_token():
     with _kis_token_lock:
         if _kis_token_cache["token"] and now < _kis_token_cache["expires_at"] - 300:
             return _kis_token_cache["token"]
+
+        cached = _kis_load_cached_token()
+        if cached:
+            _kis_token_cache["token"] = cached["token"]
+            _kis_token_cache["expires_at"] = cached["expires_at"]
+            return cached["token"]
+
         body = json.dumps({
             "grant_type": "client_credentials",
             "appkey": KIS_APP_KEY,
@@ -58,8 +101,10 @@ def kis_get_token():
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())
         token = data["access_token"]
+        expires_at = now + int(data.get("expires_in", 86400))
         _kis_token_cache["token"] = token
-        _kis_token_cache["expires_at"] = now + int(data.get("expires_in", 86400))
+        _kis_token_cache["expires_at"] = expires_at
+        _kis_save_cached_token(token, expires_at)
         return token
 
 
@@ -481,11 +526,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not rows:
                 raise ValueError("데이터 없음 (장 시작 전이거나 첫 집계 전일 수 있음)")
             latest = max(rows, key=lambda r: int(r.get("bsop_hour_gb", 0) or 0))
+            foreign_qty = int(latest.get("frgn_fake_ntby_qty", 0))
+            institution_qty = int(latest.get("orgn_fake_ntby_qty", 0))
+            sum_qty = int(latest.get("sum_fake_ntby_qty", 0))
             self.send_json(200, {
                 "checkpoint": latest.get("bsop_hour_gb"),
-                "foreignQty": int(latest.get("frgn_fake_ntby_qty", 0)),
-                "institutionQty": int(latest.get("orgn_fake_ntby_qty", 0)),
-                "sumQty": int(latest.get("sum_fake_ntby_qty", 0)),
+                "foreignQty": foreign_qty,
+                "institutionQty": institution_qty,
+                "sumQty": sum_qty,
+                # KIS/KRX only estimate 외국인+기관 in real time; 개인 is not
+                # separately tracked intraday. Since net buy quantity across
+                # all investor types sums to ~0 for a given stock, 개인 is
+                # approximated as the mirror image of the foreign+institution
+                # total (ignores 기타법인, which is usually small).
+                "individualQtyEstimated": -sum_qty,
             })
         except Exception as e:
             self.send_json(502, {"error": str(e)})
@@ -507,10 +561,38 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not rows:
                 raise ValueError("데이터 없음")
             latest = rows[0]
+
+            # Each call returns only a short recent window (~30 ticks). Merge
+            # every call's rows into a per-code, per-day cache keyed by
+            # timestamp so repeated polling (every 30s, from the dashboard's
+            # auto-refresh) reconstructs the full trading day's cumulative
+            # trend without any extra KIS API calls.
+            today = kst_today()
+            with _program_trade_lock:
+                entry = _program_trade_history.setdefault(code, {"date": today, "points": {}})
+                if entry["date"] != today:
+                    entry["date"] = today
+                    entry["points"] = {}
+                for r in rows:
+                    t = r.get("bsop_hour")
+                    if not t:
+                        continue
+                    entry["points"][t] = {
+                        "netQty": int(r.get("whol_smtn_ntby_qty", 0)),
+                        "netAmount": int(r.get("whol_smtn_ntby_tr_pbmn", 0)),
+                    }
+                if len(entry["points"]) > 3000:
+                    for k in sorted(entry["points"])[:-3000]:
+                        del entry["points"][k]
+                history = [
+                    {"time": t, **entry["points"][t]} for t in sorted(entry["points"])
+                ]
+
             self.send_json(200, {
                 "time": latest.get("bsop_hour"),
                 "netQty": int(latest.get("whol_smtn_ntby_qty", 0)),
                 "netAmount": int(latest.get("whol_smtn_ntby_tr_pbmn", 0)),
+                "history": history,
             })
         except Exception as e:
             self.send_json(502, {"error": str(e)})
