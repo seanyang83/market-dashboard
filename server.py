@@ -589,7 +589,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             data = kis_get(
                 "/uapi/domestic-stock/v1/quotations/program-trade-by-stock",
                 "FHPPG04650101",
-                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
+                # "J" (KRX only) can even show the opposite sign from what a
+                # user sees in their own MTS app, which defaults to "UN"
+                # (통합 = KRX+NXT combined) - match that so the numbers agree.
+                {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code},
             )
             rows = data.get("output") or []
             if not rows:
