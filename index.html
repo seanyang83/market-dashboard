@@ -135,10 +135,6 @@
   .signal-dot.green { background: var(--tl-green); color: var(--tl-green); }
   .signal-dot.red { background: var(--tl-red); color: var(--tl-red); }
   .signal-dot.yellow { background: var(--tl-yellow); color: var(--tl-yellow); }
-  /* Candle dot only: Korean market convention (red=상승, blue=하락), distinct
-     from the green/red/yellow "good/caution/bad" scale used everywhere else. */
-  .signal-dot.up { background: var(--up); color: var(--up); }
-  .signal-dot.down { background: var(--down); color: var(--down); }
   .candle-label { font-size: 12.5px; font-weight: 700; }
   .signal-summary {
     font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px;
@@ -1037,21 +1033,14 @@ async function runStockChecklist(code, displayName, forceShow = true) {
     candleLabelEl.textContent = open == null ? "" : isBullishCandle ? "양봉" : isBearishCandle ? "음봉" : "보합";
     candleLabelEl.className = "candle-label " + (isBullishCandle ? "up" : isBearishCandle ? "down" : "flat");
 
-    // Displayed dot: 전일 종가 대비 방향 기준, Korean convention (빨강=상승,
-    // 파랑=하락) - confirmed by a same-direction candle shows the strong
-    // color; a candle pulling the other way (up day but 음봉, or down day
-    // but 양봉) shows yellow as a caution/mixed signal.
-    let candleDotClass;
-    if (dir === "up") candleDotClass = isBearishCandle ? "yellow" : "up";
-    else if (dir === "down") candleDotClass = isBullishCandle ? "yellow" : "down";
-    else candleDotClass = "yellow";
-    document.getElementById("stockCandleSignal").className = "signal-dot " + candleDotClass;
-
-    // Score contribution keeps the usual green(best)/yellow(mixed)/red(worst)
-    // scale, independent of the dot's display color above.
-    const candleScoreSignal =
-      candleDotClass === "up" ? "green" : candleDotClass === "down" ? "red" : "yellow";
-    signals.push(candleScoreSignal);
+    // Signal: 전일 종가 대비 상승 + 양봉 = 녹색(베팅가능), 방향이 엇갈리면
+    // (상승+음봉 또는 하락+양봉) = 노란색(혼조), 하락 + 음봉 = 빨강.
+    let candleSignal;
+    if (dir === "up") candleSignal = isBearishCandle ? "yellow" : "green";
+    else if (dir === "down") candleSignal = isBullishCandle ? "yellow" : "red";
+    else candleSignal = "yellow";
+    document.getElementById("stockCandleSignal").className = "signal-dot " + candleSignal;
+    signals.push(candleSignal);
 
     const info = themeResp.info;
     const usEl = document.getElementById("stockUsSector");
