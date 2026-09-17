@@ -135,6 +135,11 @@
   .signal-dot.green { background: var(--tl-green); color: var(--tl-green); }
   .signal-dot.red { background: var(--tl-red); color: var(--tl-red); }
   .signal-dot.yellow { background: var(--tl-yellow); color: var(--tl-yellow); }
+  /* Candle dot only: Korean market convention (red=상승, blue=하락), distinct
+     from the green/red/yellow "good/caution/bad" scale used everywhere else. */
+  .signal-dot.up { background: var(--up); color: var(--up); }
+  .signal-dot.down { background: var(--down); color: var(--down); }
+  .candle-label { font-size: 12.5px; font-weight: 700; }
   .signal-summary {
     font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px;
     border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px;
@@ -376,7 +381,10 @@
         </span>
       </div>
       <div class="price-row">
-        <div class="price" id="stockPrice">-</div>
+        <div style="display:flex; align-items:baseline; gap:8px;">
+          <div class="price" id="stockPrice">-</div>
+          <span class="candle-label flat" id="stockCandleLabel"></span>
+        </div>
         <span class="signal-dot" id="stockCandleSignal"></span>
       </div>
       <div class="change-row flat" id="stockChange"><span>불러오는 중</span></div>
@@ -1022,10 +1030,28 @@ async function runStockChecklist(code, displayName, forceShow = true) {
     changeEl.className = "change-row " + dir;
     changeEl.innerHTML = `<span class="arrow">${arrow}</span><span>${diff >= 0 ? "+" : "-"}${Math.abs(Math.round(diff)).toLocaleString("ko-KR")}</span><span>(${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%)</span>`;
     const open = quote.open;
-    const candleDir = open == null ? "flat" : price > open ? "up" : price < open ? "down" : "flat";
-    const candleSignal = computeSignal(candleDir, "normal");
-    document.getElementById("stockCandleSignal").className = "signal-dot " + candleSignal;
-    signals.push(candleSignal);
+    const isBullishCandle = open != null && price > open;
+    const isBearishCandle = open != null && price < open;
+
+    const candleLabelEl = document.getElementById("stockCandleLabel");
+    candleLabelEl.textContent = open == null ? "" : isBullishCandle ? "양봉" : isBearishCandle ? "음봉" : "보합";
+    candleLabelEl.className = "candle-label " + (isBullishCandle ? "up" : isBearishCandle ? "down" : "flat");
+
+    // Displayed dot: 전일 종가 대비 방향 기준, Korean convention (빨강=상승,
+    // 파랑=하락) - confirmed by a same-direction candle shows the strong
+    // color; a candle pulling the other way (up day but 음봉, or down day
+    // but 양봉) shows yellow as a caution/mixed signal.
+    let candleDotClass;
+    if (dir === "up") candleDotClass = isBearishCandle ? "yellow" : "up";
+    else if (dir === "down") candleDotClass = isBullishCandle ? "yellow" : "down";
+    else candleDotClass = "yellow";
+    document.getElementById("stockCandleSignal").className = "signal-dot " + candleDotClass;
+
+    // Score contribution keeps the usual green(best)/yellow(mixed)/red(worst)
+    // scale, independent of the dot's display color above.
+    const candleScoreSignal =
+      candleDotClass === "up" ? "green" : candleDotClass === "down" ? "red" : "yellow";
+    signals.push(candleScoreSignal);
 
     const info = themeResp.info;
     const usEl = document.getElementById("stockUsSector");
