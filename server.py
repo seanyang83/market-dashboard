@@ -513,10 +513,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(502, {"error": str(e)})
 
     def _fetch_investors_kis(self, code):
-        # Real prior-day net-buy amounts straight from KRX (via KIS), rather
-        # than Naver's share quantity approximated by qty x close price.
-        # FID_INPUT_DATE_1 left blank returns the most recently settled
-        # business day (today's isn't settled until after market close).
+        # Real net-buy amounts for the prior trading day, straight from KRX
+        # (via KIS), rather than Naver's share quantity approximated by
+        # qty x close price. FID_INPUT_DATE_1 left blank returns the most
+        # recently settled business day - during market hours that's
+        # yesterday, but after today's own close (~15:40) it becomes today.
+        # output2 is a descending list of days, so when the first row turns
+        # out to be today, the row right after it is the actual prior day -
+        # always use that one, regardless of what time this is called.
         data = kis_get(
             "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
             "FHPTJ04160001",
@@ -531,7 +535,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         rows = data.get("output2") or []
         if not rows:
             raise ValueError("데이터 없음")
-        row = rows[0]
+        today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+        row = rows[1] if rows[0].get("stck_bsop_date") == today and len(rows) > 1 else rows[0]
         individual_qty = int(row.get("prsn_ntby_qty", 0))
         foreign_qty = int(row.get("frgn_ntby_qty", 0))
         institution_qty = int(row.get("orgn_ntby_qty", 0))
