@@ -1223,7 +1223,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       document.getElementById("stockFlowDate").textContent = "수급 데이터를 불러오지 못했습니다";
     }
 
-    const CHECKPOINT_LABELS = { "1": "09:30", "2": "11:20", "3": "13:20", "4": "14:30" };
+    const CHECKPOINT_LABELS = { "1": "09:30", "2": "11:20", "3": "13:20", "4": "14:30", "5": "15:30(장마감)" };
     if (liveFlow && !liveFlow.error) {
       const setFlow = (id, qty) => {
         const el = document.getElementById(id);
