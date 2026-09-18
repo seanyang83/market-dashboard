@@ -1205,10 +1205,15 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         const d = v > 0 ? "up" : v < 0 ? "down" : "flat";
         return `<td class="${d}">${fmtEok(v)}</td>`;
       };
+      const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
       const hist = investors.history && investors.history.length ? investors.history : [investors];
       flowHistoryBodyEl.innerHTML = hist.map((r) => {
         const fd = r.date || "";
-        const fdFmt = fd.length === 8 ? `${fd.slice(4, 6)}/${fd.slice(6, 8)}` : fd;
+        let fdFmt = fd;
+        if (fd.length === 8) {
+          const dt = new Date(Date.UTC(+fd.slice(0, 4), +fd.slice(4, 6) - 1, +fd.slice(6, 8)));
+          fdFmt = `${fd.slice(4, 6)}/${fd.slice(6, 8)}(${WEEKDAY_KO[dt.getUTCDay()]})`;
+        }
         return `<tr><td>${fdFmt}</td>${fmtCell(r.individual)}${fmtCell(r.foreign)}${fmtCell(r.institution)}</tr>`;
       }).join("");
 
