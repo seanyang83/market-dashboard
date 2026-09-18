@@ -11,6 +11,7 @@ unofficial chart API frequently stops updating for days at a time, while
 Naver (a Korean provider) has genuinely live intraday data for domestic
 indices.
 """
+import ast
 import http.server
 import json
 import os
@@ -21,8 +22,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8934))
@@ -170,7 +170,6 @@ def kis_get(path, tr_id, params, retries=2):
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com"}
 NAVER_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI"
-NAVER_HISTORY_URL = "https://finance.naver.com/sise/sise_index_day.naver?code=KOSPI&page={page}"
 NAVER_INVESTOR_URL = (
     "https://stock.naver.com/api/domestic/market/trend/daily"
     "?tradeType=KRX&marketType=KOSPI&startIdx=0&pageSize=1"
@@ -184,98 +183,62 @@ NAVER_INVESTOR_URL = (
 INVESTOR_INDIVIDUAL = {"8000"}
 INVESTOR_FOREIGN = {"9000", "9001"}
 INVESTOR_INSTITUTION = {"1000", "2000", "3000", "3100", "4000", "5000", "6000"}
-NAVER_HISTORY_ROW_RE = re.compile(
-    rb'<td class="date">(\d{4})\.(\d{2})\.(\d{2})</td>\s*<td class="number_1">([\d,]+\.\d+)</td>'
-)
-KOSPI_HISTORY_MIN_DAYS = 150
-KOSPI_HISTORY_MAX_PAGES = 30
-# Naver only gives ~10 rows per page, so a cold cache needs ~15 sequential
-# page fetches to reach KOSPI_HISTORY_MIN_DAYS - that's the single biggest
-# source of slow/laggy KOSPI loads. Keep the scraped history in a
-# long-lived by-date cache instead of expiring the whole thing every few
-# minutes: once populated, only page 1 (the most recent days, including
-# today's still-forming close) needs to be re-fetched periodically, and
-# requests are served from cache instantly while that refresh happens in
-# the background.
-KOSPI_HISTORY_REFRESH_TTL = 45
-_kospi_history_by_date = {}
-_kospi_history_lock = threading.Lock()
-_kospi_history_meta = {"last_refresh": 0, "refreshing": False}
-_kospi_scrape_lock = threading.Lock()
+
+# Daily-close history (KOSPI index or any KRX stock code) via Naver's chart
+# JSON API. Replaces the old sise_day.naver / sise_index_day.naver HTML
+# pages: those were paginated at ~10 rows/page (15+ sequential requests to
+# cover a 120-day MA) and Naver retired them outright - both now return
+# HTTP 410 Gone (confirmed 2026-09-18) - so this is a hard requirement, not
+# just a speed-up. A single request covers the whole lookback window here.
+NAVER_SISEJSON_URL = "https://api.finance.naver.com/siseJson.naver"
+HISTORY_LOOKBACK_DAYS = 300
+HISTORY_CACHE_TTL = 60
+_history_cache = {}  # symbol -> {"data": [...], "ts": epoch}
+_history_cache_lock = threading.Lock()
 
 
-def _kospi_fetch_page(page):
-    req = urllib.request.Request(NAVER_HISTORY_URL.format(page=page), headers=NAVER_HEADERS)
-    with urllib.request.urlopen(req, timeout=8) as resp:
-        body = resp.read()
-    return NAVER_HISTORY_ROW_RE.findall(body)
-
-
-def _kospi_merge_matches(matches):
-    with _kospi_history_lock:
-        for y, m, d, price in matches:
-            date = f"{y.decode()}-{m.decode()}-{d.decode()}"
-            _kospi_history_by_date[date] = float(price.decode().replace(",", ""))
-
-
-def _kospi_ensure_full_history():
-    with _kospi_scrape_lock:
-        with _kospi_history_lock:
-            if len(_kospi_history_by_date) >= 20:
-                return  # another thread already filled it in while we waited
-        got_any = False
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            futures = [ex.submit(_kospi_fetch_page, p) for p in range(1, KOSPI_HISTORY_MAX_PAGES + 1)]
-            for fut in as_completed(futures):
-                try:
-                    matches = fut.result()
-                except Exception:
-                    continue
-                if matches:
-                    _kospi_merge_matches(matches)
-                    got_any = True
-        with _kospi_history_lock:
-            enough = len(_kospi_history_by_date) >= 20
-        if not enough:
-            raise ValueError("insufficient history rows scraped" if got_any else "upstream unavailable")
-        _kospi_history_meta["last_refresh"] = time.time()
-
-
-def _kospi_maybe_refresh_recent_async():
+def naver_daily_closes(symbol):
     now = time.time()
-    if now - _kospi_history_meta["last_refresh"] < KOSPI_HISTORY_REFRESH_TTL or _kospi_history_meta["refreshing"]:
-        return
-    _kospi_history_meta["refreshing"] = True
+    with _history_cache_lock:
+        cached = _history_cache.get(symbol)
+        if cached and now - cached["ts"] < HISTORY_CACHE_TTL:
+            return cached["data"]
 
-    def _bg():
-        try:
-            matches = _kospi_fetch_page(1)
-            if matches:
-                _kospi_merge_matches(matches)
-        except Exception:
-            pass
-        finally:
-            _kospi_history_meta["last_refresh"] = time.time()
-            _kospi_history_meta["refreshing"] = False
+    end_dt = datetime.now(timezone.utc) + timedelta(hours=9)
+    start_dt = end_dt - timedelta(days=HISTORY_LOOKBACK_DAYS)
+    params = {
+        "symbol": symbol,
+        "requestType": "1",
+        "startTime": start_dt.strftime("%Y%m%d"),
+        "endTime": end_dt.strftime("%Y%m%d"),
+        "timeframe": "day",
+    }
+    url = f"{NAVER_SISEJSON_URL}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers=NAVER_HEADERS)
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+    rows = ast.literal_eval(body.strip())
+    closes = []
+    for r in rows[1:]:
+        date_str = str(r[0])
+        closes.append({
+            "date": f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}",
+            "close": float(r[4]),
+        })
+    if len(closes) < 20:
+        raise ValueError("insufficient history rows")
 
-    threading.Thread(target=_bg, daemon=True).start()
+    with _history_cache_lock:
+        _history_cache[symbol] = {"data": closes, "ts": now}
+    return closes
 
 # --- Single-stock checklist feature ---
 NAVER_STOCK_SEARCH_URL = "https://ac.stock.naver.com/ac?q={query}&target=stock"
 NAVER_STOCK_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/stock/{code}"
-NAVER_STOCK_HISTORY_URL = "https://finance.naver.com/item/sise_day.naver?code={code}&page={page}"
 NAVER_STOCK_INVESTOR_URL = (
     "https://stock.naver.com/api/domestic/detail/{code}/trend?tradeType=KRX&startIdx=0&pageSize=1"
 )
 STOCK_CODE_RE = re.compile(r"^[0-9A-Z]{6}$")
-STOCK_HISTORY_ROW_RE = re.compile(
-    rb'<td align="center"><span class="tah p10 gray03">(\d{4})\.(\d{2})\.(\d{2})</span></td>\s*'
-    rb'<td class="num"><span class="tah p11">([\d,]+)</span></td>'
-)
-STOCK_HISTORY_MIN_DAYS = 150
-STOCK_HISTORY_MAX_PAGES = 20
-STOCK_HISTORY_CACHE_TTL = 300
-_stock_history_cache = {}  # code -> {"data": [...], "ts": epoch}
 
 # Naver has no clean public "theme" API, so this is a small curated map of
 # well-known large-caps to a representative domestic ETF (today's sector
@@ -468,27 +431,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(502, {"error": str(e)})
 
     def handle_kospi_history(self):
-        with _kospi_history_lock:
-            have_enough = len(_kospi_history_by_date) >= 20
-
-        if not have_enough:
-            # Cold start: nothing usable cached yet, so this request has to
-            # wait for a scrape. Fan the page fetches out concurrently
-            # (rather than one-by-one) to cut that one-time wait way down.
-            try:
-                _kospi_ensure_full_history()
-            except Exception as e:
-                self.send_json(502, {"error": str(e)})
-                return
-        else:
-            _kospi_maybe_refresh_recent_async()
-
-        with _kospi_history_lock:
-            closes = [{"date": d, "close": _kospi_history_by_date[d]} for d in sorted(_kospi_history_by_date)]
-        if len(closes) < 20:
-            self.send_json(502, {"error": "insufficient history rows scraped"})
-            return
-        self.send_json(200, {"closes": closes})
+        try:
+            closes = naver_daily_closes("KOSPI")
+            self.send_json(200, {"closes": closes})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
 
     def handle_stock_search(self):
         q = self.query_param("q").strip()
@@ -544,37 +491,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         code = self.require_stock_code()
         if not code:
             return
-        now = time.time()
-        cache_entry = _stock_history_cache.get(code)
-        if cache_entry and now - cache_entry["ts"] < STOCK_HISTORY_CACHE_TTL:
-            self.send_json(200, {"closes": cache_entry["data"]})
-            return
         try:
-            by_date = {}
-            for page in range(1, STOCK_HISTORY_MAX_PAGES + 1):
-                url = NAVER_STOCK_HISTORY_URL.format(code=code, page=page)
-                req = urllib.request.Request(url, headers=NAVER_HEADERS)
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    body = resp.read()
-                matches = STOCK_HISTORY_ROW_RE.findall(body)
-                if not matches:
-                    break
-                for y, m, d, price in matches:
-                    date = f"{y.decode()}-{m.decode()}-{d.decode()}"
-                    by_date[date] = float(price.decode().replace(",", ""))
-                if len(by_date) >= STOCK_HISTORY_MIN_DAYS:
-                    break
-
-            closes = [{"date": d, "close": by_date[d]} for d in sorted(by_date)]
-            if len(closes) < 20:
-                raise ValueError("insufficient history rows scraped")
-            _stock_history_cache[code] = {"data": closes, "ts": now}
+            closes = naver_daily_closes(code)
             self.send_json(200, {"closes": closes})
         except Exception as e:
-            if cache_entry:
-                self.send_json(200, {"closes": cache_entry["data"]})
-            else:
-                self.send_json(502, {"error": str(e)})
+            self.send_json(502, {"error": str(e)})
 
     def handle_stock_investors(self):
         code = self.require_stock_code()
