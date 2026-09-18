@@ -536,21 +536,29 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not rows:
             raise ValueError("데이터 없음")
         today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
-        row = rows[1] if rows[0].get("stck_bsop_date") == today and len(rows) > 1 else rows[0]
-        individual_qty = int(row.get("prsn_ntby_qty", 0))
-        foreign_qty = int(row.get("frgn_ntby_qty", 0))
-        institution_qty = int(row.get("orgn_ntby_qty", 0))
-        # tr_pbmn fields are denominated in 백만원 (millions of won).
-        return {
-            "date": row.get("stck_bsop_date"),
-            "individual": int(row.get("prsn_ntby_tr_pbmn", 0)) * 1_000_000,
-            "foreign": int(row.get("frgn_ntby_tr_pbmn", 0)) * 1_000_000,
-            "institution": int(row.get("orgn_ntby_tr_pbmn", 0)) * 1_000_000,
-            "individualQty": individual_qty,
-            "foreignQty": foreign_qty,
-            "institutionQty": institution_qty,
-            "source": "kis",
-        }
+        trading_rows = [r for r in rows if r.get("stck_bsop_date") != today]
+        if not trading_rows:
+            trading_rows = rows
+        row = trading_rows[0]
+
+        def to_entry(r):
+            return {
+                "date": r.get("stck_bsop_date"),
+                "individual": int(r.get("prsn_ntby_tr_pbmn", 0)) * 1_000_000,
+                "foreign": int(r.get("frgn_ntby_tr_pbmn", 0)) * 1_000_000,
+                "institution": int(r.get("orgn_ntby_tr_pbmn", 0)) * 1_000_000,
+            }
+
+        # A single call already returns ~30 days in output2 (descending), so
+        # a week's history costs nothing extra - just keep more of what we
+        # already fetched.
+        entry = to_entry(row)
+        entry["individualQty"] = int(row.get("prsn_ntby_qty", 0))
+        entry["foreignQty"] = int(row.get("frgn_ntby_qty", 0))
+        entry["institutionQty"] = int(row.get("orgn_ntby_qty", 0))
+        entry["source"] = "kis"
+        entry["history"] = [to_entry(r) for r in trading_rows[:7]]
+        return entry
 
     def _fetch_investors_naver(self, code):
         req = urllib.request.Request(NAVER_STOCK_INVESTOR_URL.format(code=code), headers=NAVER_HEADERS)
@@ -566,6 +574,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         # Naver only gives net share quantity per investor type, not won
         # value, so approximate the money amount using that day's close
         # price (same convention the market-wide /kospi/investors uses).
+        # This fallback path only ever gets called if the KIS call above
+        # failed, and Naver's endpoint only gives one day - no week history.
         return {
             "date": row.get("bizdate"),
             "individual": individual_qty * close_price,
@@ -575,6 +585,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "foreignQty": foreign_qty,
             "institutionQty": institution_qty,
             "source": "naver",
+            "history": [{
+                "date": row.get("bizdate"),
+                "individual": individual_qty * close_price,
+                "foreign": foreign_qty * close_price,
+                "institution": institution_qty * close_price,
+            }],
         }
 
     def handle_stock_theme(self):

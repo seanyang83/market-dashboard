@@ -183,6 +183,17 @@
     display: block; font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .flow-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11.5px; }
+  .flow-table th {
+    text-align: right; color: var(--sub); font-weight: 600; font-size: 10.5px;
+    padding: 2px 4px 4px; border-bottom: 1px solid var(--border);
+  }
+  .flow-table th:first-child, .flow-table td:first-child { text-align: left; }
+  .flow-table td {
+    text-align: right; padding: 3px 4px; font-weight: 700; font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .flow-table td:first-child { color: var(--sub); font-weight: 500; }
   @media (max-width: 640px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
     .card-compact { padding: 12px 14px; }
@@ -460,22 +471,16 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">참고: 전일 수급 (개인 · 외국인 · 기관)</div>
+          <div class="checklist-title">참고: 최근 7거래일 수급 (개인 · 외국인 · 기관)</div>
         </div>
-        <div class="flow-row">
-          <div class="flow-item">
-            <span class="flow-label">개인</span>
-            <span class="flow-value flat" id="stockFlowIndividual">-</span>
-          </div>
-          <div class="flow-item">
-            <span class="flow-label">외국인</span>
-            <span class="flow-value flat" id="stockFlowForeign">-</span>
-          </div>
-          <div class="flow-item">
-            <span class="flow-label">기관</span>
-            <span class="flow-value flat" id="stockFlowInstitution">-</span>
-          </div>
-        </div>
+        <table class="flow-table">
+          <thead>
+            <tr><th>날짜</th><th>개인</th><th>외국인</th><th>기관</th></tr>
+          </thead>
+          <tbody id="stockFlowHistoryBody">
+            <tr><td colspan="4">불러오는 중</td></tr>
+          </tbody>
+        </table>
         <div class="meta-row"><span id="stockFlowDate">-</span></div>
       </div>
 
@@ -1194,25 +1199,27 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       if (stockReboundEl) stockReboundEl.hidden = true;
     }
 
+    const flowHistoryBodyEl = document.getElementById("stockFlowHistoryBody");
     if (investors) {
-      const setFlow = (id, v) => {
-        const el = document.getElementById(id);
+      const fmtCell = (v) => {
         const d = v > 0 ? "up" : v < 0 ? "down" : "flat";
-        el.textContent = fmtEok(v);
-        el.className = "flow-value " + d;
+        return `<td class="${d}">${fmtEok(v)}</td>`;
       };
-      setFlow("stockFlowIndividual", investors.individual);
-      setFlow("stockFlowForeign", investors.foreign);
-      setFlow("stockFlowInstitution", investors.institution);
-      const fd = investors.date || "";
-      const fdFmt = fd.length === 8 ? `${fd.slice(0, 4)}-${fd.slice(4, 6)}-${fd.slice(6, 8)}` : fd;
+      const hist = investors.history && investors.history.length ? investors.history : [investors];
+      flowHistoryBodyEl.innerHTML = hist.map((r) => {
+        const fd = r.date || "";
+        const fdFmt = fd.length === 8 ? `${fd.slice(4, 6)}/${fd.slice(6, 8)}` : fd;
+        return `<tr><td>${fdFmt}</td>${fmtCell(r.individual)}${fmtCell(r.foreign)}${fmtCell(r.institution)}</tr>`;
+      }).join("");
+
       const srcNote = investors.source === "kis"
         ? "한국투자증권 API 실거래 확정치"
         : "네이버 금융 기준, 금액은 종가 기준 추정치";
       document.getElementById("stockFlowDate").textContent =
-        `${fdFmt} 전일 마감 기준 (실시간 아님, ${srcNote}, 점수 미반영 참고용)`;
+        `전일 마감 기준 (실시간 아님, ${srcNote}, 점수 미반영 참고용)`;
     } else {
-      document.getElementById("stockFlowDate").textContent = "수급 데이터를 불러오지 못했습니다";
+      flowHistoryBodyEl.innerHTML = '<tr><td colspan="4">수급 데이터를 불러오지 못했습니다</td></tr>';
+      document.getElementById("stockFlowDate").textContent = "";
     }
 
     const CHECKPOINT_LABELS = { "1": "09:30", "2": "11:20", "3": "13:20", "4": "14:30", "5": "15:30(장마감)" };
