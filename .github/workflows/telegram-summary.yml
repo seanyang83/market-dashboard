@@ -1,0 +1,18 @@
+name: Send Telegram summary
+
+# Posts a text summary of the dashboard (매크로 체크 + 종목 체크) to the
+# configured Telegram channel, hourly during market hours on trading days.
+on:
+  schedule:
+    # 09:10-15:10 KST, Mon-Fri (cron times are UTC; 00:10-06:10 UTC falls on
+    # the same calendar day as 09:10-15:10 KST, so weekday matches directly)
+    - cron: "10 0-6 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger summary send
+        run: |
+          curl -sf -m 30 "https://market-dashboard-gqxq.onrender.com/api/telegram/send-summary?key=${{ secrets.TELEGRAM_SUMMARY_KEY }}"

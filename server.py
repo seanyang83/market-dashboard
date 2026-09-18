@@ -336,6 +336,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_stock_investor_live()
         elif self.path.startswith("/api/stock/program-trade"):
             self.handle_stock_program_trade()
+        elif self.path.startswith("/api/telegram/send-summary"):
+            self.handle_telegram_send_summary()
         else:
             super().do_GET()
 
@@ -663,6 +665,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
+    def handle_telegram_send_summary(self):
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            self.send_json(503, {"error": "텔레그램 설정이 안 되어 있습니다"})
+            return
+        try:
+            text = build_dashboard_summary_text()
+            send_telegram_message(text)
+            self.send_json(200, {"ok": True})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -676,6 +692,280 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         pass
+
+
+# --- Telegram summary broadcast ---
+# Lets a scheduled job (GitHub Actions cron) pull a text summary of what the
+# dashboard currently shows and post it to a Telegram channel, so checking
+# in doesn't require opening the page. Reuses the exact same JSON endpoints
+# the frontend calls (via localhost) rather than re-scraping anything, so
+# there's exactly one place each data source is fetched from.
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_SUMMARY_KEY = os.environ.get("TELEGRAM_SUMMARY_KEY", "")
+TELEGRAM_SUMMARY_STOCK_CODE = os.environ.get("TELEGRAM_SUMMARY_STOCK_CODE", "000660")
+
+SIGNAL_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴", None: "⚪"}
+
+
+def _score_for(signal):
+    return {"green": 20, "yellow": 10, "red": 0}.get(signal, 10)
+
+
+def _local_get(path):
+    url = f"http://127.0.0.1:{PORT}{path}"
+    with urllib.request.urlopen(url, timeout=15) as resp:
+        return json.loads(resp.read())
+
+
+def _dir_of(diff):
+    if diff > 0.0005:
+        return "up"
+    if diff < -0.0005:
+        return "down"
+    return "flat"
+
+
+def _signal_for_dir(dir_, sentiment):
+    if dir_ == "flat":
+        return "yellow"
+    favorable = (dir_ == "down") if sentiment == "inverse" else (dir_ == "up")
+    return "green" if favorable else "red"
+
+
+def _rolling_ma(values, period):
+    out = [None] * len(values)
+    total = 0.0
+    for i, v in enumerate(values):
+        total += v
+        if i >= period:
+            total -= values[i - period]
+        if i >= period - 1:
+            out[i] = total / period
+    return out
+
+
+def _rank_index(price, ma_list):
+    items = [("__price__", price)] + ma_list
+    items.sort(key=lambda it: -it[1])
+    return next(i for i, (label, _) in enumerate(items) if label == "__price__")
+
+
+def _describe_rank_change(last, ma_list, prev_last, prev_ma_list):
+    crossed_up, crossed_down = [], []
+    for (label, val), (_, prev_val) in zip(ma_list, prev_ma_list):
+        was_above = prev_last > prev_val
+        is_above = last > val
+        if is_above and not was_above:
+            crossed_up.append(label + "일선")
+        elif not is_above and was_above:
+            crossed_down.append(label + "일선")
+    if crossed_up and crossed_down:
+        return f"{'·'.join(crossed_up)} 돌파, {'·'.join(crossed_down)} 이탈"
+    if crossed_up:
+        return f"{'·'.join(crossed_up)} 상향 돌파"
+    if crossed_down:
+        return f"{'·'.join(crossed_down)} 하향 돌파"
+    steps = _rank_index(prev_last, prev_ma_list) - _rank_index(last, ma_list)
+    if steps > 0:
+        return f"어제보다 {steps}단계 상승"
+    if steps < 0:
+        return f"어제보다 {-steps}단계 하락"
+    return "어제와 동일한 위치"
+
+
+def _ma_state(closes):
+    """Returns (last, ma_list, prev_last, prev_ma_list, have_prev) or None if
+    there isn't enough history for a 120-day MA."""
+    if len(closes) < 120:
+        return None
+    periods = [5, 10, 20, 60, 120]
+    arrs = {p: _rolling_ma(closes, p) for p in periods}
+    last = closes[-1]
+    ma_list = [(str(p), arrs[p][-1]) for p in periods]
+    prev_idx = len(closes) - 2
+    prev_last = closes[prev_idx] if prev_idx >= 0 else None
+    prev_ma_list = [(str(p), arrs[p][prev_idx]) for p in periods] if prev_idx >= 0 else []
+    have_prev = prev_idx >= 0 and prev_last is not None and all(v is not None for _, v in prev_ma_list)
+    return last, ma_list, prev_last, prev_ma_list, have_prev
+
+
+def _macro_instrument_line(label, symbol, sentiment, prefix, decimals):
+    data = _local_get(f"/api/quote?symbol={urllib.parse.quote(symbol, safe='')}&range=1d&interval=2m")
+    meta = data["chart"]["result"][0]["meta"]
+    price = meta["regularMarketPrice"]
+    prev = meta.get("previousClose") or meta.get("chartPreviousClose")
+    diff = price - prev
+    dir_ = _dir_of(diff)
+    signal = _signal_for_dir(dir_, sentiment)
+    pct = (diff / prev * 100) if prev else 0
+    arrow = "▲" if dir_ == "up" else ("▼" if dir_ == "down" else "-")
+    price_fmt = f"{price:.{decimals}f}" if decimals else f"{price:,.0f}"
+    return signal, f"{SIGNAL_EMOJI[signal]} {label} {prefix}{price_fmt} {arrow}{abs(pct):.2f}%"
+
+
+def _kospi_section():
+    quote = _local_get("/api/kospi/quote")
+    hist = _local_get("/api/kospi/history")
+    closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
+    price, prev_close = quote["price"], quote["prevClose"]
+    diff = price - prev_close
+    dir_signal = _signal_for_dir(_dir_of(diff), "normal")
+
+    state = _ma_state(closes)
+    if not state:
+        return dir_signal, dir_signal, f"코스피 {price:,.2f} ({diff:+,.2f}) 데이터 부족"
+    last, ma_list, prev_last, prev_ma_list, have_prev = state
+    ma5 = dict(ma_list)["5"]
+    ma20 = dict(ma_list)["20"]
+    if last >= ma5:
+        zone = "5일선 위=2배 베팅"
+    elif last > ma20:
+        zone = "5일선 아래=현금 베팅"
+    else:
+        zone = "20일선 아래=저점 현금베팅"
+    if last >= ma5:
+        ma5_signal = "green"
+    elif have_prev and _rank_index(last, ma_list) < _rank_index(prev_last, prev_ma_list):
+        ma5_signal = "yellow"
+    else:
+        ma5_signal = "red"
+    rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list) if have_prev else "데이터 부족"
+    pct = diff / prev_close * 100 if prev_close else 0
+    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
+    line = (
+        f"{SIGNAL_EMOJI[dir_signal]} 코스피 {price:,.2f} ({arrow}{abs(pct):.2f}%)\n"
+        f"  {SIGNAL_EMOJI[ma5_signal]} {zone} · {rank_text}"
+    )
+    return dir_signal, ma5_signal, line
+
+
+def _stock_section(code):
+    quote = _local_get(f"/api/stock/quote?code={code}")
+    hist = _local_get(f"/api/stock/history?code={code}")
+    theme = _local_get(f"/api/stock/theme?code={code}")
+    try:
+        live = _local_get(f"/api/stock/investor-live?code={code}")
+    except Exception:
+        live = None
+    try:
+        prog = _local_get(f"/api/stock/program-trade?code={code}")
+    except Exception:
+        prog = None
+
+    name = quote.get("name") or code
+    price, prev_close, open_ = quote["price"], quote["prevClose"], quote.get("open")
+    diff = price - prev_close
+    dir_ = _dir_of(diff)
+    is_bull = open_ is not None and price > open_
+    is_bear = open_ is not None and price < open_
+    candle_label = "양봉" if is_bull else ("음봉" if is_bear else "보합")
+    if dir_ == "up":
+        candle_signal = "yellow" if is_bear else "green"
+    elif dir_ == "down":
+        candle_signal = "yellow" if is_bull else "red"
+    else:
+        candle_signal = "yellow"
+    signals = [candle_signal]
+
+    closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
+    state = _ma_state(closes)
+    chart_signal, rank_text = None, "데이터 부족"
+    if state:
+        last, ma_list, prev_last, prev_ma_list, have_prev = state
+        ma5 = dict(ma_list)["5"]
+        if last >= ma5:
+            chart_signal = "green"
+        elif have_prev and _rank_index(last, ma_list) < _rank_index(prev_last, prev_ma_list):
+            chart_signal = "yellow"
+        else:
+            chart_signal = "red"
+        if have_prev:
+            rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list)
+        signals.append(chart_signal)
+
+    live_signal, live_line = None, None
+    if live and not live.get("error"):
+        fb, ib = live.get("foreignQty", 0) > 0, live.get("institutionQty", 0) > 0
+        live_signal = "green" if fb and ib else ("red" if not fb and not ib else "yellow")
+        signals.append(live_signal)
+        live_line = (
+            f"외국인 {fmt_eok(live.get('foreignQty', 0) * price)} · "
+            f"기관 {fmt_eok(live.get('institutionQty', 0) * price)}"
+        )
+
+    prog_signal, prog_line = None, None
+    if prog and not prog.get("error"):
+        amt = prog.get("netAmount", 0)
+        prog_signal = "green" if amt > 0 else ("red" if amt < 0 else "yellow")
+        signals.append(prog_signal)
+        prog_line = f"프로그램매매 {fmt_eok(amt)}"
+
+    score_pct = round(sum(_score_for(s) for s in signals) / (len(signals) * 20) * 100) if signals else 0
+    pct = diff / prev_close * 100 if prev_close else 0
+    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
+
+    lines = [
+        f"{SIGNAL_EMOJI[candle_signal]} {name} ₩{price:,.0f} ({arrow}{abs(pct):.2f}%, {candle_label}) · 종목체크 {score_pct}%",
+    ]
+    if chart_signal:
+        lines.append(f"  {SIGNAL_EMOJI[chart_signal]} {rank_text}")
+    if live_line:
+        lines.append(f"  {SIGNAL_EMOJI[live_signal]} {live_line}")
+    if prog_line:
+        lines.append(f"  {SIGNAL_EMOJI[prog_signal]} {prog_line}")
+    return "\n".join(lines)
+
+
+def fmt_eok(won):
+    return f"{'+' if won >= 0 else ''}{round(won / 1e8):,}억"
+
+
+def build_dashboard_summary_text():
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    lines = [f"📊 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}\n"]
+
+    macro_signals = []
+    for label, symbol, sentiment, prefix, decimals in [
+        ("미국채10Y", "^TNX", "inverse", "", 3),
+        ("WTI", "CL=F", "inverse", "$", 2),
+        ("나스닥100선물", "NQ=F", "normal", "$", 0),
+        ("비트코인", "BTC-USD", "normal", "$", 0),
+    ]:
+        try:
+            sig, line = _macro_instrument_line(label, symbol, sentiment, prefix, decimals)
+            macro_signals.append(sig)
+            lines.append(line)
+        except Exception:
+            lines.append(f"⚪ {label} 데이터 없음")
+
+    try:
+        dir_sig, ma5_sig, kospi_line = _kospi_section()
+        macro_signals.extend([dir_sig, ma5_sig])
+        lines.append(kospi_line)
+    except Exception as e:
+        lines.append(f"⚪ 코스피 데이터 없음 ({e})")
+
+    macro_pct = round(sum(_score_for(s) for s in macro_signals) / (len(macro_signals) * 20) * 100) if macro_signals else 0
+    lines.insert(1, f"매크로 체크 {macro_pct}%\n")
+
+    lines.append("")
+    try:
+        lines.append(_stock_section(TELEGRAM_SUMMARY_STOCK_CODE))
+    except Exception as e:
+        lines.append(f"⚪ 종목 체크 데이터 없음 ({e})")
+
+    return "\n".join(lines)
+
+
+def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    body = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text}).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        result = json.loads(resp.read())
+    if not result.get("ok"):
+        raise ValueError(result.get("description", "telegram send failed"))
 
 
 class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
