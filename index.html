@@ -460,7 +460,7 @@
 
       <div class="checklist-item">
         <div class="checklist-title-row">
-          <div class="checklist-title">참고: 전일 수급 (개인 · 외국인 · 기관)</div>
+          <div class="checklist-title">참고: 최근 마감 수급 (개인 · 외국인 · 기관)</div>
         </div>
         <div class="flow-row">
           <div class="flow-item">
@@ -1206,11 +1206,19 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       setFlow("stockFlowInstitution", investors.institution);
       const fd = investors.date || "";
       const fdFmt = fd.length === 8 ? `${fd.slice(0, 4)}-${fd.slice(4, 6)}-${fd.slice(6, 8)}` : fd;
+      const todayKst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" }).replace(/-/g, "");
+      // KIS's daily investor-trade endpoint returns whichever business day
+      // is most recently settled - during market hours that's yesterday,
+      // but after today's close (~15:40) it becomes today itself. Label
+      // whichever it is accurately instead of always assuming "어제".
+      const timingNote = fd === todayKst
+        ? "당일 마감 기준 (장중 실시간 아님, 장 마감 후 집계)"
+        : "전일 마감 기준 (실시간 아님 · 오늘 데이터는 다음 거래일에 집계됨)";
       const srcNote = investors.source === "kis"
         ? "한국투자증권 API 실거래 확정치"
         : "네이버 금융 기준, 금액은 종가 기준 추정치";
       document.getElementById("stockFlowDate").textContent =
-        `${fdFmt} 하루 전체 마감 기준 (실시간 아님 · 오늘 데이터는 다음 거래일에 집계됨, ${srcNote}, 점수 미반영 참고용)`;
+        `${fdFmt} ${timingNote}, ${srcNote}, 점수 미반영 참고용`;
     } else {
       document.getElementById("stockFlowDate").textContent = "수급 데이터를 불러오지 못했습니다";
     }
