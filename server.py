@@ -990,11 +990,10 @@ def build_dashboard_summary_text():
     except Exception as e:
         stock_pct, stock_name, stock_lines = None, TELEGRAM_SUMMARY_STOCK_CODE, [f"⚪ 종목 체크 데이터 없음 ({e})"]
 
-    summary_line = f"매크로 체크 {macro_pct}%"
-    if stock_pct is not None:
-        summary_line += f" · 종목체크({stock_name}) {stock_pct}%"
+    summary_lines = [f"매크로 체크 {macro_pct}%", ""]
+    summary_lines.append(f"종목체크({stock_name}) {stock_pct}%" if stock_pct is not None else "종목 체크 데이터 없음")
 
-    return "\n".join([header, summary_line, "", *macro_lines, "", *stock_lines])
+    return "\n".join([header, *summary_lines, "", *macro_lines, "", *stock_lines, "", "----"])
 
 
 def send_telegram_message(text):
