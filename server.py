@@ -751,6 +751,12 @@ def _rank_index(price, ma_list):
     return next(i for i, (label, _) in enumerate(items) if label == "__price__")
 
 
+def _format_rank_chain(price, ma_list, price_label):
+    items = [(price_label, price)] + [(label + "일선", val) for label, val in ma_list]
+    items.sort(key=lambda it: -it[1])
+    return ">".join(label for label, _ in items)
+
+
 def _describe_rank_change(last, ma_list, prev_last, prev_ma_list):
     crossed_up, crossed_down = [], []
     for (label, val), (_, prev_val) in zip(ma_list, prev_ma_list):
@@ -835,9 +841,10 @@ def _kospi_section():
     else:
         ma5_signal = "red"
     rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list) if have_prev else "데이터 부족"
+    rank_chain = _format_rank_chain(last, ma_list, "지수")
     lines = [
         f"{SIGNAL_EMOJI[dir_signal]} 코스피 {price:,.2f} ({arrow}{abs(pct):.2f}%) · {zone}",
-        f"{SIGNAL_EMOJI[ma5_signal]} 코스피 순위: {rank_text}",
+        f"{SIGNAL_EMOJI[ma5_signal]} 코스피 순위: {rank_chain} ({rank_text})",
     ]
     return dir_signal, ma5_signal, lines
 
@@ -870,6 +877,36 @@ def _stock_section(code):
         candle_signal = "yellow"
     signals = [candle_signal]
 
+    us_signal, us_line, kr_signal, kr_line = None, None, None, None
+    info = theme.get("info") if theme.get("found") else None
+    if info and info.get("usProxy"):
+        try:
+            us_data = _local_get(f"/api/quote?symbol={urllib.parse.quote(info['usProxy']['symbol'], safe='')}&range=1d&interval=2m")
+            meta = us_data["chart"]["result"][0]["meta"]
+            prev = meta.get("previousClose") or meta.get("chartPreviousClose")
+            d = meta["regularMarketPrice"] - prev
+            us_signal = _signal_for_dir(_dir_of(d), "normal")
+            us_pct = d / prev * 100 if prev else 0
+            us_arrow = "▲" if d > 0 else ("▼" if d < 0 else "-")
+            us_line = f"{SIGNAL_EMOJI[us_signal]} 전일 미국 동일 산업군({info['usProxy']['name']}) {us_arrow}{abs(us_pct):.2f}%"
+        except Exception:
+            pass
+    if info and info.get("krProxy"):
+        try:
+            kr_data = _local_get(f"/api/stock/quote?code={info['krProxy']['code']}")
+            kr_prev = kr_data["prevClose"]
+            d = kr_data["price"] - kr_prev
+            kr_signal = _signal_for_dir(_dir_of(d), "normal")
+            kr_pct = d / kr_prev * 100 if kr_prev else 0
+            kr_arrow = "▲" if d > 0 else ("▼" if d < 0 else "-")
+            kr_line = f"{SIGNAL_EMOJI[kr_signal]} 국내 동일 산업군({info['krProxy']['name']}) {kr_arrow}{abs(kr_pct):.2f}%"
+        except Exception:
+            pass
+    if us_signal:
+        signals.append(us_signal)
+    if kr_signal:
+        signals.append(kr_signal)
+
     closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
     state = _ma_state(closes)
     chart_signal, rank_text = None, "데이터 부족"
@@ -884,13 +921,18 @@ def _stock_section(code):
             chart_signal = "red"
         if have_prev:
             rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list)
+        rank_chain = _format_rank_chain(last, ma_list, name)
         signals.append(chart_signal)
 
     pct = diff / prev_close * 100 if prev_close else 0
     arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
     lines = [f"{SIGNAL_EMOJI[candle_signal]} {name} ₩{price:,.0f} ({arrow}{abs(pct):.2f}%, {candle_label})"]
+    if us_line:
+        lines.append(us_line)
+    if kr_line:
+        lines.append(kr_line)
     if chart_signal:
-        lines.append(f"{SIGNAL_EMOJI[chart_signal]} 이평선 순위: {rank_text}")
+        lines.append(f"{SIGNAL_EMOJI[chart_signal]} 이평선 순위: {rank_chain} ({rank_text})")
 
     if live and not live.get("error"):
         fb, ib = live.get("foreignQty", 0) > 0, live.get("institutionQty", 0) > 0
