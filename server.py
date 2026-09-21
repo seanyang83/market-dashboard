@@ -801,7 +801,7 @@ def _macro_instrument_line(label, symbol, sentiment, prefix, decimals):
     pct = (diff / prev * 100) if prev else 0
     arrow = "▲" if dir_ == "up" else ("▼" if dir_ == "down" else "-")
     price_fmt = f"{price:.{decimals}f}" if decimals else f"{price:,.0f}"
-    return signal, f"{SIGNAL_EMOJI[signal]} {label} {prefix}{price_fmt} {arrow}{abs(pct):.2f}%"
+    return signal, f"{SIGNAL_EMOJI[signal]} {label} {prefix}{price_fmt} ({arrow}{abs(pct):.2f}%)"
 
 
 def _kospi_section():
@@ -812,9 +812,13 @@ def _kospi_section():
     diff = price - prev_close
     dir_signal = _signal_for_dir(_dir_of(diff), "normal")
 
+    pct = diff / prev_close * 100 if prev_close else 0
+    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
+
     state = _ma_state(closes)
     if not state:
-        return dir_signal, dir_signal, f"코스피 {price:,.2f} ({diff:+,.2f}) 데이터 부족"
+        line = f"{SIGNAL_EMOJI[dir_signal]} 코스피 {price:,.2f} ({arrow}{abs(pct):.2f}%) 데이터 부족"
+        return dir_signal, dir_signal, [line]
     last, ma_list, prev_last, prev_ma_list, have_prev = state
     ma5 = dict(ma_list)["5"]
     ma20 = dict(ma_list)["20"]
@@ -831,13 +835,11 @@ def _kospi_section():
     else:
         ma5_signal = "red"
     rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list) if have_prev else "데이터 부족"
-    pct = diff / prev_close * 100 if prev_close else 0
-    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
-    line = (
-        f"{SIGNAL_EMOJI[dir_signal]} 코스피 {price:,.2f} ({arrow}{abs(pct):.2f}%)\n"
-        f"  {SIGNAL_EMOJI[ma5_signal]} {zone} · {rank_text}"
-    )
-    return dir_signal, ma5_signal, line
+    lines = [
+        f"{SIGNAL_EMOJI[dir_signal]} 코스피 {price:,.2f} ({arrow}{abs(pct):.2f}%) · {zone}",
+        f"{SIGNAL_EMOJI[ma5_signal]} 코스피 순위: {rank_text}",
+    ]
+    return dir_signal, ma5_signal, lines
 
 
 def _stock_section(code):
@@ -884,37 +886,29 @@ def _stock_section(code):
             rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list)
         signals.append(chart_signal)
 
-    live_signal, live_line = None, None
+    pct = diff / prev_close * 100 if prev_close else 0
+    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
+    lines = [f"{SIGNAL_EMOJI[candle_signal]} {name} ₩{price:,.0f} ({arrow}{abs(pct):.2f}%, {candle_label})"]
+    if chart_signal:
+        lines.append(f"{SIGNAL_EMOJI[chart_signal]} 이평선 순위: {rank_text}")
+
     if live and not live.get("error"):
         fb, ib = live.get("foreignQty", 0) > 0, live.get("institutionQty", 0) > 0
         live_signal = "green" if fb and ib else ("red" if not fb and not ib else "yellow")
         signals.append(live_signal)
-        live_line = (
-            f"외국인 {fmt_eok(live.get('foreignQty', 0) * price)} · "
+        lines.append(
+            f"{SIGNAL_EMOJI[live_signal]} 수급: 외국인 {fmt_eok(live.get('foreignQty', 0) * price)} · "
             f"기관 {fmt_eok(live.get('institutionQty', 0) * price)}"
         )
 
-    prog_signal, prog_line = None, None
     if prog and not prog.get("error"):
         amt = prog.get("netAmount", 0)
         prog_signal = "green" if amt > 0 else ("red" if amt < 0 else "yellow")
         signals.append(prog_signal)
-        prog_line = f"프로그램매매 {fmt_eok(amt)}"
+        lines.append(f"{SIGNAL_EMOJI[prog_signal]} 프로그램매매: {fmt_eok(amt)}")
 
-    score_pct = round(sum(_score_for(s) for s in signals) / (len(signals) * 20) * 100) if signals else 0
-    pct = diff / prev_close * 100 if prev_close else 0
-    arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
-
-    lines = [
-        f"{SIGNAL_EMOJI[candle_signal]} {name} ₩{price:,.0f} ({arrow}{abs(pct):.2f}%, {candle_label}) · 종목체크 {score_pct}%",
-    ]
-    if chart_signal:
-        lines.append(f"  {SIGNAL_EMOJI[chart_signal]} {rank_text}")
-    if live_line:
-        lines.append(f"  {SIGNAL_EMOJI[live_signal]} {live_line}")
-    if prog_line:
-        lines.append(f"  {SIGNAL_EMOJI[prog_signal]} {prog_line}")
-    return "\n".join(lines)
+    score_pct = round(sum(_score_for(s) for s in signals) / (len(signals) * 20) * 100) if signals else None
+    return score_pct, name, lines
 
 
 def fmt_eok(won):
@@ -923,9 +917,10 @@ def fmt_eok(won):
 
 def build_dashboard_summary_text():
     now = datetime.now(timezone.utc) + timedelta(hours=9)
-    lines = [f"📊 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}\n"]
+    header = f"📊 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}"
 
     macro_signals = []
+    macro_lines = []
     for label, symbol, sentiment, prefix, decimals in [
         ("미국채10Y", "^TNX", "inverse", "", 3),
         ("WTI", "CL=F", "inverse", "$", 2),
@@ -935,27 +930,29 @@ def build_dashboard_summary_text():
         try:
             sig, line = _macro_instrument_line(label, symbol, sentiment, prefix, decimals)
             macro_signals.append(sig)
-            lines.append(line)
+            macro_lines.append(line)
         except Exception:
-            lines.append(f"⚪ {label} 데이터 없음")
+            macro_lines.append(f"⚪ {label} 데이터 없음")
 
     try:
-        dir_sig, ma5_sig, kospi_line = _kospi_section()
+        dir_sig, ma5_sig, kospi_lines = _kospi_section()
         macro_signals.extend([dir_sig, ma5_sig])
-        lines.append(kospi_line)
+        macro_lines.extend(kospi_lines)
     except Exception as e:
-        lines.append(f"⚪ 코스피 데이터 없음 ({e})")
+        macro_lines.append(f"⚪ 코스피 데이터 없음 ({e})")
 
     macro_pct = round(sum(_score_for(s) for s in macro_signals) / (len(macro_signals) * 20) * 100) if macro_signals else 0
-    lines.insert(1, f"매크로 체크 {macro_pct}%\n")
 
-    lines.append("")
     try:
-        lines.append(_stock_section(TELEGRAM_SUMMARY_STOCK_CODE))
+        stock_pct, stock_name, stock_lines = _stock_section(TELEGRAM_SUMMARY_STOCK_CODE)
     except Exception as e:
-        lines.append(f"⚪ 종목 체크 데이터 없음 ({e})")
+        stock_pct, stock_name, stock_lines = None, TELEGRAM_SUMMARY_STOCK_CODE, [f"⚪ 종목 체크 데이터 없음 ({e})"]
 
-    return "\n".join(lines)
+    summary_line = f"매크로 체크 {macro_pct}%"
+    if stock_pct is not None:
+        summary_line += f" · 종목체크({stock_name}) {stock_pct}%"
+
+    return "\n".join([header, summary_line, "", *macro_lines, "", *stock_lines])
 
 
 def send_telegram_message(text):
