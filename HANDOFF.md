@@ -1,0 +1,274 @@
+# 종가베팅 체크리스트 — 개발 인수인계 문서
+
+개인용 한국 주식시장 대시보드. "종가에 얼마나 배팅할지"를 매크로 지표 +
+개별 종목 체크리스트로 판단하기 위한 도구. 다른 Claude 세션/계정이 이 문서만
+읽고 바로 이어서 개발할 수 있도록 아키텍처, 데이터 흐름, 신호등 로직, 운영
+설정을 정리했다.
+
+- 배포 주소: https://market-dashboard-gqxq.onrender.com (Render 무료 티어)
+- 로컬 경로: `/Users/sean_yang/Claude/Code/YSH/`
+- 저장소: git, 브랜치 `main`, 커밋할 때마다 바로 push하는 워크플로우
+
+## 1. 파일 구성 (전부)
+
+```
+server.py                          백엔드: 정적 파일 서버 + 데이터 프록시 + 텔레그램 발송
+index.html                         프론트엔드: 순수 HTML/CSS/JS, 프레임워크 없음
+render.yaml                        Render 배포 설정 (python3 server.py 실행)
+.github/workflows/keepalive.yml    10분마다 핑 (Render 무료 티어 슬립 방지)
+.github/workflows/telegram-summary.yml  평일 09:10~15:10 매시 텔레그램 요약 발송 트리거
+.kis_token_cache.json              KIS 토큰 로컬 캐시 (gitignore 대상, Render에선 매 배포마다 사라짐)
+.claude/launch.json                로컬 프리뷰용 (Claude Code 개발 환경 설정)
+```
+
+server.py 하나가 정적 파일 서빙 + 모든 외부 API 프록시 + 텔레그램 발송까지
+전부 처리한다. 별도 빌드 스텝 없음(`buildCommand: ""`), 의존성은 표준 라이브러리뿐.
+
+## 2. 왜 이렇게 만들었는가 (핵심 설계 이유)
+
+- **브라우저가 직접 외부 API를 못 부른다** (CORS). 그래서 server.py가 같은
+  오리진에서 프록시 역할을 한다. 프론트는 항상 `/api/...`만 호출한다.
+- **KOSPI/개별종목 시세는 네이버 금융**, 미국 지표(국채금리·유가·나스닥선물·
+  비트코인)는 **야후 파이낸스** — 야후의 `^KS11`(코스피) 피드가 며칠씩 안
+  갱신되는 문제가 있어서 국내 지수는 네이버로 뗐다.
+- **개별 종목의 실시간 수급/프로그램매매는 한국투자증권(KIS) Open API**로만
+  가능 (네이버는 전일 확정치뿐, 그것도 수량만 주고 금액은 근사치).
+- **텔레그램 요약 기능은 server.py 안의 `_local_get()`으로 기존 `/api/...`
+  엔드포인트를 그대로 재호출**한다. 데이터 소스별로 파싱 로직이 딱 한 곳에만
+  존재하게 하기 위함 (프론트 JS와 서버 텔레그램 빌더가 각자 스크래핑하지 않음).
+  단, 신호등 계산 로직 자체는 JS(index.html)와 Python(server.py) 양쪽에
+  중복 구현되어 있다 — 언어가 다르니 어쩔 수 없이 미러링. **한쪽을 고치면
+  반드시 반대쪽도 고칠 것** (아래 3절 "이중 구현" 참고).
+
+## 3. 신호등(초록/노랑/빨강) 로직 — 가장 중요한 부분
+
+세 갈래로 나뉜다. 전부 "초록=베팅 유리, 노랑=혼조, 빨강=불리"로 통일.
+
+### 3-1. 방향성 신호 (매크로 카드: 미국채/유가/나스닥/비트코인)
+`computeSignal(dir, sentiment)` (JS) / `_signal_for_dir` (Python):
+- `sentiment: "inverse"` (금리·유가는 내려야 증시에 유리) → 하락=초록, 상승=빨강
+- `sentiment: "normal"` (나스닥·비트코인은 올라야 유리) → 상승=초록, 하락=빨강
+- 변화가 ±0.05% 미만이면 "flat" → 무조건 노랑
+
+### 3-2. 캔들 신호 (개별 종목 "가격" 카드, `stockCandleSignal`)
+**전일 종가 대비** 상승/하락 + 당일 시가 대비 양봉/음봉 조합:
+- 상승 + 양봉 = **초록** (베팅 가능)
+- 상승인데 음봉, 또는 하락인데 양봉 (엇갈림) = **노랑** (혼조)
+- 하락 + 음봉 = **빨강**
+- 이건 사용자가 명시적으로 확정한 최종 로직 (`server.py:872-877`,
+  `index.html:1043-1046`). 이전에 "한국식 적양청음(상승=빨강/하락=파랑)"
+  색상 컨벤션으로 바꿨다가 사용자가 되돌린 이력이 있음 — **다시 빨강/파랑
+  컨벤션으로 바꾸려 하지 말 것**, 초록/노랑/빨강이 최종 확정 사항.
+
+### 3-3. 이평선 순위 신호 ("rank-aware", 가장 복잡한 부분)
+대상: KOSPI 카드의 `kospiMa5Signal`, 개별종목의 "3. 차트 5일선 위"
+(`stockChartSignal`).
+
+5/10/20/60/120일 이평선과 현재가를 한 줄로 정렬해서 순위를 매긴다
+(`rankIndexOf`/`_rank_index`: 0 = 가격이 모든 이평선 위, 숫자가 클수록 아래).
+- 가격이 5일선 위 → **초록** (그냥 확정)
+- 5일선 아래인데, **어제보다 오늘 순위가 개선**(이평선을 더 많이 뚫고 올라옴)
+  → **노랑**
+- 5일선 아래고 순위가 그대로거나 더 나빠짐 → **빨강**
+
+동반되는 텍스트 뱃지 두 종류:
+- **오늘/어제 순위 체인** (`buildRankChain`/`_format_rank_chain`): 예)
+  `SK하이닉스 > 5일선 > 10일선 > 20일선 > 60일선 > 120일선` — 가격과 이평선을
+  값 기준으로 정렬해서 부등호로 이어 붙인 문자열. 오늘 것과 어제 것을 같은
+  카드에 나란히 표시해서 순위 변화를 한눈에 비교하게 함.
+- **순위 변화 설명** (`describeRankChange`/`_describe_rank_change`): 어제 대비
+  어떤 이평선을 돌파/이탈했는지, 없으면 "어제보다 N단계 상승/하락", 그것도
+  아니면 "어제와 동일한 위치".
+
+**이중 구현 위치** (하나 고치면 반드시 짝도 고칠 것):
+| 개념 | JS (index.html) | Python (server.py) |
+|---|---|---|
+| 순위 인덱스 | `rankIndexOf` | `_rank_index` |
+| 순위 체인 문자열 | `buildRankChain` | `_format_rank_chain` |
+| 순위 변화 설명 | `describeRankChange` | `_describe_rank_change` |
+| 이평선 계산 | `rollingMA` | `_rolling_ma` |
+| KOSPI 섹션 조립 | `updateIndexPanel` | `_kospi_section` |
+| 종목 섹션 조립 | `runStockChecklist` (일부) | `_stock_section` |
+
+### 3-4. 코스피 존(zone) 뱃지 (`kospiMa5Badge`)
+가격 위치에 따라 텍스트가 곧 조건을 설명하도록 되어 있다 (사용자가 "조건을
+풀어써달라"고 요청해서 이 형태로 확정):
+- 5일선 위 → `"5일선 위=2배 베팅"` (초록)
+- 5일선 아래, 20일선 위 → `"5일선 아래=현금 베팅"` (노랑)
+- 20일선 아래 → `"20일선 아래=저점 현금베팅"` (빨강, `badge-alert` 펄스 애니메이션)
+
+### 3-5. 점수 집계
+각 신호는 초록=20점/노랑=10점/빨강=0점으로 환산, `(합계 / (개수×20)) * 100`
+로 퍼센트화. 매크로 체크 %와 종목 체크 %가 각각 따로 집계된다. KOSPI는
+방향성 신호(dir)와 순위 신호(ma5) 두 개를 모두 매크로 점수에 반영한다
+(`8d037ed` 커밋 — "KOSPI's two signals separately in the 매크로 체크 score").
+
+## 4. 백엔드 (server.py) 엔드포인트 전체 목록
+
+| 경로 | 데이터 소스 | 용도 |
+|---|---|---|
+| `GET /api/quote?symbol=&range=&interval=` | Yahoo Finance chart API | 국채금리/유가/나스닥선물/비트코인/US 섹터 ETF |
+| `GET /api/kospi/quote` | 네이버 실시간 폴링 API | 코스피 현재가/시가/고저/전일종가 |
+| `GET /api/kospi/history` | 네이버 `siseJson.naver` | 코스피 일별 종가 (최근 300일, MA 계산용) |
+| `GET /api/kospi/investors` | 네이버 `stock.naver.com` 수급 API | 코스피 전체 개인/외국인/기관 순매수 |
+| `GET /api/stock/search?q=` | 네이버 자동완성 API | 종목명 → 코드 검색 |
+| `GET /api/stock/quote?code=` | 네이버 실시간 폴링 API | 개별 종목 현재가/시가/고저 |
+| `GET /api/stock/history?code=` | 네이버 `siseJson.naver` | 개별 종목 일별 종가 |
+| `GET /api/stock/investors?code=` | **KIS 우선, 실패 시 네이버 폴백** | 전일(항상 실제 전일) 수급 + 최근 7거래일 히스토리 |
+| `GET /api/stock/theme?code=` | 서버 내 하드코딩 맵 (`STOCK_THEMES`) | 테마/미국·국내 대표 ETF 매핑 |
+| `GET /api/stock/investor-live?code=` | KIS `investor-trend-estimate` | 장중 외국인/기관 실시간 추정 수급 (하루 4~5회 갱신) |
+| `GET /api/stock/program-trade?code=` | KIS `program-trade-by-stock` (통합 UN) | 당일 누적 프로그램매매 순매수 |
+| `GET /api/telegram/send-summary?key=` | 내부 재호출 (`_local_get`) | 텔레그램 채널에 요약 발송 (키 검증 필요) |
+
+주의할 지점:
+- `naver_daily_closes()`는 **60초 캐시**가 있음 (`HISTORY_CACHE_TTL`). 여러
+  카드가 거의 동시에 같은 심볼 히스토리를 요청해도 중복 호출 안 함.
+- `kis_get()`은 KIS가 가끔 이유 없이 5xx를 뱉는 문제 때문에 **재시도 2회**
+  (0.4s, 0.8s 백오프) 붙어 있음.
+- `program-trade-by-stock`은 반드시 `FID_COND_MRKT_DIV_CODE: "UN"` (통합,
+  KRX+NXT). `"J"`(KRX 단독)로 하면 사용자 MTS 앱과 부호가 반대로 나올 수
+  있음 — 실제로 이 버그가 있었고 스크린샷으로 검증 후 수정함.
+- `_fetch_investors_kis`: KIS의 "가장 최근 정산된 영업일"이 15:40 장마감
+  전후로 오늘/어제가 바뀌는 특성이 있어서, **응답 목록에서 오늘 날짜인 행은
+  건너뛰고 항상 그 다음(진짜 전일) 행을 사용**하도록 되어 있음. 이건 사용자가
+  "시간대와 무관하게 항상 전일 수급을 보고 싶다"고 명시적으로 요구한 사양.
+
+## 5. KIS 토큰 캐싱 (3단 캐시, 중요)
+
+KIS 토큰은 발급 후 ~24시간 유효, 재발급이 잦으면 계정에 문자 알림이 오고
+사용 제한도 걸릴 수 있음. 그래서 3단계로 캐싱:
+
+1. **프로세스 메모리** (`_kis_token_cache`) — 같은 프로세스 내 재사용.
+2. **디스크 파일** (`.kis_token_cache.json`, gitignore 대상) — 로컬 재시작이나
+   Render의 sleep/wake 사이클에서 재사용 (디스크는 유지됨).
+3. **Render 환경변수** (`KIS_CACHED_TOKEN`, `KIS_CACHED_TOKEN_EXPIRES_AT`) —
+   Render는 **재배포 시 디스크를 통째로 날리기 때문에** 디스크 캐시만으로는
+   부족함. 새 토큰을 발급하면 `_render_set_env_var()`가 Render API로 그
+   값을 환경변수에 **써서 저장**해두고, 다음 재배포 때 `os.environ`에서 바로
+   읽어 재사용한다. 이게 있어야 "코드 배포할 때마다 새 토큰 발급 → 문자 옴"
+   문제가 안 생김.
+
+이 메커니즘이 작동하려면 Render 환경변수에 `RENDER_API_KEY`,
+`RENDER_SERVICE_ID`가 설정되어 있어야 한다 (자기 자신의 env-var를 고치는
+권한을 가진 Render API 키).
+
+## 6. 텔레그램 요약 기능
+
+**아키텍처**: GitHub Actions cron → `curl`로 Render 엔드포인트 호출 →
+`server.py`가 내부적으로 모든 `/api/...`를 재호출해 텍스트 조립 → 텔레그램
+Bot API `sendMessage`로 채널에 발송.
+
+- 스케줄: `.github/workflows/telegram-summary.yml`, cron `"10 0-6 * * 1-5"`
+  = 09:10~15:10 KST, 평일만 (00:10~06:10 UTC가 같은 날짜의 KST 09:10~15:10과
+  겹쳐서 날짜 경계 문제 없음).
+- 보안: `TELEGRAM_SUMMARY_KEY`를 쿼리 파라미터로 검증 (`?key=...`), 이 값은
+  Render 환경변수 + GitHub Actions repo secret 양쪽에 동일하게 등록되어야 함.
+- 메시지 포맷 (최종 확정, `build_dashboard_summary_text()`):
+  ```
+  📊 종가베팅 체크리스트 · MM/DD HH:MM
+  매크로 체크 NN%
+  종목체크(종목명) NN%
+                          ← 빈 줄
+  🟢 매크로 신호 라인들... (미국채/유가/나스닥/비트코인/코스피 2줄)
+                          ← 빈 줄
+  🟢 종목 신호 라인들... (캔들/미국산업군/국내산업군/이평선순위/수급/프로그램매매)
+                          ← 빈 줄
+  ----
+  ```
+  - 매크로%/종목% 두 줄 사이에는 **빈 줄 없음** (사용자가 명시적으로 제거
+    요청한 부분 — 다시 넣지 말 것).
+  - 맨 끝 `----`는 다음 채널 포스트와 시각적으로 구분하기 위한 구분선,
+    사용자가 요청해서 추가함.
+- `TELEGRAM_SUMMARY_STOCK_CODE` 환경변수로 어떤 종목을 종목 체크 섹션에
+  넣을지 결정 (기본값 `000660` = SK하이닉스, 프론트 기본 종목과 동일하게
+  맞춰둠).
+
+### 필요한 환경변수 요약 (텔레그램 관련)
+- `TELEGRAM_BOT_TOKEN` — @BotFather에서 발급받은 봇 토큰
+- `TELEGRAM_CHAT_ID` — 비공개 채널 chat_id (음수, 예: `-100...`). 봇을 채널
+  관리자로 추가한 뒤 아무 메시지나 올리고 `getUpdates`로
+  `channel_post.chat.id`를 읽어서 알아냄.
+- `TELEGRAM_SUMMARY_KEY` — 임의의 랜덤 문자열(비밀키), Render + GitHub Actions
+  양쪽에 동일하게 등록.
+- `TELEGRAM_SUMMARY_STOCK_CODE` — 선택, 없으면 `000660`.
+
+**보안 원칙 (반드시 지킬 것)**: 새로운 시크릿(봇 토큰 등)은 대화창에도, 커밋에도
+절대 노출하지 않는다. Render "Environment" 탭과 GitHub repo secrets에 사용자가
+직접 등록하도록 안내만 한다. 로컬 테스트가 필요하면 같은 Bash 커맨드 블록 안에서
+`export`로 환경변수를 설정하고 바로 서버 기동+curl까지 한 번에 실행한다 (Bash
+툴은 호출마다 새 셸이라 이전 호출의 export가 안 남는다 — 여러 번 겪은 실수).
+커밋 전에는 항상 `git diff | grep -i <시크릿 일부>`로 유출 여부를 확인한다.
+
+## 7. 로컬 개발 방법
+
+```bash
+cd /Users/sean_yang/Claude/Code/YSH
+export KIS_APP_KEY="..." KIS_APP_SECRET="..." \
+       TELEGRAM_BOT_TOKEN="..." TELEGRAM_CHAT_ID="..." TELEGRAM_SUMMARY_KEY="..." \
+       PORT=8934
+python3 server.py
+```
+그 다음 `http://localhost:8934`를 브라우저(또는 이 세션의 preview 도구)로 열면 된다.
+텔레그램 발송을 로컬에서 테스트하려면:
+```bash
+curl "http://localhost:8934/api/telegram/send-summary?key=$TELEGRAM_SUMMARY_KEY"
+```
+**주의**: 서버 기동과 curl 테스트를 반드시 같은 명령 블록(같은 셸)에서 실행할 것.
+Bash 툴은 호출마다 새 셸이 뜨므로 export가 이전 호출로 이어지지 않는다.
+
+## 8. 배포 절차
+
+Render가 GitHub `main` 브랜치를 자동 추적한다 (auto-deploy). 즉:
+```bash
+git add -A
+git commit -m "..."
+git push
+```
+푸시하면 Render가 자동으로 재배포한다. 재배포 완료 확인은
+`https://market-dashboard-gqxq.onrender.com/`을 폴링해서 200이 오는지로 확인
+(즉시 200이 오던 게 502/타임아웃 나던 상태에서 다시 200으로 돌아오면 완료).
+
+Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10분 간격으로
+평일 08:50~15:59 KST에 핑을 보내 슬립을 방지한다.
+
+## 9. 알려진 특이사항 / 트랩
+
+- **네이버의 옛 스크래핑 페이지(`sise_day.naver`, `sise_index_day.naver`)는
+  완전히 폐지됨** (HTTP 410, 2026-09-18 확인). 혹시 어딘가에 그 URL로
+  되돌리려는 코드가 남아있다면 절대 안 됨 — `siseJson.naver` JSON API만
+  사용할 것.
+- KIS API의 `investor-trade-by-stock-daily`는 "가장 최근 정산일" 개념이
+  장마감(~15:40) 전후로 오늘/전일이 바뀐다 — 반드시 오늘 날짜 행을 건너뛰고
+  그 다음 행을 쓸 것 (이미 처리됨, 4절 참고).
+- MA(이동평균) 계산에는 **최소 120일치 종가**가 필요 (120일선 때문). 상장한
+  지 얼마 안 된 종목은 "데이터 부족"으로 표시됨 — 버그 아님, 의도된 동작.
+- `STOCK_THEMES`에 없는 종목은 테마/섹터 체크리스트 항목(1번, 2번)이
+  "테마 미확인으로 판단 불가"로 빠지고 나머지 항목만으로 점수 계산됨.
+- 개별 종목 실시간 수급(4번 항목)은 KIS가 "개인" 수량을 따로 안 주기 때문에
+  `외국인+기관 합계의 반대부호`로 근사한 값이다 (기타법인 무시, 보통 작음).
+- 코스피의 두 신호(방향/순위)는 매크로 점수에 **둘 다** 반영되지만, 다른
+  매크로 카드(국채/유가/나스닥/비트코인)는 하나씩만 반영된다 — 의도된 가중치.
+
+## 10. 진행 중이거나 논의만 되고 구현 안 한 것
+
+현재 미해결 버그나 진행 중인 작업 없음 (이 문서 작성 시점 기준, 최신 커밋
+`990c3a1`까지 전부 배포/검증 완료).
+
+과거 세션에서 이름만 언급되고 실제로 요청받지 않은 것들 (사용자가 다시
+꺼내지 않는 한 먼저 손대지 말 것):
+- `exp-closing-price` (KIS 예상 종가 엔드포인트)
+- `volume-rank` / 거래대금 순위 기능
+
+## 11. 사용자 작업 스타일 (협업 시 참고)
+
+- 코드 변경 전에 화면 스크린샷으로 실제 렌더링 결과를 보여주면서 요구사항을
+  구체화하는 방식을 선호함 (텔레그램 메시지 포맷도 스크린샷 기반으로 여러
+  차례 반복 수정).
+  - 짧은 한국어 지시를 정확하게 문자 그대로 반영하는 걸 중요하게 여김 (예:
+    "빈 줄 하나만" 같은 미세한 표현 차이도 놓치면 바로 지적함).
+- 실제 데이터 정합성(자기 MTS 앱 값과 비교)을 근거로 버그를 제기하는 경우가
+  많음 — "내 앱이랑 다르다"는 말이 나오면 우선 그 스크린샷/값을 진실로 놓고
+  원인을 추적할 것.
+- 배포 전 로컬 검증(서버 기동 → curl/직접 함수 호출로 출력 확인) 후 실제
+  운영 채널(텔레그램)에 테스트 발송까지 해보고 나서 커밋+푸시하는 흐름을
+  선호함.
