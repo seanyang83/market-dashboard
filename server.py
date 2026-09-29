@@ -314,6 +314,12 @@ STOCK_THEMES = {
 # --- 거래대금 순위 TOP10 ---
 # KIS "거래량순위"[v1_국내주식-047] API, FID_BLNG_CLS_CODE="3"(거래금액순)으로
 # 거래대금 기준 정렬. 최대 30건까지 지원(다음 조회 불가)하므로 top10엔 충분.
+#
+# 이 TR은 공식 문서상 FID_COND_MRKT_DIV_CODE가 "J"(KRX)/"NX"(NXT)만 지원하고
+# "UN"(통합)은 빈 결과를 반환한다(program-trade-by-stock 등 다른 TR과 다름,
+# 실측 확인함) - 그래서 KRX/NXT 두 번 조회해서 종목코드 기준으로 거래대금·
+# 거래량을 합산한다. NXT 체결분을 빼먹으면 대형주(NXT 거래 비중이 큰 종목)일
+# 수록 실제보다 낮게 나온다(삼성전자 실측 대비 약 56%로 확인됨).
 VOLUME_RANK_CACHE_TTL = 20
 _volume_rank_cache = {"data": None, "ts": 0}
 _volume_rank_cache_lock = threading.Lock()
@@ -321,21 +327,12 @@ _volume_rank_cache_lock = threading.Lock()
 SIGN_DIR = {"1": "up", "2": "up", "3": "flat", "4": "down", "5": "down"}
 
 
-def _fetch_volume_rank():
-    now = time.time()
-    with _volume_rank_cache_lock:
-        cached = _volume_rank_cache["data"]
-        if cached and now - _volume_rank_cache["ts"] < VOLUME_RANK_CACHE_TTL:
-            return cached
-
+def _fetch_volume_rank_rows(mrkt_div_code):
     data = kis_get(
         "/uapi/domestic-stock/v1/quotations/volume-rank",
         "FHPST01710000",
         {
-            # "J"(KRX 단독)는 NXT 체결분을 빼먹어 대형주일수록 실제 거래대금보다
-            # 낮게 나온다(예: 삼성전자 실측 대비 절반 수준) - MTS 앱 기본값인
-            # 통합(KRX+NXT) 기준과 맞추기 위해 "UN" 사용.
-            "FID_COND_MRKT_DIV_CODE": "UN",
+            "FID_COND_MRKT_DIV_CODE": mrkt_div_code,
             "FID_COND_SCR_DIV_CODE": "20171",
             "FID_INPUT_ISCD": "0000",
             "FID_DIV_CLS_CODE": "0",
@@ -350,21 +347,50 @@ def _fetch_volume_rank():
             "FID_VOL_CNT": "",
         },
     )
-    rows = data.get("output") or []
+    return data.get("output") or []
+
+
+def _fetch_volume_rank():
+    now = time.time()
+    with _volume_rank_cache_lock:
+        cached = _volume_rank_cache["data"]
+        if cached and now - _volume_rank_cache["ts"] < VOLUME_RANK_CACHE_TTL:
+            return cached
+
+    krx_rows = _fetch_volume_rank_rows("J")
+    try:
+        nxt_rows = _fetch_volume_rank_rows("NX")
+    except Exception:
+        nxt_rows = []  # NXT 조회 실패해도 KRX만으로는 계속 보여줌
+
+    merged = {}
+    for r in krx_rows + nxt_rows:
+        code = r.get("mksc_shrn_iscd")
+        if not code:
+            continue
+        entry = merged.setdefault(code, {
+            "name": r.get("hts_kor_isnm"), "price": 0.0,
+            "sign": "3", "pct": 0.0, "tr_pbmn": 0, "vol": 0,
+        })
+        entry["price"] = float(r.get("stck_prpr", 0) or 0)
+        entry["sign"] = r.get("prdy_vrss_sign", entry["sign"])
+        entry["pct"] = abs(float(r.get("prdy_ctrt", 0) or 0))
+        entry["tr_pbmn"] += int(r.get("acml_tr_pbmn", 0) or 0)
+        entry["vol"] += int(r.get("acml_vol", 0) or 0)
+
+    ranked = sorted(merged.items(), key=lambda kv: -kv[1]["tr_pbmn"])[:10]
     result = []
-    for r in rows[:10]:
-        sign = r.get("prdy_vrss_sign", "3")
-        dir_ = SIGN_DIR.get(sign, "flat")
-        pct = abs(float(r.get("prdy_ctrt", 0) or 0))
+    for i, (code, e) in enumerate(ranked, start=1):
+        dir_ = SIGN_DIR.get(e["sign"], "flat")
         result.append({
-            "rank": int(r.get("data_rank", 0) or 0),
-            "code": r.get("mksc_shrn_iscd"),
-            "name": r.get("hts_kor_isnm"),
-            "price": float(r.get("stck_prpr", 0) or 0),
-            "changePct": pct if dir_ != "down" else -pct,
+            "rank": i,
+            "code": code,
+            "name": e["name"],
+            "price": e["price"],
+            "changePct": e["pct"] if dir_ != "down" else -e["pct"],
             "dir": dir_,
-            "tradingValue": int(r.get("acml_tr_pbmn", 0) or 0),
-            "volume": int(r.get("acml_vol", 0) or 0),
+            "tradingValue": e["tr_pbmn"],
+            "volume": e["vol"],
         })
 
     with _volume_rank_cache_lock:
