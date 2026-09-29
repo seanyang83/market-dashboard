@@ -332,7 +332,10 @@ def _fetch_volume_rank():
         "/uapi/domestic-stock/v1/quotations/volume-rank",
         "FHPST01710000",
         {
-            "FID_COND_MRKT_DIV_CODE": "J",
+            # "J"(KRX 단독)는 NXT 체결분을 빼먹어 대형주일수록 실제 거래대금보다
+            # 낮게 나온다(예: 삼성전자 실측 대비 절반 수준) - MTS 앱 기본값인
+            # 통합(KRX+NXT) 기준과 맞추기 위해 "UN" 사용.
+            "FID_COND_MRKT_DIV_CODE": "UN",
             "FID_COND_SCR_DIV_CODE": "20171",
             "FID_INPUT_ISCD": "0000",
             "FID_DIV_CLS_CODE": "0",
