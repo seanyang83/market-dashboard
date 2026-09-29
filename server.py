@@ -184,6 +184,49 @@ INVESTOR_INDIVIDUAL = {"8000"}
 INVESTOR_FOREIGN = {"9000", "9001"}
 INVESTOR_INSTITUTION = {"1000", "2000", "3000", "3100", "4000", "5000", "6000"}
 
+# Market-wide (KOSPI/KOSDAQ) daily total trading value, last N trading days.
+# Same endpoint as NAVER_INVESTOR_URL above (just a bigger pageSize) - the
+# per-investor-type buyPrice values already sum to the whole market's total
+# 거래대금 for that day (verified against the real-time index quote's own
+# accumulatedTradingValueRaw: matched within ~0.1%, the rest being normal
+# snapshot-timing lag between the two calls).
+NAVER_MARKET_TREND_URL = (
+    "https://stock.naver.com/api/domestic/market/trend/daily"
+    "?tradeType=KRX&marketType={market}&startIdx=0&pageSize={page_size}"
+)
+MARKET_TRADING_VALUE_CACHE_TTL = 20
+_market_trading_value_cache = {"data": None, "ts": 0}
+_market_trading_value_cache_lock = threading.Lock()
+
+
+def _fetch_market_trading_value_history(market, days=7):
+    url = NAVER_MARKET_TREND_URL.format(market=market, page_size=days)
+    req = urllib.request.Request(url, headers=NAVER_HEADERS)
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        data = json.loads(resp.read())
+    history = []
+    for day in data.get("content") or []:
+        total = sum(int(a.get("buyPrice", 0) or 0) for a in day.get("netAmounts", []))
+        history.append({"date": day.get("bizdate"), "value": total})
+    return history
+
+
+def _fetch_market_trading_value():
+    now = time.time()
+    with _market_trading_value_cache_lock:
+        cached = _market_trading_value_cache["data"]
+        if cached and now - _market_trading_value_cache["ts"] < MARKET_TRADING_VALUE_CACHE_TTL:
+            return cached
+    result = {
+        "kospi": _fetch_market_trading_value_history("KOSPI"),
+        "kosdaq": _fetch_market_trading_value_history("KOSDAQ"),
+    }
+    with _market_trading_value_cache_lock:
+        _market_trading_value_cache["data"] = result
+        _market_trading_value_cache["ts"] = now
+    return result
+
+
 # Daily-close history (KOSPI index or any KRX stock code) via Naver's chart
 # JSON API. Replaces the old sise_day.naver / sise_index_day.naver HTML
 # pages: those were paginated at ~10 rows/page (15+ sequential requests to
@@ -427,6 +470,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_telegram_send_summary()
         elif self.path.startswith("/api/market/volume-rank"):
             self.handle_volume_rank()
+        elif self.path.startswith("/api/market/trading-value"):
+            self.handle_market_trading_value()
         else:
             super().do_GET()
 
@@ -751,6 +796,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "netQty": int(latest.get("whol_smtn_ntby_qty", 0)),
                 "netAmount": int(latest.get("whol_smtn_ntby_tr_pbmn", 0)),
             })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_market_trading_value(self):
+        try:
+            self.send_json(200, _fetch_market_trading_value())
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 

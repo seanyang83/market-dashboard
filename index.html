@@ -183,6 +183,7 @@
     display: block; font-size: 12.5px; font-weight: 700; font-variant-numeric: tabular-nums;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
+  .flow-change { display: block; font-size: 10.5px; font-weight: 600; margin-top: 2px; }
   .flow-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11.5px; }
   .flow-table th {
     text-align: right; color: var(--sub); font-weight: 600; font-size: 10.5px;
@@ -377,6 +378,37 @@
         <span id="kospiRange">-</span>
       </div>
       <div class="error-msg" id="kospiError"></div>
+    </div>
+
+    <div class="card card-index">
+      <div class="card-head">
+        <div class="label">코스피·코스닥 거래대금</div>
+      </div>
+      <div class="sub-label">당일 누적 거래대금(실시간) · 전일 대비 증감</div>
+      <div class="flow-row">
+        <div class="flow-item">
+          <span class="flow-label">코스피</span>
+          <span class="flow-value flat" id="marketValueKospiToday">-</span>
+          <span class="flow-change flat" id="marketValueKospiChange">-</span>
+        </div>
+        <div class="flow-item">
+          <span class="flow-label">코스닥</span>
+          <span class="flow-value flat" id="marketValueKosdaqToday">-</span>
+          <span class="flow-change flat" id="marketValueKosdaqChange">-</span>
+        </div>
+      </div>
+      <div class="checklist-item">
+        <div class="checklist-title">최근 7거래일 거래대금</div>
+        <table class="flow-table">
+          <thead>
+            <tr><th>날짜</th><th>코스피</th><th>코스닥</th></tr>
+          </thead>
+          <tbody id="marketValueHistoryBody">
+            <tr><td colspan="3">불러오는 중</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="error-msg" id="marketValueError"></div>
     </div>
   </div>
 
@@ -863,6 +895,62 @@ function fmtEokAbs(won) {
   return Math.round(won / 1e8).toLocaleString("ko-KR") + "억";
 }
 
+function fmtJo(won) {
+  if (won == null || Number.isNaN(won)) return "—";
+  return (won / 1e12).toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "조";
+}
+
+async function updateMarketTradingValue() {
+  const errorEl = document.getElementById("marketValueError");
+  const bodyEl = document.getElementById("marketValueHistoryBody");
+  try {
+    const data = await fetchJson("/api/market/trading-value");
+    const kospiHist = data.kospi || [];
+    const kosdaqHist = data.kosdaq || [];
+    if (!kospiHist.length || !kosdaqHist.length) throw new Error("데이터 없음");
+
+    const setToday = (prefix, hist) => {
+      const todayEl = document.getElementById(`marketValue${prefix}Today`);
+      const changeEl = document.getElementById(`marketValue${prefix}Change`);
+      todayEl.textContent = fmtJo(hist[0].value);
+      if (hist.length >= 2 && hist[1].value) {
+        const diff = hist[0].value - hist[1].value;
+        const pct = (diff / hist[1].value) * 100;
+        const dir = diff > 0 ? "up" : diff < 0 ? "down" : "flat";
+        const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
+        const sign = diff >= 0 ? "+" : "-";
+        changeEl.textContent = `전일대비 ${arrow} ${sign}${Math.abs(diff / 1e12).toFixed(2)}조 (${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%)`;
+        changeEl.className = "flow-change " + dir;
+      } else {
+        changeEl.textContent = "전일 데이터 없음";
+        changeEl.className = "flow-change flat";
+      }
+    };
+    setToday("Kospi", kospiHist);
+    setToday("Kosdaq", kosdaqHist);
+
+    const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
+    const maxLen = Math.max(kospiHist.length, kosdaqHist.length);
+    const rows = [];
+    for (let i = 0; i < maxLen; i++) {
+      const k = kospiHist[i], q = kosdaqHist[i];
+      const dateRaw = (k && k.date) || (q && q.date) || "";
+      let dateFmt = dateRaw;
+      if (dateRaw.length === 8) {
+        const dt = new Date(Date.UTC(+dateRaw.slice(0, 4), +dateRaw.slice(4, 6) - 1, +dateRaw.slice(6, 8)));
+        dateFmt = `${dateRaw.slice(4, 6)}/${dateRaw.slice(6, 8)}(${WEEKDAY_KO[dt.getUTCDay()]})`;
+      }
+      rows.push(`<tr><td>${dateFmt}</td><td>${k ? fmtJo(k.value) : "-"}</td><td>${q ? fmtJo(q.value) : "-"}</td></tr>`);
+    }
+    bodyEl.innerHTML = rows.join("");
+    errorEl.classList.remove("show");
+  } catch (e) {
+    bodyEl.innerHTML = '<tr><td colspan="3">거래대금 데이터를 불러오지 못했습니다</td></tr>';
+    errorEl.textContent = e.message;
+    errorEl.classList.add("show");
+  }
+}
+
 async function updateVolumeRank() {
   const bodyEl = document.getElementById("volumeRankBody");
   const errorEl = document.getElementById("volumeRankError");
@@ -1040,6 +1128,7 @@ async function refreshAll() {
   statusText.textContent = "갱신 중...";
   const keys = Object.keys(SERIES);
   const results = await Promise.all(keys.map(updateCard));
+  updateMarketTradingValue();
   const okCount = results.filter((r) => r.ok).length;
 
   updateSignalSummary(results.flatMap((r) => r.signals));
