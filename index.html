@@ -521,9 +521,10 @@
 
   <div class="section-head">
     <h2 class="section-title">거래대금 순위 TOP10</h2>
+    <button class="refresh-btn" id="volumeRankRefreshBtn">새로고침</button>
   </div>
   <div class="card">
-    <div class="sub-label">코스피·코스닥 통합 · 관리종목/거래정지/ETF·ETN 제외 · 30초마다 갱신 · 종목명 클릭 시 아래 체크리스트에 반영</div>
+    <div class="sub-label">코스피·코스닥 통합 · 관리종목/거래정지/ETF·ETN 제외 · 실시간 당일 누적 거래대금 · 종목명 클릭 시 아래 체크리스트에 반영</div>
     <table class="rank-table">
       <thead>
         <tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr>
@@ -865,6 +866,8 @@ function fmtEokAbs(won) {
 async function updateVolumeRank() {
   const bodyEl = document.getElementById("volumeRankBody");
   const errorEl = document.getElementById("volumeRankError");
+  const btnEl = document.getElementById("volumeRankRefreshBtn");
+  if (btnEl) btnEl.disabled = true;
   try {
     const data = await fetchJson("/api/market/volume-rank");
     const rows = data.rows || [];
@@ -895,6 +898,8 @@ async function updateVolumeRank() {
     bodyEl.innerHTML = '<tr><td colspan="5">거래대금 순위를 불러오지 못했습니다</td></tr>';
     errorEl.textContent = e.message;
     errorEl.classList.add("show");
+  } finally {
+    if (btnEl) btnEl.disabled = false;
   }
 }
 
@@ -1035,7 +1040,6 @@ async function refreshAll() {
   statusText.textContent = "갱신 중...";
   const keys = Object.keys(SERIES);
   const results = await Promise.all(keys.map(updateCard));
-  updateVolumeRank();
   const okCount = results.filter((r) => r.ok).length;
 
   updateSignalSummary(results.flatMap((r) => r.signals));
@@ -1417,6 +1421,9 @@ stockCollapseBtn.addEventListener("click", () => {
 
 refreshBtn.addEventListener("click", refreshAll);
 refreshAll();
+
+document.getElementById("volumeRankRefreshBtn").addEventListener("click", updateVolumeRank);
+updateVolumeRank();
 
 const DEFAULT_STOCK = { code: "000660", name: "SK하이닉스" };
 stockQueryInput.value = DEFAULT_STOCK.name;
