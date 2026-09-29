@@ -1055,6 +1055,25 @@ def fmt_eok(won):
     return f"{'+' if won >= 0 else ''}{round(won / 1e8):,}억"
 
 
+def fmt_eok_abs(won):
+    return f"{round(won / 1e8):,}억"
+
+
+def _volume_rank_lines():
+    try:
+        rows = _local_get("/api/market/volume-rank").get("rows") or []
+    except Exception:
+        rows = []
+    if not rows:
+        return ["📊 거래대금 순위 데이터 없음"]
+    lines = ["📊 거래대금 순위 TOP10"]
+    for r in rows:
+        arrow = "▲" if r.get("dir") == "up" else ("▼" if r.get("dir") == "down" else "-")
+        pct = abs(r.get("changePct", 0))
+        lines.append(f"{r['rank']}. {r['name']} {fmt_eok_abs(r['tradingValue'])} ({arrow}{pct:.2f}%)")
+    return lines
+
+
 def build_dashboard_summary_text():
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     header = f"📊 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}"
@@ -1091,7 +1110,12 @@ def build_dashboard_summary_text():
     summary_lines = [f"매크로 체크 {macro_pct}%"]
     summary_lines.append(f"종목체크({stock_name}) {stock_pct}%" if stock_pct is not None else "종목 체크 데이터 없음")
 
-    return "\n".join([header, *summary_lines, "", *macro_lines, "", *stock_lines, "", "----"])
+    volume_rank_lines = _volume_rank_lines()
+
+    return "\n".join([
+        header, *summary_lines, "", *macro_lines, "", *stock_lines, "",
+        *volume_rank_lines, "", "----",
+    ])
 
 
 def send_telegram_message(text):
