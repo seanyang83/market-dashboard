@@ -194,6 +194,19 @@
     white-space: nowrap;
   }
   .flow-table td:first-child { color: var(--sub); font-weight: 500; }
+  .rank-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
+  .rank-table th {
+    text-align: right; color: var(--sub); font-weight: 600; font-size: 10.5px;
+    padding: 4px 6px; border-bottom: 1px solid var(--border);
+  }
+  .rank-table th:nth-child(2) { text-align: left; }
+  .rank-table td {
+    text-align: right; padding: 6px; font-weight: 600; font-variant-numeric: tabular-nums;
+    white-space: nowrap; border-bottom: 1px solid var(--border);
+  }
+  .rank-table tr:last-child td { border-bottom: none; }
+  .rank-table td:nth-child(2) { text-align: left; cursor: pointer; font-weight: 700; }
+  .rank-table td:nth-child(2):hover { color: var(--accent); text-decoration: underline; }
   @media (max-width: 640px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
     .card-compact { padding: 12px 14px; }
@@ -504,6 +517,22 @@
 
       <div class="error-msg" id="stockError"></div>
     </div>
+  </div>
+
+  <div class="section-head">
+    <h2 class="section-title">거래대금 순위 TOP10</h2>
+  </div>
+  <div class="card">
+    <div class="sub-label">코스피·코스닥 통합 · 관리종목/거래정지/ETF·ETN 제외 · 30초마다 갱신 · 종목명 클릭 시 아래 체크리스트에 반영</div>
+    <table class="rank-table">
+      <thead>
+        <tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr>
+      </thead>
+      <tbody id="volumeRankBody">
+        <tr><td colspan="5">불러오는 중</td></tr>
+      </tbody>
+    </table>
+    <div class="error-msg" id="volumeRankError"></div>
   </div>
 
   <footer>
@@ -828,6 +857,47 @@ function fmtEok(won) {
   return (eok > 0 ? "+" : "") + eok.toLocaleString("ko-KR") + "억";
 }
 
+function fmtEokAbs(won) {
+  if (won == null || Number.isNaN(won)) return "—";
+  return Math.round(won / 1e8).toLocaleString("ko-KR") + "억";
+}
+
+async function updateVolumeRank() {
+  const bodyEl = document.getElementById("volumeRankBody");
+  const errorEl = document.getElementById("volumeRankError");
+  try {
+    const data = await fetchJson("/api/market/volume-rank");
+    const rows = data.rows || [];
+    if (!rows.length) throw new Error("데이터 없음");
+    errorEl.classList.remove("show");
+    bodyEl.innerHTML = rows.map((r) => {
+      const dir = r.dir || "flat";
+      const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
+      const pct = r.changePct;
+      return `<tr>
+        <td>${r.rank}</td>
+        <td data-code="${r.code}" data-name="${r.name}">${r.name}</td>
+        <td>${Math.round(r.price).toLocaleString("ko-KR")}</td>
+        <td class="${dir}">${arrow} ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</td>
+        <td>${fmtEokAbs(r.tradingValue)}</td>
+      </tr>`;
+    }).join("");
+    bodyEl.querySelectorAll("td[data-code]").forEach((td) => {
+      td.addEventListener("click", () => {
+        currentStockCode = td.dataset.code;
+        currentStockName = td.dataset.name;
+        stockQueryInput.value = td.dataset.name;
+        runStockChecklist(currentStockCode, currentStockName);
+        document.getElementById("stockCard").scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+  } catch (e) {
+    bodyEl.innerHTML = '<tr><td colspan="5">거래대금 순위를 불러오지 못했습니다</td></tr>';
+    errorEl.textContent = e.message;
+    errorEl.classList.add("show");
+  }
+}
+
 async function updateInvestorFlow(key) {
   const els = {
     individual: document.getElementById(key + "FlowIndividual"),
@@ -965,6 +1035,7 @@ async function refreshAll() {
   statusText.textContent = "갱신 중...";
   const keys = Object.keys(SERIES);
   const results = await Promise.all(keys.map(updateCard));
+  updateVolumeRank();
   const okCount = results.filter((r) => r.ok).length;
 
   updateSignalSummary(results.flatMap((r) => r.signals));

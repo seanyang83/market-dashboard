@@ -311,6 +311,64 @@ STOCK_THEMES = {
                "usProxy": {"symbol": "KIE", "name": "SPDR S&P Insurance ETF"}},
 }
 
+# --- 거래대금 순위 TOP10 ---
+# KIS "거래량순위"[v1_국내주식-047] API, FID_BLNG_CLS_CODE="3"(거래금액순)으로
+# 거래대금 기준 정렬. 최대 30건까지 지원(다음 조회 불가)하므로 top10엔 충분.
+VOLUME_RANK_CACHE_TTL = 20
+_volume_rank_cache = {"data": None, "ts": 0}
+_volume_rank_cache_lock = threading.Lock()
+
+SIGN_DIR = {"1": "up", "2": "up", "3": "flat", "4": "down", "5": "down"}
+
+
+def _fetch_volume_rank():
+    now = time.time()
+    with _volume_rank_cache_lock:
+        cached = _volume_rank_cache["data"]
+        if cached and now - _volume_rank_cache["ts"] < VOLUME_RANK_CACHE_TTL:
+            return cached
+
+    data = kis_get(
+        "/uapi/domestic-stock/v1/quotations/volume-rank",
+        "FHPST01710000",
+        {
+            "FID_COND_MRKT_DIV_CODE": "J",
+            "FID_COND_SCR_DIV_CODE": "20171",
+            "FID_INPUT_ISCD": "0000",
+            "FID_DIV_CLS_CODE": "0",
+            "FID_BLNG_CLS_CODE": "3",
+            "FID_TRGT_CLS_CODE": "111111111",
+            # 자릿수 순서: 투자위험/경고/주의, 관리종목, 정리매매, 불성실공시,
+            # 우선주, 거래정지, ETF, ETN, 신용주문불가, SPAC - 관리종목/거래정지/
+            # ETF/ETN만 제외(2,6,7,8번째 자리 "1")하고 우선주 등은 그대로 포함.
+            "FID_TRGT_EXLS_CLS_CODE": "0100011100",
+            "FID_INPUT_PRICE_1": "",
+            "FID_INPUT_PRICE_2": "",
+            "FID_VOL_CNT": "",
+        },
+    )
+    rows = data.get("output") or []
+    result = []
+    for r in rows[:10]:
+        sign = r.get("prdy_vrss_sign", "3")
+        dir_ = SIGN_DIR.get(sign, "flat")
+        pct = abs(float(r.get("prdy_ctrt", 0) or 0))
+        result.append({
+            "rank": int(r.get("data_rank", 0) or 0),
+            "code": r.get("mksc_shrn_iscd"),
+            "name": r.get("hts_kor_isnm"),
+            "price": float(r.get("stck_prpr", 0) or 0),
+            "changePct": pct if dir_ != "down" else -pct,
+            "dir": dir_,
+            "tradingValue": int(r.get("acml_tr_pbmn", 0) or 0),
+            "volume": int(r.get("acml_vol", 0) or 0),
+        })
+
+    with _volume_rank_cache_lock:
+        _volume_rank_cache["data"] = result
+        _volume_rank_cache["ts"] = now
+    return result
+
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -338,6 +396,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_stock_program_trade()
         elif self.path.startswith("/api/telegram/send-summary"):
             self.handle_telegram_send_summary()
+        elif self.path.startswith("/api/market/volume-rank"):
+            self.handle_volume_rank()
         else:
             super().do_GET()
 
@@ -662,6 +722,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "netQty": int(latest.get("whol_smtn_ntby_qty", 0)),
                 "netAmount": int(latest.get("whol_smtn_ntby_tr_pbmn", 0)),
             })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_volume_rank(self):
+        if not KIS_APP_KEY or not KIS_APP_SECRET:
+            self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
+            return
+        try:
+            self.send_json(200, {"rows": _fetch_volume_rank()})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
