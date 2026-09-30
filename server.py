@@ -661,7 +661,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily",
             "FHPTJ04160001",
             {
-                "FID_COND_MRKT_DIV_CODE": "J",
+                # 이 TR은 공식 문서상 "UN"(통합)을 지원한다 - "J"(KRX 단독)로 두면
+                # NXT 체결분이 빠져 종목별 수급이 실제(키움 MTS 통합 기준)와
+                # 어긋난다(부호까지 반대로 나오는 경우도 확인됨).
+                "FID_COND_MRKT_DIV_CODE": "UN",
                 "FID_INPUT_ISCD": code,
                 "FID_INPUT_DATE_1": "",
                 "FID_ORG_ADJ_PRC": "",
