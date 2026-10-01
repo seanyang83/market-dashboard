@@ -398,6 +398,19 @@
         </div>
       </div>
       <div class="checklist-item">
+        <div class="checklist-title">오늘 등락 종목수</div>
+        <div class="flow-row">
+          <div class="flow-item">
+            <span class="flow-label">코스피</span>
+            <span class="flow-value" id="marketBreadthKospi" style="overflow:visible; white-space:normal;">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">코스닥</span>
+            <span class="flow-value" id="marketBreadthKosdaq" style="overflow:visible; white-space:normal;">-</span>
+          </div>
+        </div>
+      </div>
+      <div class="checklist-item">
         <div class="checklist-title">최근 7거래일 거래대금</div>
         <table class="flow-table">
           <thead>
@@ -900,6 +913,22 @@ function fmtJo(won) {
   return (won / 1e12).toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + "조";
 }
 
+async function updateMarketBreadth() {
+  const kospiEl = document.getElementById("marketBreadthKospi");
+  const kosdaqEl = document.getElementById("marketBreadthKosdaq");
+  const render = (el, b) => {
+    el.innerHTML = `<span class="up">상승 ${b.up}</span> · <span class="flat">보합 ${b.flat}</span> · <span class="down">하락 ${b.down}</span>`;
+  };
+  try {
+    const data = await fetchJson("/api/market/breadth");
+    render(kospiEl, data.kospi);
+    render(kosdaqEl, data.kosdaq);
+  } catch (e) {
+    kospiEl.textContent = "불러오지 못함";
+    kosdaqEl.textContent = "불러오지 못함";
+  }
+}
+
 async function updateMarketTradingValue() {
   const errorEl = document.getElementById("marketValueError");
   const bodyEl = document.getElementById("marketValueHistoryBody");
@@ -1129,6 +1158,7 @@ async function refreshAll() {
   const keys = Object.keys(SERIES);
   const results = await Promise.all(keys.map(updateCard));
   updateMarketTradingValue();
+  updateMarketBreadth();
   const okCount = results.filter((r) => r.ok).length;
 
   updateSignalSummary(results.flatMap((r) => r.signals));

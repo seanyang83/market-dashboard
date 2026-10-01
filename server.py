@@ -354,6 +354,45 @@ STOCK_THEMES = {
                "usProxy": {"symbol": "KIE", "name": "SPDR S&P Insurance ETF"}},
 }
 
+# --- 시장 등락 종목수 (코스피/코스닥 전체 체감 심리) ---
+# KIS "국내업종 현재지수"[v1_국내주식-063] - 업종코드로 지수 자체를 조회하면
+# (개별 종목이 아니라) 그 지수를 구성하는 전체 종목의 상승/보합/하락 집계도
+# 같이 내려준다. 업종코드: 코스피 0001, 코스닥 1001.
+MARKET_BREADTH_ISCD = {"kospi": "0001", "kosdaq": "1001"}
+MARKET_BREADTH_CACHE_TTL = 20
+_market_breadth_cache = {"data": None, "ts": 0}
+_market_breadth_cache_lock = threading.Lock()
+
+
+def _fetch_market_breadth_one(iscd):
+    data = kis_get(
+        "/uapi/domestic-stock/v1/quotations/inquire-index-price",
+        "FHPUP02100000",
+        {"FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": iscd},
+    )
+    out = data.get("output") or {}
+    return {
+        "up": int(out.get("ascn_issu_cnt", 0) or 0),
+        "flat": int(out.get("stnr_issu_cnt", 0) or 0),
+        "down": int(out.get("down_issu_cnt", 0) or 0),
+        "limitUp": int(out.get("uplm_issu_cnt", 0) or 0),
+        "limitDown": int(out.get("lslm_issu_cnt", 0) or 0),
+    }
+
+
+def _fetch_market_breadth():
+    now = time.time()
+    with _market_breadth_cache_lock:
+        cached = _market_breadth_cache["data"]
+        if cached and now - _market_breadth_cache["ts"] < MARKET_BREADTH_CACHE_TTL:
+            return cached
+    result = {name: _fetch_market_breadth_one(iscd) for name, iscd in MARKET_BREADTH_ISCD.items()}
+    with _market_breadth_cache_lock:
+        _market_breadth_cache["data"] = result
+        _market_breadth_cache["ts"] = now
+    return result
+
+
 # --- 거래대금 순위 TOP10 ---
 # KIS "거래량순위"[v1_국내주식-047] API, FID_BLNG_CLS_CODE="3"(거래금액순)으로
 # 거래대금 기준 정렬. 최대 30건까지 지원(다음 조회 불가)하므로 top10엔 충분.
@@ -472,6 +511,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_volume_rank()
         elif self.path.startswith("/api/market/trading-value"):
             self.handle_market_trading_value()
+        elif self.path.startswith("/api/market/breadth"):
+            self.handle_market_breadth()
         else:
             super().do_GET()
 
@@ -808,6 +849,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
+    def handle_market_breadth(self):
+        if not KIS_APP_KEY or not KIS_APP_SECRET:
+            self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
+            return
+        try:
+            self.send_json(200, _fetch_market_breadth())
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
     def handle_volume_rank(self):
         if not KIS_APP_KEY or not KIS_APP_SECRET:
             self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
@@ -1113,6 +1163,18 @@ def fmt_eok_abs(won):
     return f"{round(won / 1e8):,}억"
 
 
+def _market_breadth_lines():
+    try:
+        data = _local_get("/api/market/breadth")
+        k, q = data["kospi"], data["kosdaq"]
+    except Exception:
+        return ["⚪ 등락 종목수 데이터 없음"]
+    return [
+        f"⚪ 코스피 등락: 상승 {k['up']} · 보합 {k['flat']} · 하락 {k['down']}",
+        f"⚪ 코스닥 등락: 상승 {q['up']} · 보합 {q['flat']} · 하락 {q['down']}",
+    ]
+
+
 def _volume_rank_lines():
     try:
         rows = _local_get("/api/market/volume-rank").get("rows") or []
@@ -1153,6 +1215,8 @@ def build_dashboard_summary_text():
         macro_lines.extend(kospi_lines)
     except Exception as e:
         macro_lines.append(f"⚪ 코스피 데이터 없음 ({e})")
+
+    macro_lines.extend(_market_breadth_lines())
 
     macro_pct = round(sum(_score_for(s) for s in macro_signals) / (len(macro_signals) * 20) * 100) if macro_signals else 0
 
