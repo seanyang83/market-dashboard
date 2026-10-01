@@ -184,6 +184,10 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .flow-change { display: block; font-size: 10.5px; font-weight: 600; margin-top: 2px; }
+  .breadth-stats {
+    display: flex; flex-direction: column; gap: 2px; margin-top: 2px;
+    font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+  }
   .flow-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11.5px; }
   .flow-table th {
     text-align: right; color: var(--sub); font-weight: 600; font-size: 10.5px;
@@ -385,28 +389,31 @@
         <div class="label">코스피·코스닥 거래대금</div>
       </div>
       <div class="sub-label">당일 누적 거래대금(실시간) · 전일 대비 증감</div>
-      <div class="flow-row">
-        <div class="flow-item">
-          <span class="flow-label">코스피</span>
-          <span class="flow-value flat" id="marketValueKospiToday">-</span>
-          <span class="flow-change flat" id="marketValueKospiChange">-</span>
-        </div>
-        <div class="flow-item">
-          <span class="flow-label">코스닥</span>
-          <span class="flow-value flat" id="marketValueKosdaqToday">-</span>
-          <span class="flow-change flat" id="marketValueKosdaqChange">-</span>
-        </div>
-      </div>
-      <div class="checklist-item">
+      <div class="checklist-item" style="margin-top:0; padding-top:0; border-top:none;">
         <div class="checklist-title">오늘 등락 종목수</div>
         <div class="flow-row">
           <div class="flow-item">
             <span class="flow-label">코스피</span>
-            <span class="flow-value" id="marketBreadthKospi" style="overflow:visible; white-space:normal;">-</span>
+            <div class="breadth-stats" id="marketBreadthKospi">-</div>
           </div>
           <div class="flow-item">
             <span class="flow-label">코스닥</span>
-            <span class="flow-value" id="marketBreadthKosdaq" style="overflow:visible; white-space:normal;">-</span>
+            <div class="breadth-stats" id="marketBreadthKosdaq">-</div>
+          </div>
+        </div>
+      </div>
+      <div class="checklist-item">
+        <div class="checklist-title">거래대금</div>
+        <div class="flow-row">
+          <div class="flow-item">
+            <span class="flow-label">코스피</span>
+            <span class="flow-value flat" id="marketValueKospiToday">-</span>
+            <span class="flow-change flat" id="marketValueKospiChange">-</span>
+          </div>
+          <div class="flow-item">
+            <span class="flow-label">코스닥</span>
+            <span class="flow-value flat" id="marketValueKosdaqToday">-</span>
+            <span class="flow-change flat" id="marketValueKosdaqChange">-</span>
           </div>
         </div>
       </div>
@@ -917,7 +924,11 @@ async function updateMarketBreadth() {
   const kospiEl = document.getElementById("marketBreadthKospi");
   const kosdaqEl = document.getElementById("marketBreadthKosdaq");
   const render = (el, b) => {
-    el.innerHTML = `<span class="up">상승 ${b.up}</span> · <span class="flat">보합 ${b.flat}</span> · <span class="down">하락 ${b.down}</span>`;
+    el.innerHTML = `
+      <span class="up">▲ 상승 ${b.up}</span>
+      <span class="flat">― 보합 ${b.flat}</span>
+      <span class="down">▼ 하락 ${b.down}</span>
+    `;
   };
   try {
     const data = await fetchJson("/api/market/breadth");
