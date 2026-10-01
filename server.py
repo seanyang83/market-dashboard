@@ -12,7 +12,6 @@ Naver (a Korean provider) has genuinely live intraday data for domestic
 indices.
 """
 import ast
-import html
 import http.server
 import json
 import os
@@ -910,15 +909,9 @@ TELEGRAM_SUMMARY_STOCK_CODE = os.environ.get("TELEGRAM_SUMMARY_STOCK_CODE", "000
 
 SIGNAL_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴", None: "⚪"}
 
-# 매크로 체크 % 또는 종목 체크 %가 이 값 이상이면 배팅 신호로 보고 메시지를
-# 굵게 강조한 배너를 추가한다. 매시 정각마다 다시 떨어졌다 올랐다 할 수 있는
-# 값이라 채널 고정(pin)은 하지 않고, 그 메시지 자체만 눈에 띄게 만든다.
+# 매크로 체크 % 또는 종목 체크 %가 이 값 이상이면 그 줄 끝에 🔥를 붙인다.
+# 매시 정각마다 다시 떨어졌다 올랐다 할 수 있는 값이라 그 이상은 하지 않는다.
 ALERT_THRESHOLD = 80
-_BOLD_OPEN, _BOLD_CLOSE = "\x01", "\x02"
-
-
-def _bold(s):
-    return f"{_BOLD_OPEN}{s}{_BOLD_CLOSE}"
 
 
 def _score_for(signal):
@@ -1237,39 +1230,26 @@ def build_dashboard_summary_text():
 
     macro_alert = macro_pct >= ALERT_THRESHOLD
     stock_alert = stock_pct is not None and stock_pct >= ALERT_THRESHOLD
-    is_alert = macro_alert or stock_alert
 
-    header = f"{'🚨' if is_alert else '📊'} 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}"
+    header = f"📊 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}"
 
-    macro_line = f"매크로 체크 {macro_pct}%"
-    summary_lines = [_bold(f"🔥 {macro_line} 돌파") if macro_alert else macro_line]
+    summary_lines = [f"매크로 체크 {macro_pct}%" + (" 🔥" if macro_alert else "")]
     if stock_pct is not None:
-        stock_line = f"종목체크({stock_name}) {stock_pct}%"
-        summary_lines.append(_bold(f"🔥 {stock_line} 돌파") if stock_alert else stock_line)
+        summary_lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" 🔥" if stock_alert else ""))
     else:
         summary_lines.append("종목 체크 데이터 없음")
 
-    banner_lines = []
-    if is_alert:
-        parts = []
-        if macro_alert:
-            parts.append(f"매크로 {macro_pct}%")
-        if stock_alert:
-            parts.append(f"종목({stock_name}) {stock_pct}%")
-        banner_lines = [_bold(f"🚨 {' / '.join(parts)} 돌파 — 베팅 신호 🚨"), ""]
-
     volume_rank_lines = _volume_rank_lines()
 
-    raw_text = "\n".join([
-        header, *banner_lines, *summary_lines, "", *macro_lines, "", *stock_lines, "",
+    return "\n".join([
+        header, *summary_lines, "", *macro_lines, "", *stock_lines, "",
         *volume_rank_lines, "", "----",
     ])
-    return html.escape(raw_text).replace(_BOLD_OPEN, "<b>").replace(_BOLD_CLOSE, "</b>")
 
 
 def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    body = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}).encode()
+    body = json.dumps({"chat_id": TELEGRAM_CHAT_ID, "text": text}).encode()
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=10) as resp:
         result = json.loads(resp.read())
