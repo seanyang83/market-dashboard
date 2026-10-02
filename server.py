@@ -507,6 +507,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_stock_program_trade()
         elif self.path.startswith("/api/telegram/send-summary"):
             self.handle_telegram_send_summary()
+        elif self.path.startswith("/api/telegram/check-alert"):
+            self.handle_check_threshold_alert()
         elif self.path.startswith("/api/market/volume-rank"):
             self.handle_volume_rank()
         elif self.path.startswith("/api/market/trading-value"):
@@ -881,6 +883,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
+    def handle_check_threshold_alert(self):
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            self.send_json(503, {"error": "텔레그램 설정이 안 되어 있습니다"})
+            return
+        try:
+            self.send_json(200, check_threshold_alert())
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -935,6 +949,75 @@ def _fire_tier(macro_pct, stock_pct):
     if both and macro_pct >= ALERT_THRESHOLD and stock_pct >= ALERT_THRESHOLD:
         return 3, 3, "불장!!"
     return solo(macro_pct), solo(stock_pct), None
+
+
+# --- 실시간 임계값 돌파 알림 (정시 발송과 별개) ---
+# 매크로/종목 체크 %가 상단(80%) 위로, 또는 하단(20%) 아래로 "새로" 넘어갈
+# 때만 즉시 텔레그램으로 알린다. 히스테리시스 10%p: 80을 넘어 알림을 보낸
+# 뒤에는 70 밑으로 내려가야 "리셋"되어 다음에 80을 다시 넘을 때 재알림 -
+# 경계값 근처에서 값이 잘게 흔들려도 매번 알림이 오는 걸 막는다. 하단도
+# 대칭으로 20/30. 상태는 프로세스 메모리에만 있어서 재배포되면 초기화됨
+# (개인용 도구라 감수).
+ALERT_LOW_THRESHOLD = 20
+ALERT_HYSTERESIS = 10
+
+_alert_state = {
+    "macro": {"high": False, "low": False},
+    "stock": {"high": False, "low": False},
+}
+_alert_state_lock = threading.Lock()
+
+
+def _update_alert_state(key, pct):
+    events = []
+    if pct is None:
+        return events
+    with _alert_state_lock:
+        st = _alert_state[key]
+        if not st["high"] and pct >= ALERT_THRESHOLD:
+            st["high"] = True
+            events.append("high_cross")
+        elif st["high"] and pct < ALERT_THRESHOLD - ALERT_HYSTERESIS:
+            st["high"] = False
+        if not st["low"] and pct <= ALERT_LOW_THRESHOLD:
+            st["low"] = True
+            events.append("low_cross")
+        elif st["low"] and pct > ALERT_LOW_THRESHOLD + ALERT_HYSTERESIS:
+            st["low"] = False
+    return events
+
+
+def check_threshold_alert():
+    macro_pct, _, stock_pct, stock_name, _ = _compute_scores()
+
+    macro_events = _update_alert_state("macro", macro_pct)
+    stock_events = _update_alert_state("stock", stock_pct)
+    if not macro_events and not stock_events:
+        return {"sent": False, "macroPct": macro_pct, "stockPct": stock_pct}
+
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    lines = [f"⏰ 실시간 알림 · {now.strftime('%m/%d %H:%M')}"]
+    for events, pct, label in [
+        (macro_events, macro_pct, "매크로 체크"),
+        (stock_events, stock_pct, f"종목체크({stock_name})" if stock_pct is not None else "종목 체크"),
+    ]:
+        for ev in events:
+            if ev == "high_cross":
+                lines.append(f"🔥 {label} {pct}% - {ALERT_THRESHOLD}% 돌파")
+            elif ev == "low_cross":
+                lines.append(f"⚠️ {label} {pct}% - {ALERT_LOW_THRESHOLD}% 이하로 하락")
+
+    macro_fire, stock_fire, fire_banner = _fire_tier(macro_pct, stock_pct)
+    lines.append("")
+    lines.append(f"매크로 체크 {macro_pct}%" + (" " + "🔥" * macro_fire if macro_fire else ""))
+    if stock_pct is not None:
+        lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" " + "🔥" * stock_fire if stock_fire else ""))
+    if fire_banner:
+        lines.append(fire_banner)
+
+    text = "\n".join(lines)
+    send_telegram_message(text)
+    return {"sent": True, "text": text}
 
 
 def _score_for(signal):
@@ -1195,10 +1278,15 @@ def _market_breadth_lines():
         data = _local_get("/api/market/breadth")
         k, q = data["kospi"], data["kosdaq"]
     except Exception:
-        return ["⚪ 등락 종목수 데이터 없음"]
+        return ["등락 종목수 데이터 없음"]
+
+    def fmt(b):
+        bigger, smaller = ("상승", "하락") if b["up"] >= b["down"] else ("하락", "상승")
+        return f"{bigger} > {smaller} ({b['up']},{b['flat']},{b['down']})"
+
     return [
-        f"⚪ 코스피 등락: 상승 {k['up']} · 보합 {k['flat']} · 하락 {k['down']}",
-        f"⚪ 코스닥 등락: 상승 {q['up']} · 보합 {q['flat']} · 하락 {q['down']}",
+        f"코스피 등락: {fmt(k)}",
+        f"코스닥 등락: {fmt(q)}",
     ]
 
 
@@ -1217,9 +1305,7 @@ def _volume_rank_lines():
     return lines
 
 
-def build_dashboard_summary_text():
-    now = datetime.now(timezone.utc) + timedelta(hours=9)
-
+def _compute_scores():
     macro_signals = []
     macro_lines = []
     for label, symbol, sentiment, prefix, decimals in [
@@ -1250,6 +1336,13 @@ def build_dashboard_summary_text():
         stock_pct, stock_name, stock_lines = _stock_section(TELEGRAM_SUMMARY_STOCK_CODE)
     except Exception as e:
         stock_pct, stock_name, stock_lines = None, TELEGRAM_SUMMARY_STOCK_CODE, [f"⚪ 종목 체크 데이터 없음 ({e})"]
+
+    return macro_pct, macro_lines, stock_pct, stock_name, stock_lines
+
+
+def build_dashboard_summary_text():
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    macro_pct, macro_lines, stock_pct, stock_name, stock_lines = _compute_scores()
 
     macro_fire, stock_fire, fire_banner = _fire_tier(macro_pct, stock_pct)
 

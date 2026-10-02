@@ -1,0 +1,18 @@
+name: Check threshold alert
+
+# Every 30 min during KRX hours, checks whether 매크로/종목 체크 % has newly
+# crossed 80% (up) or 20% (down, with 10%p hysteresis on both). Only sends
+# a Telegram message when a crossing actually happened - stays silent
+# otherwise, independent of the fixed-checkpoint summary schedule.
+on:
+  schedule:
+    - cron: "*/30 0-11 * * 1-5"  # 09:00-20:30 KST, Mon-Fri
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check threshold alert
+        run: |
+          curl -sf -m 30 "https://market-dashboard-gqxq.onrender.com/api/telegram/check-alert?key=${{ secrets.TELEGRAM_SUMMARY_KEY }}"
