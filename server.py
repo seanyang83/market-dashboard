@@ -509,6 +509,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_telegram_send_summary()
         elif self.path.startswith("/api/telegram/check-alert"):
             self.handle_check_threshold_alert()
+        elif self.path.startswith("/api/telegram/announce"):
+            self.handle_telegram_announce()
         elif self.path.startswith("/api/market/volume-rank"):
             self.handle_volume_rank()
         elif self.path.startswith("/api/market/trading-value"):
@@ -892,6 +894,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         try:
             self.send_json(200, check_threshold_alert())
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_telegram_announce(self):
+        # 자동 발송(정시 요약/임계값 알림)과 별개로, 채널에 한 번 보낼 공지
+        # 텍스트를 수동으로 보낼 때 쓰는 용도. 같은 키로 보호.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+            self.send_json(503, {"error": "텔레그램 설정이 안 되어 있습니다"})
+            return
+        text = self.query_param("text")
+        if not text:
+            self.send_json(400, {"error": "missing text"})
+            return
+        try:
+            send_telegram_message(text)
+            self.send_json(200, {"ok": True})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
