@@ -909,10 +909,32 @@ TELEGRAM_SUMMARY_STOCK_CODE = os.environ.get("TELEGRAM_SUMMARY_STOCK_CODE", "000
 
 SIGNAL_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴", None: "⚪"}
 
-# 매크로 체크 % 또는 종목 체크 %가 이 값 이상이면 그 줄 끝에 🔥를 붙인다
-# (100%면 🔥🔥🔥). 매시 정각마다 다시 떨어졌다 올랐다 할 수 있는 값이라
-# 그 이상의 강조(굵게/배너/고정 등)는 하지 않는다.
+# 매크로/종목 체크 % 에 따라 🔥 개수와 강조 문구를 정하는 단계.
+# - 한쪽만 기준을 넘으면: 그 줄만 80%+ 🔥1개, 100% 🔥3개.
+# - 둘 다 80%+: 양쪽 다 🔥3개 + "불장!!" 문구.
+# - 둘 다 100%: 양쪽 다 🔥5개 + "종가베팅 순간이 왔습니다" 문구.
+# 매 체크포인트마다 다시 떨어졌다 올랐다 할 수 있는 값이라 그 이상의 강조
+# (굵게/채널 고정 등)는 하지 않는다.
 ALERT_THRESHOLD = 80
+
+
+def _fire_tier(macro_pct, stock_pct):
+    both = stock_pct is not None
+
+    def solo(pct):
+        if pct is None:
+            return 0
+        if pct >= 100:
+            return 3
+        if pct >= ALERT_THRESHOLD:
+            return 1
+        return 0
+
+    if both and macro_pct >= 100 and stock_pct >= 100:
+        return 5, 5, "종가베팅 순간이 왔습니다"
+    if both and macro_pct >= ALERT_THRESHOLD and stock_pct >= ALERT_THRESHOLD:
+        return 3, 3, "불장!!"
+    return solo(macro_pct), solo(stock_pct), None
 
 
 def _score_for(signal):
@@ -1229,18 +1251,17 @@ def build_dashboard_summary_text():
     except Exception as e:
         stock_pct, stock_name, stock_lines = None, TELEGRAM_SUMMARY_STOCK_CODE, [f"⚪ 종목 체크 데이터 없음 ({e})"]
 
-    def _fire_suffix(pct):
-        if pct is None or pct < ALERT_THRESHOLD:
-            return ""
-        return " " + "🔥" * (3 if pct >= 100 else 1)
+    macro_fire, stock_fire, fire_banner = _fire_tier(macro_pct, stock_pct)
 
     header = f"📊 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}"
 
-    summary_lines = [f"매크로 체크 {macro_pct}%{_fire_suffix(macro_pct)}"]
+    summary_lines = [f"매크로 체크 {macro_pct}%" + (" " + "🔥" * macro_fire if macro_fire else "")]
     if stock_pct is not None:
-        summary_lines.append(f"종목체크({stock_name}) {stock_pct}%{_fire_suffix(stock_pct)}")
+        summary_lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" " + "🔥" * stock_fire if stock_fire else ""))
     else:
         summary_lines.append("종목 체크 데이터 없음")
+    if fire_banner:
+        summary_lines.append(fire_banner)
 
     # 거래대금 순위는 KIS 호출이 두 번(KRX+NXT) 더 들어가는 무거운 섹션이라,
     # 하루 중 장 시작(09:10)과 마감 전(15:10) 체크포인트에만 같이 보낸다.
