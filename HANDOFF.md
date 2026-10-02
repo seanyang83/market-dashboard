@@ -17,6 +17,7 @@ index.html                         프론트엔드: 순수 HTML/CSS/JS, 프레�
 render.yaml                        Render 배포 설정 (python3 server.py 실행)
 .github/workflows/keepalive.yml    10분마다 핑 (Render 무료 티어 슬립 방지)
 .github/workflows/telegram-summary.yml  평일 09:10/12:10/15:10/17:10/19:40 텔레그램 요약 발송 트리거
+.github/workflows/threshold-alert.yml   평일 09:00~20:00 30분마다 실시간 임계값/5일선 근접 체크 트리거
 .kis_token_cache.json              KIS 토큰 로컬 캐시 (gitignore 대상, Render에선 매 배포마다 사라짐)
 .claude/launch.json                로컬 프리뷰용 (Claude Code 개발 환경 설정)
 ```
@@ -195,6 +196,30 @@ Bot API `sendMessage`로 채널에 발송.
 - `TELEGRAM_SUMMARY_STOCK_CODE` 환경변수로 어떤 종목을 종목 체크 섹션에
   넣을지 결정 (기본값 `000660` = SK하이닉스, 프론트 기본 종목과 동일하게
   맞춰둠).
+
+### 정시 요약 외 추가 알림들 (`/api/telegram/check-alert`, 30분마다)
+
+`threshold-alert.yml`이 평일 09:00~20:00 KST에 30분마다 호출. 서버도
+`handle_check_threshold_alert()`에서 같은 시간창(09:00~20:00)과 휴장일
+여부를 직접 한 번 더 확인함(cron 지연/수동 호출 방어).
+- **매크로/종목 체크 % 돌파 알림** (`check_threshold_alert`): 80% 위로 새로
+  올라가거나 20% 아래로 새로 내려갈 때만 발송. 히스테리시스 20%p (80→60
+  밑으로 내려가야 리셋, 20→40 위로 올라가야 리셋). 매크로/종목 각각 독립
+  상태. 상태는 프로세스 메모리라 재배포 직후 첫 체크에서 이미 80%+이면
+  1회 중복 알림이 갈 수 있음(알려진 한계).
+- **5일선 근접 알림** (`check_ma_proximity_alert`): 5일선 *위*에 있는 종목이
+  5일선 1% 이내로 내려올 때만(아래에서 올라오는 경우는 제외, 사용자 요청).
+  2% 넘게 멀어지거나 5일선 아래로 내려가면 리셋. **정규장 09:00~15:30에만**
+  동작. 감시 종목은 웹페이지 맨 아래 카드에서 추가/삭제하고
+  (`/api/watchlist`, `/add`, `/remove`), 변경 시 `TELEGRAM_MA_WATCH_CODES`
+  Render 환경변수에도 저장돼 재배포 후에도 유지(기본값 000660,036540).
+- **🔥 이모지 단계** (`_fire_tier`): 한쪽만 80%+면 🔥, 100%면 🔥🔥🔥. 둘 다
+  80%+면 양쪽 🔥🔥🔥 + "불장!!", 둘 다 100%면 양쪽 🔥×5 + "종가베팅 순간이
+  왔습니다". 정시 요약과 실시간 알림 모두 같은 함수를 씀.
+- **휴장일 처리** (`is_krx_trading_day`): KIS 국내휴장일조회(`chk-holiday`)를
+  하루 1회만 호출해 캐시(KIS 문서가 1일 1회 요청). 휴장일이면 정시 요약/
+  실시간 알림 모두 조용히 skip. 조회 실패 시엔 거래일로 간주(fail-open).
+- `/api/telegram/announce?key=&text=`: 채널에 수동 공지를 보낼 때 쓰는 엔드포인트.
 
 ### 필요한 환경변수 요약 (텔레그램 관련)
 - `TELEGRAM_BOT_TOKEN` — @BotFather에서 발급받은 봇 토큰

@@ -934,6 +934,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             self.send_json(503, {"error": "텔레그램 설정이 안 되어 있습니다"})
             return
+        # 정시 요약(09:10~19:40)과 같은 시간대에만 - cron 지연이나 수동 호출로
+        # 장 밖 시간에 알림이 나가지 않도록 서버에서도 한 번 더 막는다.
+        now = datetime.now(timezone.utc) + timedelta(hours=9)
+        if not (9 * 60 <= now.hour * 60 + now.minute <= 20 * 60):
+            self.send_json(200, {"sent": False, "skipped": "outside_hours"})
+            return
         if not is_krx_trading_day():
             self.send_json(200, {"sent": False, "skipped": "market_holiday"})
             return

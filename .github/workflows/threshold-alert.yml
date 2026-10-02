@@ -1,12 +1,14 @@
 name: Check threshold alert
 
-# Every 30 min during KRX hours, checks whether 매크로/종목 체크 % has newly
-# crossed 80% (up) or 20% (down, with 10%p hysteresis on both). Only sends
-# a Telegram message when a crossing actually happened - stays silent
-# otherwise, independent of the fixed-checkpoint summary schedule.
+# Every 30 min from 09:00 to 20:00 KST, checks whether 매크로/종목 체크 % has
+# newly crossed 80% (up) or 20% (down, with 20%p hysteresis on both). Only
+# sends a Telegram message when a crossing actually happened - stays silent
+# otherwise, independent of the fixed-checkpoint summary schedule. The
+# server also enforces the 09:00-20:00 window itself.
 on:
   schedule:
-    - cron: "*/30 0-11 * * 1-5"  # 09:00-20:30 KST, Mon-Fri
+    - cron: "*/30 0-10 * * 1-5"  # 09:00-19:30 KST, Mon-Fri
+    - cron: "0 11 * * 1-5"       # 20:00 KST, Mon-Fri
   workflow_dispatch: {}
 
 jobs:
