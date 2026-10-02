@@ -909,8 +909,9 @@ TELEGRAM_SUMMARY_STOCK_CODE = os.environ.get("TELEGRAM_SUMMARY_STOCK_CODE", "000
 
 SIGNAL_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴", None: "⚪"}
 
-# 매크로 체크 % 또는 종목 체크 %가 이 값 이상이면 그 줄 끝에 🔥를 붙인다.
-# 매시 정각마다 다시 떨어졌다 올랐다 할 수 있는 값이라 그 이상은 하지 않는다.
+# 매크로 체크 % 또는 종목 체크 %가 이 값 이상이면 그 줄 끝에 🔥를 붙인다
+# (100%면 🔥🔥🔥). 매시 정각마다 다시 떨어졌다 올랐다 할 수 있는 값이라
+# 그 이상의 강조(굵게/배너/고정 등)는 하지 않는다.
 ALERT_THRESHOLD = 80
 
 
@@ -1228,14 +1229,16 @@ def build_dashboard_summary_text():
     except Exception as e:
         stock_pct, stock_name, stock_lines = None, TELEGRAM_SUMMARY_STOCK_CODE, [f"⚪ 종목 체크 데이터 없음 ({e})"]
 
-    macro_alert = macro_pct >= ALERT_THRESHOLD
-    stock_alert = stock_pct is not None and stock_pct >= ALERT_THRESHOLD
+    def _fire_suffix(pct):
+        if pct is None or pct < ALERT_THRESHOLD:
+            return ""
+        return " " + "🔥" * (3 if pct >= 100 else 1)
 
     header = f"📊 종가베팅 체크리스트 · {now.strftime('%m/%d %H:%M')}"
 
-    summary_lines = [f"매크로 체크 {macro_pct}%" + (" 🔥" if macro_alert else "")]
+    summary_lines = [f"매크로 체크 {macro_pct}%{_fire_suffix(macro_pct)}"]
     if stock_pct is not None:
-        summary_lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" 🔥" if stock_alert else ""))
+        summary_lines.append(f"종목체크({stock_name}) {stock_pct}%{_fire_suffix(stock_pct)}")
     else:
         summary_lines.append("종목 체크 데이터 없음")
 
