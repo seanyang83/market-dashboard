@@ -544,6 +544,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_check_threshold_alert()
         elif self.path.startswith("/api/telegram/announce"):
             self.handle_telegram_announce()
+        elif self.path.startswith("/api/watchlist/add"):
+            self.handle_watchlist_add()
+        elif self.path.startswith("/api/watchlist/remove"):
+            self.handle_watchlist_remove()
+        elif self.path.startswith("/api/watchlist"):
+            self.handle_watchlist_get()
         elif self.path.startswith("/api/market/volume-rank"):
             self.handle_volume_rank()
         elif self.path.startswith("/api/market/trading-value"):
@@ -957,6 +963,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
+    def handle_watchlist_get(self):
+        items = []
+        for code in get_ma_watch_codes():
+            try:
+                q = _local_get(f"/api/stock/quote?code={code}")
+                items.append({"code": code, "name": q.get("name") or code})
+            except Exception:
+                items.append({"code": code, "name": code})
+        self.send_json(200, {"items": items})
+
+    def handle_watchlist_add(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        self.send_json(200, {"ok": True, "codes": add_ma_watch_code(code)})
+
+    def handle_watchlist_remove(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        self.send_json(200, {"ok": True, "codes": remove_ma_watch_code(code)})
+
     def send_json(self, status, payload):
         body = json.dumps(payload).encode()
         self.send_response(status)
@@ -1015,13 +1043,13 @@ def _fire_tier(macro_pct, stock_pct):
 
 # --- 실시간 임계값 돌파 알림 (정시 발송과 별개) ---
 # 매크로/종목 체크 %가 상단(80%) 위로, 또는 하단(20%) 아래로 "새로" 넘어갈
-# 때만 즉시 텔레그램으로 알린다. 히스테리시스 10%p: 80을 넘어 알림을 보낸
-# 뒤에는 70 밑으로 내려가야 "리셋"되어 다음에 80을 다시 넘을 때 재알림 -
-# 경계값 근처에서 값이 잘게 흔들려도 매번 알림이 오는 걸 막는다. 하단도
-# 대칭으로 20/30. 상태는 프로세스 메모리에만 있어서 재배포되면 초기화됨
-# (개인용 도구라 감수).
+# 때만 즉시 텔레그램으로 알린다. 히스테리시스 20%p: 80을 넘어 알림을 보낸
+# 뒤에는 60 밑으로 내려가야 "리셋"되어 다음에 80을 다시 넘을 때 재알림 -
+# 경계값 근처에서 값이 잘게 흔들려도 매번 알림이 오는 걸 막는다(10%p였을 때
+# 너무 자주 온다고 해서 20%p로 넓힘). 하단도 대칭으로 20/40. 상태는 프로세스
+# 메모리에만 있어서 재배포되면 초기화됨 (개인용 도구라 감수).
 ALERT_LOW_THRESHOLD = 20
-ALERT_HYSTERESIS = 10
+ALERT_HYSTERESIS = 20
 
 _alert_state = {
     "macro": {"high": False, "low": False},
@@ -1085,16 +1113,44 @@ def check_threshold_alert():
 # --- 5일선 근접 알림 (정규장 09:00~15:30만) ---
 # 종목이 "5일선 위"에 있다가 5일선 쪽으로 가까워질 때만 알린다 (5일선 아래에서
 # 올라오는 경우는 제외 - 사용자가 명시적으로 그건 보고 싶지 않다고 함). 감시
-# 종목 목록은 Render 환경변수(TELEGRAM_MA_WATCH_CODES, 콤마구분 종목코드)로
-# 코드 수정 없이 바꿀 수 있게 해뒀다. 히스테리시스 1%p: 5일선 위로 1% 이내까지
-# 가까워지면 알리고, 2% 넘게 다시 멀어지거나(또는 5일선 아래로 내려가거나)
-# 해야 리셋.
-MA_WATCH_CODES = [c.strip() for c in os.environ.get("TELEGRAM_MA_WATCH_CODES", "000660,036540").split(",") if c.strip()]
+# 종목 목록은 웹페이지 하단에서 추가/삭제 가능 - 메모리에 들고 있다가 바뀔
+# 때마다 Render 환경변수(TELEGRAM_MA_WATCH_CODES)에도 써둬서 재배포돼도
+# 유지된다 (KIS 토큰 캐싱과 같은 패턴). 히스테리시스 1%p: 5일선 위로 1%
+# 이내까지 가까워지면 알리고, 2% 넘게 다시 멀어지거나(또는 5일선 아래로
+# 내려가거나) 해야 리셋.
 MA_NEAR_PCT = 1.0
 MA_RESET_PCT = 2.0
 
+_ma_watch_lock = threading.Lock()
+_ma_watch_codes = [c.strip() for c in os.environ.get("TELEGRAM_MA_WATCH_CODES", "000660,036540").split(",") if c.strip()]
+
 _ma_alert_state = {}
 _ma_alert_state_lock = threading.Lock()
+
+
+def get_ma_watch_codes():
+    with _ma_watch_lock:
+        return list(_ma_watch_codes)
+
+
+def add_ma_watch_code(code):
+    with _ma_watch_lock:
+        if code not in _ma_watch_codes:
+            _ma_watch_codes.append(code)
+        codes = list(_ma_watch_codes)
+    _render_set_env_var("TELEGRAM_MA_WATCH_CODES", ",".join(codes))
+    return codes
+
+
+def remove_ma_watch_code(code):
+    with _ma_watch_lock:
+        if code in _ma_watch_codes:
+            _ma_watch_codes.remove(code)
+        with _ma_alert_state_lock:
+            _ma_alert_state.pop(code, None)
+        codes = list(_ma_watch_codes)
+    _render_set_env_var("TELEGRAM_MA_WATCH_CODES", ",".join(codes))
+    return codes
 
 
 def _update_ma_near_state(code, diff_pct):
@@ -1118,7 +1174,7 @@ def check_ma_proximity_alert():
         return {"checked": False}
 
     events = []
-    for code in MA_WATCH_CODES:
+    for code in get_ma_watch_codes():
         try:
             quote = _local_get(f"/api/stock/quote?code={code}")
             hist = _local_get(f"/api/stock/history?code={code}")

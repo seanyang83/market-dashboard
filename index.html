@@ -590,6 +590,26 @@
     <div class="error-msg" id="volumeRankError"></div>
   </div>
 
+  <div class="section-head">
+    <h2 class="section-title">5일선 근접 감시 종목</h2>
+  </div>
+  <div class="card">
+    <div class="sub-label">종목이 5일선 위에서 1% 이내로 가까워지면 텔레그램으로 알림 (정규장 09:00~15:30, 5일선 아래에서 올라오는 경우는 제외)</div>
+    <div class="stock-search-row">
+      <input type="text" id="watchlistInput" placeholder="예: 삼성전자" />
+      <button class="refresh-btn" id="watchlistAddBtn">추가</button>
+    </div>
+    <div class="error-msg" id="watchlistError"></div>
+    <table class="flow-table" style="margin-top:12px;">
+      <thead>
+        <tr><th>종목코드</th><th>종목명</th><th></th></tr>
+      </thead>
+      <tbody id="watchlistBody">
+        <tr><td colspan="3">불러오는 중</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <footer>
     데이터 출처: Yahoo Finance(미국 지수·원자재·코인, 실시간 또는 최대 15~20분 지연 시세), 네이버 금융(코스피, 실시간).
     브라우저가 각 API를 직접 호출하면 CORS 정책에 막히기 때문에, 같은 폴더의 <code>server.py</code>가 로컬 프록시 역할을 합니다.
@@ -1030,6 +1050,65 @@ async function updateVolumeRank() {
     errorEl.classList.add("show");
   } finally {
     if (btnEl) btnEl.disabled = false;
+  }
+}
+
+async function loadWatchlist() {
+  const bodyEl = document.getElementById("watchlistBody");
+  try {
+    const data = await fetchJson("/api/watchlist");
+    const items = data.items || [];
+    if (!items.length) {
+      bodyEl.innerHTML = '<tr><td colspan="3">감시 중인 종목이 없습니다</td></tr>';
+      return;
+    }
+    bodyEl.innerHTML = items.map((it) => `
+      <tr>
+        <td>${it.code}</td>
+        <td style="text-align:left;">${it.name}</td>
+        <td><button class="refresh-btn watchlist-remove-btn" data-code="${it.code}">삭제</button></td>
+      </tr>
+    `).join("");
+    bodyEl.querySelectorAll(".watchlist-remove-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await fetchJson(`/api/watchlist/remove?code=${encodeURIComponent(btn.dataset.code)}`);
+          await loadWatchlist();
+        } catch (e) {
+          btn.disabled = false;
+        }
+      });
+    });
+  } catch (e) {
+    bodyEl.innerHTML = '<tr><td colspan="3">감시 종목을 불러오지 못했습니다</td></tr>';
+  }
+}
+
+async function handleWatchlistAdd() {
+  const input = document.getElementById("watchlistInput");
+  const errorEl = document.getElementById("watchlistError");
+  const addBtn = document.getElementById("watchlistAddBtn");
+  const q = input.value.trim();
+  if (!q) return;
+  errorEl.classList.remove("show");
+  addBtn.disabled = true;
+  try {
+    const search = await fetchJson(`/api/stock/search?q=${encodeURIComponent(q)}`);
+    const items = search.items || [];
+    if (!items.length) {
+      errorEl.textContent = "검색 결과가 없습니다.";
+      errorEl.classList.add("show");
+      return;
+    }
+    await fetchJson(`/api/watchlist/add?code=${items[0].code}`);
+    input.value = "";
+    await loadWatchlist();
+  } catch (e) {
+    errorEl.textContent = "추가 중 오류: " + e.message;
+    errorEl.classList.add("show");
+  } finally {
+    addBtn.disabled = false;
   }
 }
 
@@ -1556,6 +1635,12 @@ refreshAll();
 
 document.getElementById("volumeRankRefreshBtn").addEventListener("click", updateVolumeRank);
 updateVolumeRank();
+
+document.getElementById("watchlistAddBtn").addEventListener("click", handleWatchlistAdd);
+document.getElementById("watchlistInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") handleWatchlistAdd();
+});
+loadWatchlist();
 
 const DEFAULT_STOCK = { code: "000660", name: "SK하이닉스" };
 stockQueryInput.value = DEFAULT_STOCK.name;
