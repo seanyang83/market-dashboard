@@ -932,7 +932,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"sent": False, "skipped": "market_holiday"})
             return
         try:
-            self.send_json(200, check_threshold_alert())
+            result = check_threshold_alert()
+            result["ma"] = check_ma_proximity_alert()
+            self.send_json(200, result)
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -1076,6 +1078,66 @@ def check_threshold_alert():
         lines.append(fire_banner)
 
     text = "\n".join(lines)
+    send_telegram_message(text)
+    return {"sent": True, "text": text}
+
+
+# --- 5일선 근접 알림 (정규장 09:00~15:30만) ---
+# 종목이 "5일선 위"에 있다가 5일선 쪽으로 가까워질 때만 알린다 (5일선 아래에서
+# 올라오는 경우는 제외 - 사용자가 명시적으로 그건 보고 싶지 않다고 함). 감시
+# 종목 목록은 Render 환경변수(TELEGRAM_MA_WATCH_CODES, 콤마구분 종목코드)로
+# 코드 수정 없이 바꿀 수 있게 해뒀다. 히스테리시스 1%p: 5일선 위로 1% 이내까지
+# 가까워지면 알리고, 2% 넘게 다시 멀어지거나(또는 5일선 아래로 내려가거나)
+# 해야 리셋.
+MA_WATCH_CODES = [c.strip() for c in os.environ.get("TELEGRAM_MA_WATCH_CODES", "000660,036540").split(",") if c.strip()]
+MA_NEAR_PCT = 1.0
+MA_RESET_PCT = 2.0
+
+_ma_alert_state = {}
+_ma_alert_state_lock = threading.Lock()
+
+
+def _update_ma_near_state(code, diff_pct):
+    """diff_pct = (price - ma5) / ma5 * 100. Returns True only on a fresh
+    'approaching from above' event."""
+    with _ma_alert_state_lock:
+        was_near = _ma_alert_state.get(code, False)
+        if not was_near and 0 < diff_pct <= MA_NEAR_PCT:
+            _ma_alert_state[code] = True
+            return True
+        if was_near and (diff_pct > MA_RESET_PCT or diff_pct <= 0):
+            _ma_alert_state[code] = False
+    return False
+
+
+def check_ma_proximity_alert():
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    if not (market_open <= now <= market_close):
+        return {"checked": False}
+
+    events = []
+    for code in MA_WATCH_CODES:
+        try:
+            quote = _local_get(f"/api/stock/quote?code={code}")
+            hist = _local_get(f"/api/stock/history?code={code}")
+            closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
+            if len(closes) < 5:
+                continue
+            ma5 = _rolling_ma(closes, 5)[-1]
+            price = quote["price"]
+            name = quote.get("name") or code
+            diff_pct = (price - ma5) / ma5 * 100
+            if _update_ma_near_state(code, diff_pct):
+                events.append(f"📍 {name} 5일선 근접 - 현재가 {price:,.0f} / 5일선 {ma5:,.0f} (+{diff_pct:.2f}%)")
+        except Exception:
+            continue
+
+    if not events:
+        return {"sent": False}
+
+    text = "\n".join([f"📍 5일선 근접 알림 · {now.strftime('%m/%d %H:%M')}", "", *events])
     send_telegram_message(text)
     return {"sent": True, "text": text}
 
