@@ -5,9 +5,12 @@ name: Keep dashboard awake
 # during Korean market hours so it stays warm.
 on:
   schedule:
-    # 08:50-15:59 KST, Mon-Fri (cron times are UTC)
+    # 08:50-20:59 KST, Mon-Fri (cron times are UTC). KRX now trades until
+    # 20:00, and the Telegram summary sends as late as 19:40 KST, so this
+    # needs to stay warm well past the old 15:59 cutoff or those late
+    # sends risk a cold-start timeout.
     - cron: "50 23 * * 0-4"
-    - cron: "*/10 0-6 * * 1-5"
+    - cron: "*/10 0-11 * * 1-5"
   workflow_dispatch: {}
 
 jobs:
