@@ -1,12 +1,17 @@
 name: Send Telegram summary
 
 # Posts a text summary of the dashboard (매크로 체크 + 종목 체크) to the
-# configured Telegram channel, hourly during market hours on trading days.
+# configured Telegram channel, at fixed checkpoints on trading days.
 on:
   schedule:
-    # 09:10-15:10 KST, Mon-Fri (cron times are UTC; 00:10-06:10 UTC falls on
-    # the same calendar day as 09:10-15:10 KST, so weekday matches directly)
-    - cron: "10 0-6 * * 1-5"
+    # 09:10, 12:10, 15:10, 17:10, 19:40 KST, Mon-Fri (cron times are UTC;
+    # KST = UTC+9, and every one of these UTC times still falls within the
+    # same Mon-Fri UTC window, so the weekday filter matches directly)
+    - cron: "10 0 * * 1-5"   # 09:10 KST
+    - cron: "10 3 * * 1-5"   # 12:10 KST
+    - cron: "10 6 * * 1-5"   # 15:10 KST
+    - cron: "10 8 * * 1-5"   # 17:10 KST
+    - cron: "40 10 * * 1-5"  # 19:40 KST
   workflow_dispatch: {}
 
 jobs:

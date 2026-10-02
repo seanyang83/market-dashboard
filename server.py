@@ -1242,12 +1242,19 @@ def build_dashboard_summary_text():
     else:
         summary_lines.append("종목 체크 데이터 없음")
 
-    volume_rank_lines = _volume_rank_lines()
+    # 거래대금 순위는 KIS 호출이 두 번(KRX+NXT) 더 들어가는 무거운 섹션이라,
+    # 하루 중 장 시작(09:10)과 마감 전(15:10) 체크포인트에만 같이 보낸다.
+    blocks = [macro_lines, stock_lines]
+    if now.hour in (9, 15):
+        blocks.append(_volume_rank_lines())
 
-    return "\n".join([
-        header, *summary_lines, "", *macro_lines, "", *stock_lines, "",
-        *volume_rank_lines, "", "----",
-    ])
+    parts = [header, *summary_lines]
+    for block in blocks:
+        parts.append("")
+        parts.extend(block)
+    parts.append("")
+    parts.append("----")
+    return "\n".join(parts)
 
 
 def send_telegram_message(text):
