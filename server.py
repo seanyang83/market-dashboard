@@ -168,6 +168,39 @@ def kis_get(path, tr_id, params, retries=2):
                 raise
             time.sleep(0.4 * (attempt + 1))
 
+# --- 국내휴장일조회: 설날/추석 같은 평일 공휴일에 텔레그램 메시지를 쉬기 위함 ---
+# KIS 공식 문서가 "당사 원장서비스와 연관되어 있어 가급적 1일 1회 호출 부탁
+# 드립니다"라고 명시한 API라서, 하루 한 번만 조회하고 그날 자정(KST)까지는
+# 캐시된 값을 재사용한다 (정시 발송 5번 + 30분 체크 ~20여 번이 전부 같은
+# 캐시를 봄).
+_holiday_cache = {"date": None, "is_trading_day": True}
+_holiday_cache_lock = threading.Lock()
+
+
+def is_krx_trading_day():
+    date_str = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    with _holiday_cache_lock:
+        if _holiday_cache["date"] == date_str:
+            return _holiday_cache["is_trading_day"]
+    is_trading = True  # 조회 실패 시 평소처럼 동작(실제 거래일에 조용해지는 것보다 안전)
+    try:
+        data = kis_get(
+            "/uapi/domestic-stock/v1/quotations/chk-holiday",
+            "CTCA0903R",
+            {"BASS_DT": date_str, "CTX_AREA_NK": "", "CTX_AREA_FK": ""},
+        )
+        output = data.get("output")
+        if isinstance(output, list):
+            output = next((o for o in output if o.get("bass_dt") == date_str), output[0] if output else {})
+        is_trading = (output or {}).get("opnd_yn") == "Y"
+    except Exception:
+        pass
+    with _holiday_cache_lock:
+        _holiday_cache["date"] = date_str
+        _holiday_cache["is_trading_day"] = is_trading
+    return is_trading
+
+
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com"}
 NAVER_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI"
 NAVER_INVESTOR_URL = (
@@ -878,6 +911,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             self.send_json(503, {"error": "텔레그램 설정이 안 되어 있습니다"})
             return
+        if not is_krx_trading_day():
+            self.send_json(200, {"ok": True, "skipped": "market_holiday"})
+            return
         try:
             text = build_dashboard_summary_text()
             send_telegram_message(text)
@@ -891,6 +927,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
             self.send_json(503, {"error": "텔레그램 설정이 안 되어 있습니다"})
+            return
+        if not is_krx_trading_day():
+            self.send_json(200, {"sent": False, "skipped": "market_holiday"})
             return
         try:
             self.send_json(200, check_threshold_alert())
