@@ -365,29 +365,15 @@
         <span><i class="dot" style="background:var(--ma60)"></i>60일선</span>
         <span><i class="dot" style="background:var(--ma120)"></i>120일선</span>
       </div>
+      <div class="meta-row">
+        <span id="kospiUpdated">-</span>
+        <span id="kospiRange">-</span>
+      </div>
       <div class="checklist-item">
         <div class="checklist-title">당일 수급 추이 (누적 순매수, 억원 · KRX+NXT 통합)</div>
         <canvas id="kospiFlowTrendChart" class="chart-lg" style="height:170px;"></canvas>
         <div class="legend" id="kospiFlowTrendLegend"></div>
         <div class="meta-row"><span id="kospiFlowTrendNote">-</span></div>
-      </div>
-      <div class="flow-row">
-        <div class="flow-item">
-          <span class="flow-label">개인</span>
-          <span class="flow-value flat" id="kospiFlowIndividual">-</span>
-        </div>
-        <div class="flow-item">
-          <span class="flow-label">외국인</span>
-          <span class="flow-value flat" id="kospiFlowForeign">-</span>
-        </div>
-        <div class="flow-item">
-          <span class="flow-label">기관</span>
-          <span class="flow-value flat" id="kospiFlowInstitution">-</span>
-        </div>
-      </div>
-      <div class="meta-row">
-        <span id="kospiUpdated">-</span>
-        <span id="kospiRange">-</span>
       </div>
       <div class="error-msg" id="kospiError"></div>
     </div>
@@ -1194,29 +1180,6 @@ async function updateKospiFlowTrend() {
   }
 }
 
-async function updateInvestorFlow(key) {
-  const els = {
-    individual: document.getElementById(key + "FlowIndividual"),
-    foreign: document.getElementById(key + "FlowForeign"),
-    institution: document.getElementById(key + "FlowInstitution"),
-  };
-  if (!els.individual || !els.foreign || !els.institution) return;
-  try {
-    const flow = await fetchJson("/api/kospi/investors");
-    for (const [k, el] of Object.entries(els)) {
-      const v = flow[k];
-      const dir = v > 0 ? "up" : v < 0 ? "down" : "flat";
-      el.textContent = fmtEok(v);
-      el.className = "flow-value " + dir;
-    }
-  } catch (e) {
-    for (const el of Object.values(els)) {
-      el.textContent = "오류";
-      el.className = "flow-value flat";
-    }
-  }
-}
-
 async function updateCard(key) {
   const cfg = SERIES[key];
   const { symbol, isYield } = cfg;
@@ -1285,7 +1248,7 @@ async function updateCard(key) {
     errorEl.classList.remove("show");
 
     if (cfg.withMA) {
-      const [ma5Signal] = await Promise.all([updateIndexPanel(key, dayLow), updateInvestorFlow(key)]);
+      const ma5Signal = await updateIndexPanel(key, dayLow);
       if (ma5Signal) scoreSignal = ma5Signal;
     }
 

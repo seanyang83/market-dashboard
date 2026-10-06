@@ -337,7 +337,6 @@ def _build_flow_trend():
         result = {
             "date": latest,
             "points": points,
-            "latest": {"individual": total[0], "foreign": total[1], "institution": total[2]},
         }
         _flow_trend["result"] = result
         _flow_trend["ts"] = now
@@ -748,8 +747,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_kospi_quote()
         elif self.path.startswith("/api/kospi/history"):
             self.handle_kospi_history()
-        elif self.path.startswith("/api/kospi/investors"):
-            self.handle_kospi_investors()
         elif self.path.startswith("/api/stock/search"):
             self.handle_stock_search()
         elif self.path.startswith("/api/stock/quote"):
@@ -864,15 +861,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "time": epoch,
                 "marketStatus": d.get("marketStatus"),
             })
-        except Exception as e:
-            self.send_json(502, {"error": str(e)})
-
-    def handle_kospi_investors(self):
-        # 카드 숫자는 당일 수급 추이 차트의 마지막 값과 같은 기준(KRX+NXT 통합,
-        # 외국인 기타 제외)이라 두 화면이 어긋나지 않는다.
-        try:
-            trend = _build_flow_trend()
-            self.send_json(200, {"date": trend["date"], **trend["latest"]})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -1022,7 +1010,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         institution_qty = int(row["organPureBuyQuant"])
         # Naver only gives net share quantity per investor type, not won
         # value, so approximate the money amount using that day's close
-        # price (same convention the market-wide /kospi/investors uses).
+        # price (same qty x close convention as the old market-wide investor card).
         # This fallback path only ever gets called if the KIS call above
         # failed, and Naver's endpoint only gives one day - no week history.
         return {
