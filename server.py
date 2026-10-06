@@ -206,22 +206,14 @@ def is_krx_trading_day():
 
 NAVER_HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.naver.com"}
 NAVER_QUOTE_URL = "https://polling.finance.naver.com/api/realtime/domestic/index/KOSPI"
-NAVER_INVESTOR_URL = (
-    "https://stock.naver.com/api/domestic/market/trend/daily"
-    "?tradeType=KRX&marketType=KOSPI&startIdx=0&pageSize=1"
-)
-# KRX investor-type codes. Verified against Naver's own displayed totals
-# (stock.naver.com's investor widget): 8000 individual, 9000/9001 foreign,
-# 1000/2000/3000/3100/4000/5000/6000 are the institution sub-types.
-# 7000 is an always-zero placeholder and 7100 (기타법인, other corporations)
-# is its own bucket that Naver's simplified 3-way view excludes entirely, so
-# neither is counted here.
-INVESTOR_INDIVIDUAL = {"8000"}
-INVESTOR_FOREIGN = {"9000", "9001"}
+# Investor-type codes in Naver's market trend payloads: 8000 개인, 9000 외국인
+# (9001 = 외국인 기타, 키움 기준에선 뺌), and the institution sub-types below.
+# 7000 is an always-zero placeholder and 7100 (기타법인) is its own bucket that
+# the simplified 3-way view excludes.
 INVESTOR_INSTITUTION = {"1000", "2000", "3000", "3100", "4000", "5000", "6000"}
 
 # Market-wide (KOSPI/KOSDAQ) daily total trading value, last N trading days.
-# Same endpoint as NAVER_INVESTOR_URL above (just a bigger pageSize) - the
+# trend/daily with a bigger pageSize - the
 # per-investor-type buyPrice values already sum to the whole market's total
 # 거래대금 for that day (verified against the real-time index quote's own
 # accumulatedTradingValueRaw: matched within ~0.1%, the rest being normal
@@ -275,7 +267,6 @@ FLOW_TREND_URL = (
     "?tradeType={trade_type}&marketType=KOSPI&startIdx={page}&pageSize={size}"
 )
 FLOW_TREND_CACHE_TTL = 60
-FLOW_TREND_INSTITUTION = {"1000", "2000", "3000", "3100", "4000", "5000", "6000"}
 _flow_trend = {"date": None, "rows": {"KRX": {}, "NXT": {}}, "result": None, "ts": 0}
 _flow_trend_lock = threading.Lock()
 
@@ -292,7 +283,7 @@ def _flow_trend_row_values(row):
     return (
         t.get("8000", 0),
         t.get("9000", 0),
-        sum(v for k, v in t.items() if k in FLOW_TREND_INSTITUTION),
+        sum(v for k, v in t.items() if k in INVESTOR_INSTITUTION),
     )
 
 
@@ -343,7 +334,11 @@ def _build_flow_trend():
                 "foreign": round(total[1] / 1e8, 1),
                 "institution": round(total[2] / 1e8, 1),
             })
-        result = {"date": latest, "points": points}
+        result = {
+            "date": latest,
+            "points": points,
+            "latest": {"individual": total[0], "foreign": total[1], "institution": total[2]},
+        }
         _flow_trend["result"] = result
         _flow_trend["ts"] = now
         return result
@@ -873,21 +868,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(502, {"error": str(e)})
 
     def handle_kospi_investors(self):
-        req = urllib.request.Request(NAVER_INVESTOR_URL, headers=NAVER_HEADERS)
+        # 카드 숫자는 당일 수급 추이 차트의 마지막 값과 같은 기준(KRX+NXT 통합,
+        # 외국인 기타 제외)이라 두 화면이 어긋나지 않는다.
         try:
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                data = json.loads(resp.read())
-            row = data["content"][0]
-            amounts = {a["investorGubun"]: int(a["diffValue"]) for a in row["netAmounts"]}
-            individual = sum(v for k, v in amounts.items() if k in INVESTOR_INDIVIDUAL)
-            foreign = sum(v for k, v in amounts.items() if k in INVESTOR_FOREIGN)
-            institution = sum(v for k, v in amounts.items() if k in INVESTOR_INSTITUTION)
-            self.send_json(200, {
-                "date": row.get("bizdate"),
-                "individual": individual,
-                "foreign": foreign,
-                "institution": institution,
-            })
+            trend = _build_flow_trend()
+            self.send_json(200, {"date": trend["date"], **trend["latest"]})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 

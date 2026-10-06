@@ -111,7 +111,7 @@ server.py 하나가 정적 파일 서빙 + 모든 외부 API 프록시 + 텔레�
 | `GET /api/quote?symbol=&range=&interval=` | Yahoo Finance chart API | 국채금리/유가/나스닥선물/비트코인/US 섹터 ETF |
 | `GET /api/kospi/quote` | 네이버 실시간 폴링 API | 코스피 현재가/시가/고저/전일종가 |
 | `GET /api/kospi/history` | 네이버 `siseJson.naver` | 코스피 일별 종가 (최근 300일, MA 계산용) |
-| `GET /api/kospi/investors` | 네이버 `stock.naver.com` 수급 API | 코스피 전체 개인/외국인/기관 순매수 |
+| `GET /api/kospi/investors` | `/api/kospi/flow-trend`의 마지막 값 재사용 | 코스피 개인/외국인/기관 당일 순매수 카드. 차트와 같은 기준(KRX+NXT 통합, 외국인 기타 제외) |
 | `GET /api/kospi/flow-trend` | 네이버 `trend/time` (KRX+NXT 각각 호출 후 시각별 합산) | 코스피 당일 개인/외국인/기관 누적 순매수 추이(분 단위, 억원). 외국인은 9000만(키움 당일추이와 일치, 9001 제외). 첫 호출에 하루치, 이후엔 최신 20행만 받아 이어붙이고 결과는 60초 캐시 |
 | `GET /api/stock/search?q=` | 네이버 자동완성 API | 종목명 → 코드 검색 |
 | `GET /api/stock/quote?code=` | 네이버 실시간 폴링 API | 개별 종목 현재가/시가/고저 |
