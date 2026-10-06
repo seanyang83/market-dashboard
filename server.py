@@ -556,8 +556,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_trading_value()
         elif self.path.startswith("/api/market/breadth"):
             self.handle_market_breadth()
-        else:
+        elif urllib.parse.urlparse(self.path).path in ("/", "/index.html"):
             super().do_GET()
+        else:
+            # SimpleHTTPRequestHandler would otherwise serve every file in
+            # this folder (server.py, HANDOFF.md, .kis_token_cache.json...).
+            self.send_json(404, {"error": "not found"})
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
 
     def query_param(self, name):
         query = urllib.parse.urlparse(self.path).query
