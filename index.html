@@ -682,6 +682,7 @@ function fmtTime(ts) {
 async function fetchSeries(symbol, opts = {}) {
   const params = new URLSearchParams({ symbol, ...opts });
   const res = await fetch(`/api/quote?${params.toString()}`, { cache: "no-store" });
+  if (res.status === 401) { location.href = "/login"; throw new Error("로그인이 필요합니다"); }
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
   const result = data?.chart?.result?.[0];
@@ -691,6 +692,7 @@ async function fetchSeries(symbol, opts = {}) {
 
 async function fetchJson(url) {
   const res = await fetch(url, { cache: "no-store" });
+  if (res.status === 401) { location.href = "/login"; throw new Error("로그인이 필요합니다"); }
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
   return data;

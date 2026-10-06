@@ -12,10 +12,13 @@ Naver (a Korean provider) has genuinely live intraday data for domestic
 indices.
 """
 import ast
+import hashlib
+import hmac
 import http.server
 import json
 import os
 import re
+import secrets
 import socketserver
 import threading
 import time
@@ -514,8 +517,150 @@ def _fetch_volume_rank():
     return result
 
 
+# --- 대시보드 접근 비밀번호 ---
+# DASHBOARD_PASSWORD(Render 환경변수)를 설정하면 페이지와 /api/* 전부 로그인이
+# 필요해진다. 한 번 로그인하면 쿠키를 30일간 기억해서 휴대폰에서도 매번 칠
+# 필요가 없고, /login?key=비밀번호 링크를 북마크해두면 만료/삭제 후에도 한 번
+# 탭으로 다시 로그인된다. 환경변수가 비어 있으면 인증을 끈다(설정 전에 배포돼도
+# 잠기지 않게). 텔레그램 발송 엔드포인트는 자체 키(TELEGRAM_SUMMARY_KEY)로
+# 보호되고, 서버가 자기 자신을 호출하는 내부 요청은 프로세스마다 새로 만든
+# INTERNAL_TOKEN 헤더로 통과시킨다.
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
+AUTH_COOKIE = "dash_auth"
+AUTH_COOKIE_MAX_AGE = 30 * 24 * 3600
+KEY_PROTECTED_PREFIXES = (
+    "/api/telegram/send-summary",
+    "/api/telegram/check-alert",
+    "/api/telegram/announce",
+)
+INTERNAL_TOKEN = secrets.token_hex(16)
+LOGIN_MAX_FAILS = 10
+LOGIN_FAIL_WINDOW = 600
+_login_fail_times = []
+_login_fail_lock = threading.Lock()
+
+LOGIN_PAGE = """<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로그인</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Pretendard,"Apple SD Gothic Neo",sans-serif;
+         background:#f4f5f7; color:#14161a; }
+  @media (prefers-color-scheme: dark) { body { background:#0b0d10; color:#f2f3f5; } }
+  form { width:min(320px, 86vw); display:flex; flex-direction:column; gap:12px; }
+  h1 { font-size:18px; margin:0 0 4px; }
+  input, button { font-size:16px; padding:12px; border-radius:10px; border:1px solid #8884; background:transparent; color:inherit; }
+  button { background:#2563eb; color:#fff; border:0; font-weight:700; }
+  .err { color:#dc2626; font-size:13px; min-height:1em; }
+</style></head><body>
+<form method="post" action="/login">
+  <h1>종가베팅 체크리스트</h1>
+  <input type="password" name="password" placeholder="비밀번호" autocomplete="current-password" autofocus>
+  <div class="err">__ERROR__</div>
+  <button type="submit">들어가기</button>
+</form></body></html>"""
+
+
+def _auth_token():
+    return hmac.new(DASHBOARD_PASSWORD.encode(), b"dashboard-auth-v1", hashlib.sha256).hexdigest()
+
+
+def _login_allowed():
+    now = time.time()
+    with _login_fail_lock:
+        _login_fail_times[:] = [t for t in _login_fail_times if now - t < LOGIN_FAIL_WINDOW]
+        return len(_login_fail_times) < LOGIN_MAX_FAILS
+
+
+def _check_password(candidate):
+    if not _login_allowed():
+        return False
+    ok = hmac.compare_digest(candidate.encode(), DASHBOARD_PASSWORD.encode())
+    if not ok:
+        with _login_fail_lock:
+            _login_fail_times.append(time.time())
+    return ok
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
+    def _has_valid_cookie(self):
+        for part in self.headers.get("Cookie", "").split(";"):
+            k, _, v = part.strip().partition("=")
+            if k == AUTH_COOKIE and hmac.compare_digest(v.encode(), _auth_token().encode()):
+                return True
+        return False
+
+    def _authorized(self, path):
+        if not DASHBOARD_PASSWORD:
+            return True
+        if hmac.compare_digest(self.headers.get("X-Internal-Token", "").encode(), INTERNAL_TOKEN.encode()):
+            return True
+        if path.startswith(KEY_PROTECTED_PREFIXES):
+            return True
+        return self._has_valid_cookie()
+
+    def _login_redirect(self, set_cookie):
+        self.send_response(302)
+        self.send_header("Location", "/")
+        if set_cookie:
+            secure = "; Secure" if self.headers.get("X-Forwarded-Proto") == "https" else ""
+            self.send_header(
+                "Set-Cookie",
+                f"{AUTH_COOKIE}={_auth_token()}; Max-Age={AUTH_COOKIE_MAX_AGE}; Path=/; HttpOnly; SameSite=Lax{secure}",
+            )
+        self.end_headers()
+
+    def _send_login_page(self, error="", status=200):
+        body = LOGIN_PAGE.replace("__ERROR__", error).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def handle_login_get(self):
+        if not DASHBOARD_PASSWORD:
+            self._login_redirect(False)
+            return
+        key = self.query_param("key")
+        if key:
+            if _check_password(key):
+                self._login_redirect(True)
+            else:
+                self._send_login_page("비밀번호가 맞지 않습니다", 401)
+            return
+        self._send_login_page()
+
+    def do_POST(self):
+        if urllib.parse.urlparse(self.path).path != "/login" or not DASHBOARD_PASSWORD:
+            self.send_json(404, {"error": "not found"})
+            return
+        length = min(int(self.headers.get("Content-Length") or 0), 4096)
+        form = urllib.parse.parse_qs(self.rfile.read(length).decode(errors="replace"))
+        if _check_password(form.get("password", [""])[0]):
+            self._login_redirect(True)
+        elif not _login_allowed():
+            self._send_login_page("시도 횟수가 많아 잠시 후 다시 시도해주세요", 429)
+        else:
+            self._send_login_page("비밀번호가 맞지 않습니다", 401)
+
     def do_GET(self):
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/login":
+            self.handle_login_get()
+            return
+        if path == "/healthz":
+            self.send_json(200, {"ok": True})
+            return
+        if not self._authorized(path):
+            if path.startswith("/api/"):
+                self.send_json(401, {"error": "unauthorized"})
+            else:
+                self.send_response(302)
+                self.send_header("Location", "/login")
+                self.end_headers()
+            return
         if self.path.startswith("/api/quote"):
             self.handle_quote()
         elif self.path.startswith("/api/kospi/quote"):
@@ -1217,8 +1362,8 @@ def _score_for(signal):
 
 
 def _local_get(path):
-    url = f"http://127.0.0.1:{PORT}{path}"
-    with urllib.request.urlopen(url, timeout=15) as resp:
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}{path}", headers={"X-Internal-Token": INTERNAL_TOKEN})
+    with urllib.request.urlopen(req, timeout=15) as resp:
         return json.loads(resp.read())
 
 

@@ -18,4 +18,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Ping dashboard
-        run: curl -sf -o /dev/null -m 20 "https://market-dashboard-gqxq.onrender.com/" || true
+        run: curl -sf -o /dev/null -m 20 "https://market-dashboard-gqxq.onrender.com/healthz" || true
