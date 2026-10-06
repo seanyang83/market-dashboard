@@ -1551,7 +1551,8 @@ def _kospi_section():
     else:
         zone = "20일선 아래=저점 현금베팅"
     if last >= ma5:
-        ma5_signal = "green"
+        worse = have_prev and _rank_index(last, ma_list) > _rank_index(prev_last, prev_ma_list)
+        ma5_signal = "yellow" if worse else "green"
     elif have_prev and _rank_index(last, ma_list) < _rank_index(prev_last, prev_ma_list):
         ma5_signal = "yellow"
     else:
@@ -1630,7 +1631,8 @@ def _stock_section(code):
         last, ma_list, prev_last, prev_ma_list, have_prev = state
         ma5 = dict(ma_list)["5"]
         if last >= ma5:
-            chart_signal = "green"
+            worse = have_prev and _rank_index(last, ma_list) > _rank_index(prev_last, prev_ma_list)
+            chart_signal = "yellow" if worse else "green"
         elif have_prev and _rank_index(last, ma_list) < _rank_index(prev_last, prev_ma_list):
             chart_signal = "yellow"
         else:

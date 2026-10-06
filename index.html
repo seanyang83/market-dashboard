@@ -875,12 +875,13 @@ async function updateIndexPanel(key, dayLow) {
     }
 
     // Same rank-aware rule as the per-stock chart signal (3. 차트 5일선 위):
-    // green above MA5; otherwise yellow if today ranks above more MAs than
-    // yesterday (an improving position even while still under MA5), red if
-    // standing still or slipping further.
+    // above MA5 is green unless the rank slipped vs. yesterday (broke below
+    // some MA), which downgrades it to yellow. Under MA5: yellow if today
+    // ranks above more MAs than yesterday (improving), red if standing
+    // still or slipping further.
     let ma5Signal;
     if (last >= ma5) {
-      ma5Signal = "green";
+      ma5Signal = havePrev && rankIndexOf(last, maList) > rankIndexOf(prevLast, prevMaList) ? "yellow" : "green";
     } else if (havePrev && rankIndexOf(last, maList) < rankIndexOf(prevLast, prevMaList)) {
       ma5Signal = "yellow";
     } else {
@@ -1485,14 +1486,14 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         }
       }
 
-      // Green: price above the 5-day MA outright. Otherwise, compare how
-      // many MAs the price ranks above today vs. yesterday - climbing past
-      // more of them (even while still under MA5) is a improving position
-      // worth flagging yellow; standing still or slipping further is red.
+      // Above the 5-day MA: green, unless the rank slipped vs. yesterday
+      // (broke below some MA) - then yellow. Under it: climbing past more
+      // MAs than yesterday is an improving position worth yellow; standing
+      // still or slipping further is red.
       const aboveMa5 = last >= maList[0].value;
       let chartSignal;
       if (aboveMa5) {
-        chartSignal = "green";
+        chartSignal = havePrev && rankIndexOf(last, maList) > rankIndexOf(prevLast, prevMaList) ? "yellow" : "green";
       } else if (havePrev && rankIndexOf(last, maList) < rankIndexOf(prevLast, prevMaList)) {
         chartSignal = "yellow";
       } else {
