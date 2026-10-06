@@ -1392,6 +1392,16 @@ def _update_ma_near_state(code, diff_pct):
     return False
 
 
+def _kis_current_price(code):
+    # 주식현재가 시세: UN = KRX+NXT 통합이라 15:30 이후 NXT 거래 구간도 반영된다.
+    data = kis_get(
+        "/uapi/domestic-stock/v1/quotations/inquire-price",
+        "FHKST01010100",
+        {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code},
+    )
+    return float(data["output"]["stck_prpr"])
+
+
 def check_ma_proximity_alert():
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
@@ -1399,29 +1409,43 @@ def check_ma_proximity_alert():
     if not (market_open <= now <= market_close):
         return {"checked": False}
 
+    today = now.strftime("%Y-%m-%d")
     events = []
+    detail = {}
     for code in get_ma_watch_codes():
         try:
             quote = _local_get(f"/api/stock/quote?code={code}")
             hist = _local_get(f"/api/stock/history?code={code}")
-            closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
+            rows = [c for c in hist.get("closes", []) if c.get("close") is not None]
+            closes = [c["close"] for c in rows]
             if len(closes) < 5:
                 continue
+            # 현재가는 한투(통합)에서 받고, 실패하면 네이버 값으로 대신한다.
+            # 5일선은 네이버 일봉 종가로 계산하되 오늘 봉은 그 현재가로 바꿔 넣는다.
+            source = "kis"
+            try:
+                price = _kis_current_price(code)
+            except Exception:
+                price, source = quote["price"], "naver"
+            if rows[-1].get("date") == today:
+                closes[-1] = price
+            else:
+                closes.append(price)
             ma5 = _rolling_ma(closes, 5)[-1]
-            price = quote["price"]
             name = quote.get("name") or code
             diff_pct = (price - ma5) / ma5 * 100
+            detail[code] = {"price": price, "ma5": round(ma5, 1), "diffPct": round(diff_pct, 2), "source": source}
             if _update_ma_near_state(code, diff_pct):
                 events.append(f"📍 {name} 5일선 근접 - 현재가 {price:,.0f} / 5일선 {ma5:,.0f} (+{diff_pct:.2f}%)")
         except Exception:
             continue
 
     if not events:
-        return {"sent": False}
+        return {"sent": False, "detail": detail}
 
     text = "\n".join([f"📍 5일선 근접 알림 · {now.strftime('%m/%d %H:%M')}", "", *events])
     send_telegram_message(text)
-    return {"sent": True, "text": text}
+    return {"sent": True, "text": text, "detail": detail}
 
 
 # 신호등별 가중치(%) - 합계 각각 100. index.html의 WEIGHTS와 반드시 같은 값으로
