@@ -263,6 +263,92 @@ def _fetch_market_trading_value():
     return result
 
 
+# --- 코스피 당일 투자자별 순매수 추이 (키움 "당일추이"와 같은 데이터) ---
+# 네이버 trend/time: 분 단위 누적 순매수. KRX와 NXT가 따로 내려와서 시각별로
+# 합쳐야 키움(통합) 값과 맞는다 (11:06 실측: 개인 -871, 기관 +2,220 일치).
+# 외국인은 9000만 센다 - 9001(외국인 기타)까지 넣으면 키움보다 ~72억 어긋남.
+# startIdx가 페이지 번호. 처음 한 번만 하루치(pageSize 200, NXT는 08:00~20:00이라
+# 200행을 넘을 수 있어 페이지를 넘겨 받음)를 받고 이후에는 최신 20행만 받아서
+# 메모리의 기록에 이어붙인다.
+FLOW_TREND_URL = (
+    "https://stock.naver.com/api/domestic/market/trend/time"
+    "?tradeType={trade_type}&marketType=KOSPI&startIdx={page}&pageSize={size}"
+)
+FLOW_TREND_CACHE_TTL = 60
+FLOW_TREND_INSTITUTION = {"1000", "2000", "3000", "3100", "4000", "5000", "6000"}
+_flow_trend = {"date": None, "rows": {"KRX": {}, "NXT": {}}, "result": None, "ts": 0}
+_flow_trend_lock = threading.Lock()
+
+
+def _flow_trend_fetch_page(trade_type, page, size):
+    url = FLOW_TREND_URL.format(trade_type=trade_type, page=page, size=size)
+    req = urllib.request.Request(url, headers=NAVER_HEADERS)
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        return json.loads(resp.read())
+
+
+def _flow_trend_row_values(row):
+    t = {a["investorGubun"]: int(a["diffValue"]) for a in row.get("netAmounts", [])}
+    return (
+        t.get("8000", 0),
+        t.get("9000", 0),
+        sum(v for k, v in t.items() if k in FLOW_TREND_INSTITUTION),
+    )
+
+
+def _flow_trend_refresh(trade_type):
+    store = _flow_trend["rows"][trade_type]
+    if not store:
+        size = 200
+        first = _flow_trend_fetch_page(trade_type, 0, size)
+        pages = int(first.get("totalPages") or 1)
+        contents = [first.get("content", [])]
+        for p in range(1, pages):
+            contents.append(_flow_trend_fetch_page(trade_type, p, size).get("content", []))
+        rows = [r for c in contents for r in c]
+    else:
+        rows = _flow_trend_fetch_page(trade_type, 0, 20).get("content", [])
+    for r in rows:
+        if r.get("time"):
+            store[(r["bizdate"], r["time"])] = _flow_trend_row_values(r)
+
+
+def _build_flow_trend():
+    with _flow_trend_lock:
+        now = time.time()
+        if _flow_trend["result"] and now - _flow_trend["ts"] < FLOW_TREND_CACHE_TTL:
+            return _flow_trend["result"]
+        today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+        if _flow_trend["date"] != today:
+            _flow_trend["date"] = today
+            _flow_trend["rows"] = {"KRX": {}, "NXT": {}}
+        for trade_type in ("KRX", "NXT"):
+            _flow_trend_refresh(trade_type)
+
+        stores = _flow_trend["rows"]
+        latest = max((k[0] for st in stores.values() for k in st), default=None)
+        if latest is None:
+            raise ValueError("데이터 없음")
+        times = sorted({k[1] for st in stores.values() for k in st if k[0] == latest})
+        last = {"KRX": (0, 0, 0), "NXT": (0, 0, 0)}
+        points = []
+        for t in times:
+            for tt in ("KRX", "NXT"):
+                if (latest, t) in stores[tt]:
+                    last[tt] = stores[tt][(latest, t)]
+            total = [last["KRX"][i] + last["NXT"][i] for i in range(3)]
+            points.append({
+                "t": t,
+                "individual": round(total[0] / 1e8, 1),
+                "foreign": round(total[1] / 1e8, 1),
+                "institution": round(total[2] / 1e8, 1),
+            })
+        result = {"date": latest, "points": points}
+        _flow_trend["result"] = result
+        _flow_trend["ts"] = now
+        return result
+
+
 # Daily-close history (KOSPI index or any KRX stock code) via Naver's chart
 # JSON API. Replaces the old sise_day.naver / sise_index_day.naver HTML
 # pages: those were paginated at ~10 rows/page (15+ sequential requests to
@@ -697,6 +783,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_watchlist_get()
         elif self.path.startswith("/api/market/volume-rank"):
             self.handle_volume_rank()
+        elif self.path.startswith("/api/kospi/flow-trend"):
+            self.handle_kospi_flow_trend()
         elif self.path.startswith("/api/market/trading-value"):
             self.handle_market_trading_value()
         elif self.path.startswith("/api/market/breadth"):
@@ -1036,6 +1124,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 "netQty": int(latest.get("whol_smtn_ntby_qty", 0)),
                 "netAmount": int(latest.get("whol_smtn_ntby_tr_pbmn", 0)),
             })
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_kospi_flow_trend(self):
+        try:
+            self.send_json(200, _build_flow_trend())
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 

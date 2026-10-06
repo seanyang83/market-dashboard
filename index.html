@@ -365,6 +365,12 @@
         <span><i class="dot" style="background:var(--ma60)"></i>60일선</span>
         <span><i class="dot" style="background:var(--ma120)"></i>120일선</span>
       </div>
+      <div class="checklist-item">
+        <div class="checklist-title">당일 수급 추이 (누적 순매수, 억원 · KRX+NXT 통합)</div>
+        <canvas id="kospiFlowTrendChart" class="chart-lg" style="height:170px;"></canvas>
+        <div class="legend" id="kospiFlowTrendLegend"></div>
+        <div class="meta-row"><span id="kospiFlowTrendNote">-</span></div>
+      </div>
       <div class="flow-row">
         <div class="flow-item">
           <span class="flow-label">개인</span>
@@ -1114,6 +1120,80 @@ async function handleWatchlistAdd() {
   }
 }
 
+function drawFlowTrend(canvas, points) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  if (points.length < 2) return;
+
+  const toMin = (t) => +t.slice(0, 2) * 60 + +t.slice(2, 4);
+  const x0 = toMin(points[0].t), x1 = toMin(points[points.length - 1].t);
+  const series = [
+    { key: "individual", color: cssVar("--ma5") },
+    { key: "foreign", color: cssVar("--accent") },
+    { key: "institution", color: cssVar("--ma60") },
+  ];
+  const all = series.flatMap((s) => points.map((p) => p[s.key]));
+  const min = Math.min(0, ...all), max = Math.max(0, ...all);
+  const padX = 4, padTop = 6, padBottom = 16;
+  const range = max - min || 1;
+  const X = (t) => padX + ((toMin(t) - x0) / (x1 - x0 || 1)) * (w - padX * 2);
+  const Y = (v) => padTop + (1 - (v - min) / range) * (h - padTop - padBottom);
+
+  ctx.strokeStyle = cssVar("--border");
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath(); ctx.moveTo(padX, Y(0)); ctx.lineTo(w - padX, Y(0)); ctx.stroke();
+  ctx.setLineDash([]);
+
+  series.forEach((s) => {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 1.75;
+    ctx.beginPath();
+    points.forEach((p, i) => {
+      const x = X(p.t), y = Y(p[s.key]);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  });
+
+  ctx.fillStyle = cssVar("--sub");
+  ctx.font = "10.5px -apple-system, sans-serif";
+  const label = (t) => `${t.slice(0, 2)}:${t.slice(2, 4)}`;
+  const midT = points[Math.floor(points.length / 2)].t;
+  ctx.textAlign = "left"; ctx.fillText(label(points[0].t), padX, h - 3);
+  ctx.textAlign = "center"; ctx.fillText(label(midT), X(midT), h - 3);
+  ctx.textAlign = "right"; ctx.fillText(label(points[points.length - 1].t), w - padX, h - 3);
+}
+
+async function updateKospiFlowTrend() {
+  const canvas = document.getElementById("kospiFlowTrendChart");
+  const legendEl = document.getElementById("kospiFlowTrendLegend");
+  const noteEl = document.getElementById("kospiFlowTrendNote");
+  if (!canvas) return;
+  try {
+    const data = await fetchJson("/api/kospi/flow-trend");
+    const points = data.points || [];
+    if (points.length < 2) throw new Error("데이터 없음");
+    drawFlowTrend(canvas, points);
+    const last = points[points.length - 1];
+    const fmt = (v) => (v > 0 ? "+" : "") + Math.round(v).toLocaleString("ko-KR");
+    const item = (color, name, v) => `<span><i class="dot" style="background:${color}"></i>${name} <b class="${v > 0 ? "up" : v < 0 ? "down" : "flat"}">${fmt(v)}</b></span>`;
+    legendEl.innerHTML =
+      item(cssVar("--ma5"), "개인", last.individual) +
+      item(cssVar("--accent"), "외국인", last.foreign) +
+      item(cssVar("--ma60"), "기관", last.institution);
+    const d = data.date;
+    noteEl.textContent = `${d.slice(4, 6)}/${d.slice(6, 8)} ${last.t.slice(0, 2)}:${last.t.slice(2, 4)} 기준 (외국인은 외국인 기타 제외, 키움 당일추이와 동일)`;
+  } catch (e) {
+    legendEl.innerHTML = "";
+    noteEl.textContent = "당일 수급 추이를 불러오지 못했습니다";
+  }
+}
+
 async function updateInvestorFlow(key) {
   const els = {
     individual: document.getElementById(key + "FlowIndividual"),
@@ -1253,6 +1333,7 @@ async function refreshAll() {
   const results = await Promise.all(keys.map(updateCard));
   updateMarketTradingValue();
   updateMarketBreadth();
+  updateKospiFlowTrend();
   const okCount = results.filter((r) => r.ok).length;
 
   updateSignalSummary(results.flatMap((r) => r.signals));
