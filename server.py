@@ -1424,8 +1424,25 @@ def check_ma_proximity_alert():
     return {"sent": True, "text": text}
 
 
+# 신호등별 가중치(%) - 합계 각각 100. index.html의 WEIGHTS와 반드시 같은 값으로
+# 유지할 것(화면과 텔레그램의 매크로/종목 체크 %가 어긋나지 않게).
+SCORE_WEIGHTS = {
+    "macro": {"ndq": 25, "kospiMa5": 20, "kospiDir": 20, "tnx": 15, "wti": 10, "btc": 10},
+    "stock": {"program": 20, "liveFlow": 20, "chart": 20, "candle": 15, "krSector": 15, "usSector": 10},
+}
+
+
 def _score_for(signal):
     return {"green": 20, "yellow": 10, "red": 0}.get(signal, 10)
+
+
+def _weighted_pct(items):
+    """items: [(signal, weight)] - 데이터 없는 신호는 아예 넣지 않으면 나머지
+    비중으로 다시 계산된다."""
+    max_score = sum(w * 20 for _, w in items)
+    if not max_score:
+        return None
+    return round(sum(w * _score_for(s) for s, w in items) / max_score * 100)
 
 
 def _local_get(path):
@@ -1592,7 +1609,7 @@ def _stock_section(code):
         candle_signal = "yellow" if is_bull else "red"
     else:
         candle_signal = "yellow"
-    signals = [candle_signal]
+    signals = [(candle_signal, SCORE_WEIGHTS["stock"]["candle"])]
 
     us_signal, us_line, kr_signal, kr_line = None, None, None, None
     info = theme.get("info") if theme.get("found") else None
@@ -1620,9 +1637,9 @@ def _stock_section(code):
         except Exception:
             pass
     if us_signal:
-        signals.append(us_signal)
+        signals.append((us_signal, SCORE_WEIGHTS["stock"]["usSector"]))
     if kr_signal:
-        signals.append(kr_signal)
+        signals.append((kr_signal, SCORE_WEIGHTS["stock"]["krSector"]))
 
     closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
     state = _ma_state(closes)
@@ -1640,7 +1657,7 @@ def _stock_section(code):
         if have_prev:
             rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list)
         rank_chain = _format_rank_chain(last, ma_list, name)
-        signals.append(chart_signal)
+        signals.append((chart_signal, SCORE_WEIGHTS["stock"]["chart"]))
 
     pct = diff / prev_close * 100 if prev_close else 0
     arrow = "▲" if diff > 0 else ("▼" if diff < 0 else "-")
@@ -1655,7 +1672,7 @@ def _stock_section(code):
     if live and not live.get("error"):
         fb, ib = live.get("foreignQty", 0) > 0, live.get("institutionQty", 0) > 0
         live_signal = "green" if fb and ib else ("red" if not fb and not ib else "yellow")
-        signals.append(live_signal)
+        signals.append((live_signal, SCORE_WEIGHTS["stock"]["liveFlow"]))
         lines.append(
             f"{SIGNAL_EMOJI[live_signal]} 수급: 외국인 {fmt_eok(live.get('foreignQty', 0) * price)} · "
             f"기관 {fmt_eok(live.get('institutionQty', 0) * price)}"
@@ -1664,10 +1681,10 @@ def _stock_section(code):
     if prog and not prog.get("error"):
         amt = prog.get("netAmount", 0)
         prog_signal = "green" if amt > 0 else ("red" if amt < 0 else "yellow")
-        signals.append(prog_signal)
+        signals.append((prog_signal, SCORE_WEIGHTS["stock"]["program"]))
         lines.append(f"{SIGNAL_EMOJI[prog_signal]} 프로그램매매: {fmt_eok(amt)}")
 
-    score_pct = round(sum(_score_for(s) for s in signals) / (len(signals) * 20) * 100) if signals else None
+    score_pct = _weighted_pct(signals)
     return score_pct, name, lines
 
 
@@ -1714,29 +1731,29 @@ def _volume_rank_lines():
 def _compute_scores():
     macro_signals = []
     macro_lines = []
-    for label, symbol, sentiment, prefix, decimals in [
-        ("미국채10Y", "^TNX", "inverse", "", 3),
-        ("WTI", "CL=F", "inverse", "$", 2),
-        ("나스닥100선물", "NQ=F", "normal", "$", 0),
-        ("비트코인", "BTC-USD", "normal", "$", 0),
+    for key, label, symbol, sentiment, prefix, decimals in [
+        ("tnx", "미국채10Y", "^TNX", "inverse", "", 3),
+        ("wti", "WTI", "CL=F", "inverse", "$", 2),
+        ("ndq", "나스닥100선물", "NQ=F", "normal", "$", 0),
+        ("btc", "비트코인", "BTC-USD", "normal", "$", 0),
     ]:
         try:
             sig, line = _macro_instrument_line(label, symbol, sentiment, prefix, decimals)
-            macro_signals.append(sig)
+            macro_signals.append((sig, SCORE_WEIGHTS["macro"][key]))
             macro_lines.append(line)
         except Exception:
             macro_lines.append(f"⚪ {label} 데이터 없음")
 
     try:
         dir_sig, ma5_sig, kospi_lines = _kospi_section()
-        macro_signals.extend([dir_sig, ma5_sig])
+        macro_signals.extend([(dir_sig, SCORE_WEIGHTS["macro"]["kospiDir"]), (ma5_sig, SCORE_WEIGHTS["macro"]["kospiMa5"])])
         macro_lines.extend(kospi_lines)
     except Exception as e:
         macro_lines.append(f"⚪ 코스피 데이터 없음 ({e})")
 
     macro_lines.extend(_market_breadth_lines())
 
-    macro_pct = round(sum(_score_for(s) for s in macro_signals) / (len(macro_signals) * 20) * 100) if macro_signals else 0
+    macro_pct = _weighted_pct(macro_signals) or 0
 
     try:
         stock_pct, stock_name, stock_lines = _stock_section(TELEGRAM_SUMMARY_STOCK_CODE)

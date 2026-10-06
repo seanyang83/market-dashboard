@@ -128,6 +128,10 @@
   }
   .card-index { grid-column: 1 / -1; }
   .card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+  .card-head .label { word-break: keep-all; }
+  .dot-wrap { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-top: 1px; }
+  .dot-wrap .signal-dot { margin-top: 0; }
+  .weight { font-size: 11px; font-weight: 600; color: var(--sub); white-space: nowrap; }
   .signal-dot {
     width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; margin-top: 2px;
     background: var(--flat); box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent);
@@ -265,7 +269,7 @@
     <div class="card card-compact">
       <div class="card-head">
         <div class="label">미국 10년물 국채금리 (US10Y)</div>
-        <span class="signal-dot" id="tnxSignal"></span>
+        <span class="dot-wrap"><span class="weight" data-w="macro.tnx"></span><span class="signal-dot" id="tnxSignal"></span></span>
       </div>
       <div class="sub-label">CBOE 10-Year Treasury Note Yield · ^TNX</div>
       <div class="price loading" id="tnxPrice">—</div>
@@ -281,7 +285,7 @@
     <div class="card card-compact">
       <div class="card-head">
         <div class="label">WTI 원유 선물</div>
-        <span class="signal-dot" id="wtiSignal"></span>
+        <span class="dot-wrap"><span class="weight" data-w="macro.wti"></span><span class="signal-dot" id="wtiSignal"></span></span>
       </div>
       <div class="sub-label">NYMEX Crude Oil Futures · CL=F (USD/bbl)</div>
       <div class="price loading" id="wtiPrice">—</div>
@@ -297,7 +301,7 @@
     <div class="card card-compact">
       <div class="card-head">
         <div class="label">나스닥 100 선물</div>
-        <span class="signal-dot" id="ndqSignal"></span>
+        <span class="dot-wrap"><span class="weight" data-w="macro.ndq"></span><span class="signal-dot" id="ndqSignal"></span></span>
       </div>
       <div class="sub-label">Nasdaq 100 E-mini Futures · NQ=F</div>
       <div class="price loading" id="ndqPrice">—</div>
@@ -313,7 +317,7 @@
     <div class="card card-compact">
       <div class="card-head">
         <div class="label">비트코인</div>
-        <span class="signal-dot" id="btcSignal"></span>
+        <span class="dot-wrap"><span class="weight" data-w="macro.btc"></span><span class="signal-dot" id="btcSignal"></span></span>
       </div>
       <div class="sub-label">Bitcoin · BTC-USD</div>
       <div class="price loading" id="btcPrice">—</div>
@@ -334,7 +338,7 @@
       <div class="price loading" id="kospiPrice">—</div>
       <div class="price-row">
         <div class="change-row flat" id="kospiChange"><span>불러오는 중</span></div>
-        <span class="signal-dot" id="kospiSignal"></span>
+        <span class="dot-wrap"><span class="weight" data-w="macro.kospiDir"></span><span class="signal-dot" id="kospiSignal"></span></span>
       </div>
       <div class="ma-badges">
         <span class="badge flat" id="kospiMa5Badge">확인 중</span>
@@ -354,7 +358,7 @@
             <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
           </div>
         </div>
-        <span class="signal-dot" id="kospiMa5Signal"></span>
+        <span class="dot-wrap"><span class="weight" data-w="macro.kospiMa5"></span><span class="signal-dot" id="kospiMa5Signal"></span></span>
       </div>
       <canvas id="kospiChart" class="chart-lg"></canvas>
       <div class="legend">
@@ -451,7 +455,7 @@
           <div class="price" id="stockPrice">-</div>
           <span class="candle-label flat" id="stockCandleLabel"></span>
         </div>
-        <span class="signal-dot" id="stockCandleSignal"></span>
+        <span class="dot-wrap"><span class="weight" data-w="stock.candle"></span><span class="signal-dot" id="stockCandleSignal"></span></span>
       </div>
       <div class="change-row flat" id="stockChange"><span>불러오는 중</span></div>
 
@@ -463,7 +467,7 @@
       <div class="checklist-item">
         <div class="checklist-title-row">
           <div class="checklist-title">1. 전일 미국 동일 산업군</div>
-          <span class="signal-dot" id="stockUsSectorSignal"></span>
+          <span class="dot-wrap"><span class="weight" data-w="stock.usSector"></span><span class="signal-dot" id="stockUsSectorSignal"></span></span>
         </div>
         <div class="checklist-body" id="stockUsSector">-</div>
       </div>
@@ -471,7 +475,7 @@
       <div class="checklist-item">
         <div class="checklist-title-row">
           <div class="checklist-title">2. 국내 동일 산업군</div>
-          <span class="signal-dot" id="stockKrSectorSignal"></span>
+          <span class="dot-wrap"><span class="weight" data-w="stock.krSector"></span><span class="signal-dot" id="stockKrSectorSignal"></span></span>
         </div>
         <div class="checklist-body" id="stockKrSector">-</div>
       </div>
@@ -479,7 +483,7 @@
       <div class="checklist-item">
         <div class="checklist-title-row">
           <div class="checklist-title">3. 차트 5일선 위</div>
-          <span class="signal-dot" id="stockChartSignal"></span>
+          <span class="dot-wrap"><span class="weight" data-w="stock.chart"></span><span class="signal-dot" id="stockChartSignal"></span></span>
         </div>
         <div class="ma-badges">
           <span class="badge flat" id="stockVerdict">확인 중</span>
@@ -509,7 +513,7 @@
       <div class="checklist-item">
         <div class="checklist-title-row">
           <div class="checklist-title">4. 실시간 수급 추정 (개인 · 외국인 · 기관)</div>
-          <span class="signal-dot" id="stockLiveFlowSignal"></span>
+          <span class="dot-wrap"><span class="weight" data-w="stock.liveFlow"></span><span class="signal-dot" id="stockLiveFlowSignal"></span></span>
         </div>
         <div class="flow-row">
           <div class="flow-item">
@@ -546,7 +550,7 @@
       <div class="checklist-item">
         <div class="checklist-title-row">
           <div class="checklist-title">5. 프로그램매매 (누적)</div>
-          <span class="signal-dot" id="stockProgramSignal"></span>
+          <span class="dot-wrap"><span class="weight" data-w="stock.program"></span><span class="signal-dot" id="stockProgramSignal"></span></span>
         </div>
         <div class="flow-row">
           <div class="flow-item">
@@ -612,6 +616,18 @@
 
 <script>
 const REFRESH_MS = 30000;
+
+// 신호등별 가중치(%) - 매크로/종목 체크 %는 이 비중으로 계산한다. 합계는 각각
+// 100. 값을 바꾸면 화면의 (N%) 표시도 같이 바뀐다. 텔레그램 요약/알림은
+// server.py의 SCORE_WEIGHTS를 쓰므로 반드시 같이 고칠 것.
+const WEIGHTS = {
+  macro: { ndq: 25, kospiMa5: 20, kospiDir: 20, tnx: 15, wti: 10, btc: 10 },
+  stock: { program: 20, liveFlow: 20, chart: 20, candle: 15, krSector: 15, usSector: 10 },
+};
+document.querySelectorAll("[data-w]").forEach((el) => {
+  const [group, key] = el.dataset.w.split(".");
+  el.textContent = `(${WEIGHTS[group][key]}%)`;
+});
 
 // sentiment "inverse": falling is favorable (green); "normal": rising is favorable (green)
 const SERIES = {
@@ -1257,13 +1273,20 @@ async function updateCard(key) {
 
     // KOSPI shows two independent signals (direction + MA5 rank), so both
     // count toward the macro score; every other card counts once.
-    const signals = cfg.withMA ? [dirSignal, scoreSignal] : [dirSignal];
+    const signals = cfg.withMA
+      ? [{ signal: dirSignal, weight: WEIGHTS.macro.kospiDir }, { signal: scoreSignal, weight: WEIGHTS.macro.kospiMa5 }]
+      : [{ signal: dirSignal, weight: WEIGHTS.macro[key] }];
     return { ok: true, signals };
   } catch (e) {
     errorEl.textContent = "데이터를 불러오지 못했습니다: " + e.message;
     errorEl.classList.add("show");
     if (signalEl) signalEl.className = "signal-dot";
-    return { ok: false, signals: cfg.withMA ? [null, null] : [null] };
+    return {
+      ok: false,
+      signals: cfg.withMA
+        ? [{ signal: null, weight: WEIGHTS.macro.kospiDir }, { signal: null, weight: WEIGHTS.macro.kospiMa5 }]
+        : [{ signal: null, weight: WEIGHTS.macro[key] }],
+    };
   }
 }
 
@@ -1274,14 +1297,14 @@ const signalSummaryEl = document.getElementById("signalSummary");
 const signalSummaryDotsEl = document.getElementById("signalSummaryDots");
 const signalSummaryTextEl = document.getElementById("signalSummaryText");
 
-function renderSignalSummary(summaryEl, dotsEl, textEl, signals) {
-  const known = signals.filter((s) => s != null);
-  dotsEl.innerHTML = signals.map((s) => `<span class="${s || ""}"></span>`).join("");
+function renderSignalSummary(summaryEl, dotsEl, textEl, items) {
+  const known = items.filter((it) => it.signal != null);
+  dotsEl.innerHTML = items.map((it) => `<span class="${it.signal || ""}"></span>`).join("");
 
-  const score = signals.reduce((sum, s) => sum + scoreFor(s), 0);
-  const maxScore = signals.length * 20;
+  const score = items.reduce((sum, it) => sum + it.weight * scoreFor(it.signal), 0);
+  const maxScore = items.reduce((sum, it) => sum + it.weight * 20, 0);
   const pct = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
-  const allGreen = known.length === signals.length && known.every((s) => s === "green");
+  const allGreen = known.length === items.length && known.every((it) => it.signal === "green");
   textEl.textContent = `${pct}%`;
   summaryEl.className = "signal-summary" + (allGreen ? " all-green" : "");
 }
@@ -1378,7 +1401,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
     else if (dir === "down") candleSignal = isBullishCandle ? "yellow" : "red";
     else candleSignal = "yellow";
     document.getElementById("stockCandleSignal").className = "signal-dot " + candleSignal;
-    signals.push(candleSignal);
+    signals.push({ signal: candleSignal, weight: WEIGHTS.stock.candle });
 
     const info = themeResp.info;
     const usEl = document.getElementById("stockUsSector");
@@ -1390,7 +1413,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         try {
           const us = await fetchProxyDir("us", info.usProxy);
           const usSignal = computeSignal(us.dir, "normal");
-          signals.push(usSignal);
+          signals.push({ signal: usSignal, weight: WEIGHTS.stock.usSector });
           document.getElementById("stockUsSectorSignal").className = "signal-dot " + usSignal;
           const a = us.dir === "up" ? "▲" : us.dir === "down" ? "▼" : "–";
           usEl.textContent = `${info.usProxy.name} ${a} ${us.pct >= 0 ? "+" : ""}${us.pct.toFixed(2)}%`;
@@ -1410,7 +1433,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         try {
           const kr = await fetchProxyDir("kr", info.krProxy);
           const krSignal = computeSignal(kr.dir, "normal");
-          signals.push(krSignal);
+          signals.push({ signal: krSignal, weight: WEIGHTS.stock.krSector });
           document.getElementById("stockKrSectorSignal").className = "signal-dot " + krSignal;
           const a = kr.dir === "up" ? "▲" : kr.dir === "down" ? "▼" : "–";
           krEl.textContent = `${info.krProxy.name} ${a} ${kr.pct >= 0 ? "+" : ""}${kr.pct.toFixed(2)}%`;
@@ -1500,7 +1523,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         chartSignal = "red";
       }
       document.getElementById("stockChartSignal").className = "signal-dot " + chartSignal;
-      signals.push(chartSignal);
+      signals.push({ signal: chartSignal, weight: WEIGHTS.stock.chart });
 
       const stockReboundEl = document.getElementById("stockReboundBadge");
       if (stockReboundEl) {
@@ -1579,7 +1602,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       const foreignBuy = liveFlow.foreignQty > 0, institutionBuy = liveFlow.institutionQty > 0;
       const liveFlowSignal = foreignBuy && institutionBuy ? "green" : (!foreignBuy && !institutionBuy) ? "red" : "yellow";
       document.getElementById("stockLiveFlowSignal").className = "signal-dot " + liveFlowSignal;
-      signals.push(liveFlowSignal);
+      signals.push({ signal: liveFlowSignal, weight: WEIGHTS.stock.liveFlow });
     } else {
       document.getElementById("stockLiveFlowNote").textContent =
         (liveFlow && liveFlow.error) ? `실시간 수급 데이터를 불러오지 못했습니다: ${liveFlow.error}` : "실시간 수급 데이터를 불러오지 못했습니다";
@@ -1601,7 +1624,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
 
       const programSignal = programTrade.netAmount > 0 ? "green" : programTrade.netAmount < 0 ? "red" : "yellow";
       document.getElementById("stockProgramSignal").className = "signal-dot " + programSignal;
-      signals.push(programSignal);
+      signals.push({ signal: programSignal, weight: WEIGHTS.stock.program });
     } else {
       document.getElementById("stockProgramNote").textContent =
         (programTrade && programTrade.error) ? `프로그램매매 데이터를 불러오지 못했습니다: ${programTrade.error}` : "프로그램매매 데이터를 불러오지 못했습니다";
