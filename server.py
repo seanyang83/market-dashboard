@@ -1336,7 +1336,7 @@ def check_threshold_alert():
     return {"sent": True, "text": text}
 
 
-# --- 5일선 근접 알림 (정규장 09:00~15:30만) ---
+# --- 5일선 근접 알림 (09:00~20:00, KRX 거래시간) ---
 # 종목이 "5일선 위"에 있다가 5일선 쪽으로 가까워질 때만 알린다 (5일선 아래에서
 # 올라오는 경우는 제외 - 사용자가 명시적으로 그건 보고 싶지 않다고 함). 감시
 # 종목 목록은 웹페이지 하단에서 추가/삭제 가능 - 메모리에 들고 있다가 바뀔
@@ -1395,7 +1395,7 @@ def _update_ma_near_state(code, diff_pct):
 def check_ma_proximity_alert():
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     market_open = now.replace(hour=9, minute=0, second=0, microsecond=0)
-    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    market_close = now.replace(hour=20, minute=0, second=59, microsecond=0)
     if not (market_open <= now <= market_close):
         return {"checked": False}
 
