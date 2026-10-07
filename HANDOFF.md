@@ -185,6 +185,10 @@ Bot API `sendMessage`로 채널에 발송.
 - `keepalive.yml`도 같이 08:50~20:59 KST로 연장해뒀음 — 안 그러면 17:10/
   19:40 발송 때 Render가 잠들어 있다가 30초 타임아웃으로 발송 자체가
   실패할 수 있음. 장 마감 시간이 또 바뀌면 이 두 워크플로우를 같이 고칠 것.
+- 두 워크플로우(`telegram-summary.yml`, `threshold-alert.yml`)의 curl은 타임아웃 90초 +
+  20초 간격 3회 재시도(`--retry-all-errors`)다. 무료 Render 서버가 잠들어 있으면
+  깨어나는 데 ~1분 걸려서, 예전 30초/재시도 없음 설정이면 그 시각 발송이 누락될 수
+  있었음(2026-10-07 변경). 서버 깨우기만 하는 `keepalive.yml`은 그대로.
 - 보안: `TELEGRAM_SUMMARY_KEY`를 쿼리 파라미터로 검증 (`?key=...`), 이 값은
   Render 환경변수 + GitHub Actions repo secret 양쪽에 동일하게 등록되어야 함.
 - 메시지 포맷 (최종 확정, `build_dashboard_summary_text()`):

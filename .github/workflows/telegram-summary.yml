@@ -14,10 +14,12 @@ on:
     - cron: "40 10 * * 1-5"  # 19:40 KST
   workflow_dispatch: {}
 
+# 무료 Render 서버는 15분 무접속이면 잠들고 깨어나는 데 ~1분 걸려서, 타임아웃을
+# 90초로 늘리고 실패 시 20초 간격으로 3번 재시도한다(발송 누락 방지).
 jobs:
   send:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger summary send
         run: |
-          curl -sf -m 30 "https://market-dashboard-gqxq.onrender.com/api/telegram/send-summary?key=${{ secrets.TELEGRAM_SUMMARY_KEY }}"
+          curl -sf -m 90 --retry 3 --retry-delay 20 --retry-all-errors "https://market-dashboard-gqxq.onrender.com/api/telegram/send-summary?key=${{ secrets.TELEGRAM_SUMMARY_KEY }}"
