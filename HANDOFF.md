@@ -286,8 +286,11 @@ git commit -m "..."
 git push
 ```
 푸시하면 Render가 자동으로 재배포한다. 재배포 완료 확인은
-`https://market-dashboard-gqxq.onrender.com/`을 폴링해서 200이 오는지로 확인
-(즉시 200이 오던 게 502/타임아웃 나던 상태에서 다시 200으로 돌아오면 완료).
+`https://market-dashboard-gqxq.onrender.com/healthz`의 `commit` 값(Render의
+`RENDER_GIT_COMMIT` 앞 7자리)이 `git rev-parse --short HEAD`와 같아질 때까지
+폴링 (로그인 없이 가능). 푸시했는데 Render가 배포를 아예 시작 안 하는 경우가
+한 번 있었으니(2026-10-06), 몇 분 지나도 commit이 안 바뀌면 빈 커밋을 푸시하거나
+Render에서 Manual Deploy를 누를 것.
 
 Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10분 간격으로
 평일 08:50~20:59 KST(KRX 20:00 마감 + 텔레그램 19:40 발송 커버)에 핑을

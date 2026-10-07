@@ -731,7 +731,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_login_get()
             return
         if path == "/healthz":
-            self.send_json(200, {"ok": True})
+            # Render가 배포마다 넣어주는 커밋 해시 - 배포가 실제로 반영됐는지
+            # 확인하는 용도 (저장소가 public이라 노출돼도 무방).
+            self.send_json(200, {"ok": True, "commit": os.environ.get("RENDER_GIT_COMMIT", "")[:7] or None})
             return
         if not self._authorized(path):
             if path.startswith("/api/"):
