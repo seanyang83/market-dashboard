@@ -1268,52 +1268,33 @@ def _fire_tier(macro_pct, stock_pct):
 
 
 # --- 실시간 임계값 돌파 알림 (정시 발송과 별개) ---
-# 매크로/종목 체크 %가 상단(80%) 위로, 또는 하단(20%) 아래로 "새로" 넘어갈
-# 때만 즉시 텔레그램으로 알린다. 히스테리시스 20%p: 80을 넘어 알림을 보낸
-# 뒤에는 60 밑으로 내려가야 "리셋"되어 다음에 80을 다시 넘을 때 재알림 -
-# 경계값 근처에서 값이 잘게 흔들려도 매번 알림이 오는 걸 막는다(10%p였을 때
-# 너무 자주 온다고 해서 20%p로 넓힘). 하단도 대칭으로 20/40. 상태는 프로세스
+# 매크로/종목 체크 %가 80% 이상이거나 20% 이하일 때 즉시 텔레그램으로 알린다.
+# 각각(매크로, 종목) 방향별(80%↑, 20%↓)로 하루(KST)에 한 번만 보낸다 - 값이
+# 내려갔다 다시 올라와도 같은 날엔 재알림하지 않는다 (예전엔 히스테리시스로
+# 다시 알렸는데 너무 자주 와서 하루 한 번으로 바꿈). 날짜 기록은 프로세스
 # 메모리에만 있어서 재배포되면 초기화됨 (개인용 도구라 감수).
 ALERT_LOW_THRESHOLD = 20
-ALERT_HYSTERESIS = 20
 
-_alert_state = {
-    "macro": {"high": False, "low": False},
-    "stock": {"high": False, "low": False},
+_alert_day = {
+    "macro": {"high": None, "low": None},
+    "stock": {"high": None, "low": None},
 }
 _alert_state_lock = threading.Lock()
-
-# 매크로 체크는 80% 돌파/20% 하락 알림을 방향별로 하루(KST) 한 번만 보낸다 -
-# 값이 다시 내려갔다 올라와도 같은 날엔 재알림하지 않는다. 종목 체크는 위의
-# 히스테리시스 방식 그대로. 날짜 기록은 메모리라 재배포되면 초기화된다.
-_macro_alert_day = {"high": None, "low": None}
 
 
 def _update_alert_state(key, pct):
     events = []
     if pct is None:
         return events
+    today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
     with _alert_state_lock:
-        if key == "macro":
-            today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
-            if pct >= ALERT_THRESHOLD and _macro_alert_day["high"] != today:
-                _macro_alert_day["high"] = today
-                events.append("high_cross")
-            if pct <= ALERT_LOW_THRESHOLD and _macro_alert_day["low"] != today:
-                _macro_alert_day["low"] = today
-                events.append("low_cross")
-            return events
-        st = _alert_state[key]
-        if not st["high"] and pct >= ALERT_THRESHOLD:
-            st["high"] = True
+        sent = _alert_day[key]
+        if pct >= ALERT_THRESHOLD and sent["high"] != today:
+            sent["high"] = today
             events.append("high_cross")
-        elif st["high"] and pct < ALERT_THRESHOLD - ALERT_HYSTERESIS:
-            st["high"] = False
-        if not st["low"] and pct <= ALERT_LOW_THRESHOLD:
-            st["low"] = True
+        if pct <= ALERT_LOW_THRESHOLD and sent["low"] != today:
+            sent["low"] = today
             events.append("low_cross")
-        elif st["low"] and pct > ALERT_LOW_THRESHOLD + ALERT_HYSTERESIS:
-            st["low"] = False
     return events
 
 
