@@ -1301,6 +1301,12 @@ def _update_alert_state(key, pct):
 
 
 def check_threshold_alert():
+    # 80%/20% 돌파 알림은 정규장(09:00~15:30)에만 - 이후 NXT 시간대에는 보내지
+    # 않는다. (5일선 근접 알림은 별도로 20:00까지.)
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    if not (9 * 60 <= now.hour * 60 + now.minute <= 15 * 60 + 30):
+        return {"sent": False, "skipped": "outside_regular_session"}
+
     macro_pct, _, stock_pct, stock_name, _ = _compute_scores()
 
     macro_events = _update_alert_state("macro", macro_pct)
