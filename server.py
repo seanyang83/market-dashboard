@@ -1283,12 +1283,26 @@ _alert_state = {
 }
 _alert_state_lock = threading.Lock()
 
+# 매크로 체크는 80% 돌파/20% 하락 알림을 방향별로 하루(KST) 한 번만 보낸다 -
+# 값이 다시 내려갔다 올라와도 같은 날엔 재알림하지 않는다. 종목 체크는 위의
+# 히스테리시스 방식 그대로. 날짜 기록은 메모리라 재배포되면 초기화된다.
+_macro_alert_day = {"high": None, "low": None}
+
 
 def _update_alert_state(key, pct):
     events = []
     if pct is None:
         return events
     with _alert_state_lock:
+        if key == "macro":
+            today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+            if pct >= ALERT_THRESHOLD and _macro_alert_day["high"] != today:
+                _macro_alert_day["high"] = today
+                events.append("high_cross")
+            if pct <= ALERT_LOW_THRESHOLD and _macro_alert_day["low"] != today:
+                _macro_alert_day["low"] = today
+                events.append("low_cross")
+            return events
         st = _alert_state[key]
         if not st["high"] and pct >= ALERT_THRESHOLD:
             st["high"] = True
