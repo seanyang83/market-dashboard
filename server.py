@@ -1343,7 +1343,8 @@ def check_threshold_alert():
 # 때마다 Render 환경변수(TELEGRAM_MA_WATCH_CODES)에도 써둬서 재배포돼도
 # 유지된다 (KIS 토큰 캐싱과 같은 패턴). 히스테리시스 1%p: 5일선 위로 1%
 # 이내까지 가까워지면 알리고, 2% 넘게 다시 멀어지거나(또는 5일선 아래로
-# 내려가거나) 해야 리셋.
+# 내려가거나) 해야 리셋. 5일선 아래로 내려갔다가 올라오는 건 "위에서 접근"이
+# 아니므로, 한 번 2% 넘게 위로 올라간 뒤에야 다시 알린다.
 MA_NEAR_PCT = 1.0
 MA_RESET_PCT = 2.0
 
@@ -1380,15 +1381,21 @@ def remove_ma_watch_code(code):
 
 
 def _update_ma_near_state(code, diff_pct):
-    """diff_pct = (price - ma5) / ma5 * 100. Returns True only on a fresh
-    'approaching from above' event."""
+    """diff_pct = (price - ma5) / ma5 * 100. True only when price *comes down
+    toward* MA5 from above (a rebound up from below the line must not fire).
+    States: None (unknown, e.g. just after a restart), "armed" (was clearly
+    above), "fired" (alerted, waiting to get clearly above again), "below"
+    (under the line - a bounce back above it doesn't count as approaching
+    from above until it has first gone clearly above)."""
     with _ma_alert_state_lock:
-        was_near = _ma_alert_state.get(code, False)
-        if not was_near and 0 < diff_pct <= MA_NEAR_PCT:
-            _ma_alert_state[code] = True
+        state = _ma_alert_state.get(code)
+        if diff_pct <= 0:
+            _ma_alert_state[code] = "below"
+        elif diff_pct > MA_RESET_PCT:
+            _ma_alert_state[code] = "armed"
+        elif diff_pct <= MA_NEAR_PCT and state in (None, "armed"):
+            _ma_alert_state[code] = "fired"
             return True
-        if was_near and (diff_pct > MA_RESET_PCT or diff_pct <= 0):
-            _ma_alert_state[code] = False
     return False
 
 
