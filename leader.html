@@ -68,7 +68,8 @@
   tr:last-child td { border-bottom: none; }
   tr.est td { color: var(--sub); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   td small { display: block; font-size: 10.5px; font-weight: 500; color: var(--sub); }
-  table.run { min-width: 0; font-size: 12px; }
+  table.run { min-width: 0; font-size: 11.5px; }
+  table.run small { white-space: normal; }
   table.run th, table.run td { padding: 6px 4px; }
   .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
   canvas { width: 100%; height: 220px; display: block; margin-top: 12px; }
@@ -133,6 +134,7 @@
             <tbody id="runbody"></tbody>
           </table>
         </div>
+        <div class="sub" style="margin-top:6px;">날짜는 주봉 기준(YY.MM.DD), 상승률은 정배열 시작 종가 대비. 데드크로스 = 시작 이후 4주선이 13주선을 아래로 뚫은 첫 주.</div>
       </div>
       <canvas id="chart"></canvas>
       <div class="legend">
@@ -206,22 +208,45 @@ function drawChart(canvas, s, run) {
     ctx.stroke();
   });
   if (run) {
-    const mark = (idx, text, color, above) => {
+    const short = (d) => d.slice(2).replace(/-/g, ".");  // 2025-05-30 -> 25.05.30
+    const green = cssVar("--tl-green"), red = cssVar("--tl-red"), purple = cssVar("--ma13");
+    // 정배열 유지 구간 음영 + "유지 N주" 문구
+    if (run.startIdx != null && run.endIdx != null) {
+      const x0 = X(Math.max(run.startIdx, 0)), x1 = X(Math.min(run.endIdx, n - 1));
+      ctx.globalAlpha = 0.09; ctx.fillStyle = green;
+      ctx.fillRect(x0, padTop, Math.max(x1 - x0, 2), h - padTop - padBottom);
+      ctx.globalAlpha = 1;
+      ctx.font = "bold 11px -apple-system, sans-serif";
+      const txt = `정배열 ${run.weeks}주 유지${run.active ? " (진행 중)" : ""}`;
+      const tw = ctx.measureText(txt).width;
+      const cx = Math.min(Math.max((x0 + x1) / 2 - tw / 2, padX), w - padX - tw);
+      ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = cssVar("--card-bg");
+      ctx.fillStyle = green;
+      ctx.strokeText(txt, cx, padTop + 22); ctx.fillText(txt, cx, padTop + 22);
+    }
+    const mark = (idx, title, date, color, above) => {
       if (idx == null || idx < 0 || idx >= n) return;
       const x = X(idx), y = Y(s.close[idx]);
       ctx.strokeStyle = color; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, padTop); ctx.lineTo(x, h - padBottom); ctx.stroke(); ctx.setLineDash([]);
       ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
       ctx.font = "bold 11px -apple-system, sans-serif";
-      const tw = ctx.measureText(text).width;
-      const tx = Math.min(Math.max(x - tw / 2, padX), w - padX - tw);
-      const ty = above ? Math.max(y - 9, 11) : Math.min(y + 17, h - padBottom - 2);
+      const lines = [title, date];
+      const widths = lines.map((t) => ctx.measureText(t).width);
+      const tw = Math.max(...widths);
+      const tx0 = Math.min(Math.max(x - tw / 2, padX), w - padX - tw);
+      const baseY = above ? Math.max(y - 22, padTop + 34) : Math.min(y + 17, h - padBottom - 14);
       ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = cssVar("--card-bg");
-      ctx.strokeText(text, tx, ty);
-      ctx.fillText(text, tx, ty);
+      lines.forEach((t, i) => {
+        const tx = tx0 + (tw - widths[i]) / 2;
+        ctx.strokeText(t, tx, baseY + i * 12); ctx.fillStyle = color; ctx.fillText(t, tx, baseY + i * 12);
+      });
     };
-    mark(run.startIdx, "시작", cssVar("--tl-green"), false);
-    mark(run.peakIdx, "최고", cssVar("--tl-red"), true);
+    // 시작과 최고점이 가까우면(짧은 구간) 라벨이 겹치므로 시작 라벨은 점 아래로 내린다.
+    const close = run.startIdx != null && run.peakIdx != null && Math.abs(X(run.startIdx) - X(run.peakIdx)) < 70;
+    mark(run.startIdx, "시작", short(run.startDate), green, !close);
+    mark(run.peakIdx, "최고", short(run.peakDate), red, true);
+    if (run.deadCross) mark(run.deadCross.idx, "데드크로스", short(run.deadCross.date), purple, false);
   }
   ctx.fillStyle = cssVar("--sub"); ctx.font = "10.5px -apple-system, sans-serif";
   const lab = (d) => d.slice(0, 7);
@@ -257,14 +282,18 @@ function render(name, code, quote, a) {
   const run = w.run;
   if (run) {
     const won = (v) => fmt(Math.round(v));
+    const sd = (d) => d.slice(2).replace(/-/g, ".");  // 25.05.30
     const pct = (v) => `<span class="${v > 0 ? "up" : v < 0 ? "down" : "flat"}">${sign(v)}${fmt(v, 1)}%</span>`;
     $("runtitle").textContent = run.active
       ? `가장 최근 정배열 구간 (종가 기준, 원) — 진행 중 (${run.weeks}주째)`
       : `가장 최근 정배열 구간 (종가 기준, 원) — ${run.endDate}에 정배열 이탈 (총 ${run.weeks}주 유지)`;
     $("runbody").innerHTML = `
-      <tr><td>시작</td><td>${run.startDate}</td><td>${won(run.startClose)}</td><td>–</td></tr>
-      <tr><td>최고점</td><td>${run.peakDate}</td><td>${won(run.peakClose)}</td><td>${pct(run.peakGainPct)}<small>시작 대비</small></td></tr>
-      <tr><td>현재</td><td>${w.asOf}</td><td>${won(w.price)}</td><td>${pct(run.nowGainPct)}<small>고점 대비 ${sign(run.fromPeakPct)}${fmt(run.fromPeakPct, 1)}%</small></td></tr>`;
+      <tr><td>시작</td><td>${sd(run.startDate)}</td><td>${won(run.startClose)}</td><td>–</td></tr>
+      <tr><td>최고점</td><td>${sd(run.peakDate)}</td><td>${won(run.peakClose)}</td><td>${pct(run.peakGainPct)}<small>시작 대비</small></td></tr>
+      ${run.deadCross
+        ? `<tr><td>데드크로스</td><td>${sd(run.deadCross.date)}</td><td>${won(run.deadCross.close)}</td><td>${pct(run.deadCross.gainFromStartPct)}<small>${run.deadCross.weeksFromPeak < 0 ? `고점 ${-run.deadCross.weeksFromPeak}주 전` : `고점 ${run.deadCross.weeksFromPeak}주 후`}</small><small>고점 대비 ${sign(run.deadCross.fromPeakPct)}${fmt(run.deadCross.fromPeakPct, 1)}%</small></td></tr>`
+        : `<tr><td>데드크로스</td><td colspan="3" style="text-align:left;color:var(--sub);">시작 이후 아직 없음</td></tr>`}
+      <tr><td>현재</td><td>${sd(w.asOf)}</td><td>${won(w.price)}</td><td>${pct(run.nowGainPct)}<small>고점 대비 ${sign(run.fromPeakPct)}${fmt(run.fromPeakPct, 1)}%</small></td></tr>`;
     $("runbox").classList.remove("hidden");
   } else {
     $("runtitle").textContent = "조회 가능한 기간에 4-13-26-52 정배열이었던 구간이 없습니다.";

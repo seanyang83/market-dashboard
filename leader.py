@@ -187,12 +187,35 @@ def _weekly_analysis(weekly):
             "fromPeakPct": round((closes[last] / closes[peak] - 1) * 100, 1),
         }
 
+    # 정배열 시작 이후 처음으로 4주선이 13주선을 아래로 뚫은 주(데드크로스).
+    if run:
+        for i in range(start + 1, last + 1):
+            a0, b0, a1, b1 = mas[4][i - 1], mas[13][i - 1], mas[4][i], mas[13][i]
+            if None in (a0, b0, a1, b1):
+                continue
+            if a0 >= b0 and a1 < b1:
+                run["deadCross"] = {
+                    "date": dates[i], "close": closes[i],
+                    "weeksAfterStart": i - start,
+                    "weeksFromPeak": i - peak,  # 음수면 고점 전, 양수면 고점 후
+                    "gainFromStartPct": round((closes[i] / closes[start] - 1) * 100, 1),
+                    "fromPeakPct": round((closes[i] / closes[peak] - 1) * 100, 1),
+                    "_i": i,
+                }
+                break
+        else:
+            run["deadCross"] = None
+
     # 차트는 기본 104주, 정배열 시작점이 더 과거면 거기까지 늘려서 시작 표시가 보이게 한다.
     n = min(len(closes), max(CHART_WEEKS, (last - start + 10) if run else 0))
     offset = len(closes) - n
     if run:
         run["startIdx"] = start - offset
         run["peakIdx"] = peak - offset
+        run["endIdx"] = end - offset
+        dc = run.get("deadCross")
+        if dc:
+            dc["idx"] = dc.pop("_i") - offset
     sl = slice(offset, None)
     ma_last = {p: mas[p][last] for p in MA_PERIODS}
     return {
