@@ -1218,7 +1218,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not code:
             return
         try:
-            self.send_json(200, leader.analyze(code))
+            self.send_json(200, leader.analyze(code, kis_get if KIS_APP_KEY and KIS_APP_SECRET else None))
         except leader.NoFinance as e:
             self.send_json(404, {"error": str(e)})
         except Exception as e:

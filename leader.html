@@ -61,13 +61,15 @@
   .badge.red { color: var(--tl-red); } .badge.gray { color: var(--sub); } .badge.blue { color: var(--accent); }
   ul.reasons { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
   .scroll { overflow-x: auto; margin-top: 10px; }
-  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 440px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 470px; }
   th { text-align: right; color: var(--sub); font-weight: 600; font-size: 11px; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
   td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; font-weight: 600; }
   th:first-child, td:first-child { text-align: left; }
   tr:last-child td { border-bottom: none; }
   tr.est td { color: var(--sub); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   td small { display: block; font-size: 10.5px; font-weight: 500; color: var(--sub); }
+  table.q { font-size: 11.5px; }
+  table.q th, table.q td { padding: 6px 4px; }
   table.run { min-width: 0; font-size: 11.5px; }
   table.run small { white-space: normal; }
   table.run th, table.run td { padding: 6px 4px; }
@@ -113,14 +115,16 @@
       <h2>분기 실적 — 영업이익률 변화율</h2>
       <div class="sub">변화율 = (이번 영업이익률 − 비교 기간 영업이익률) ÷ 비교 기간 영업이익률. 괄호/작은 글씨는 %p 차이. 추정(E)은 컨센서스.</div>
       <div class="scroll">
-        <table>
+        <table class="q">
           <thead>
-            <tr><th>분기</th><th>영업이익률</th><th>전분기 대비</th><th>전년동기 대비</th><th>매출액(억)</th><th>영업이익(억)</th></tr>
+            <tr><th>분기</th><th>영업이익률</th><th>전년동기 대비</th><th>가속(%p)</th><th>전분기 대비</th><th>매출액(억)</th><th>영업이익(억)</th></tr>
           </thead>
           <tbody id="qbody"></tbody>
         </table>
       </div>
-      <div class="sub" style="margin-top:8px;">기준값이 0 이하(적자)이거나 비교할 분기가 없으면 변화율은 “–”로 표시합니다.</div>
+      <div class="sub" style="margin-top:8px;">가속 = 이번 분기 전년동기 변화율 − 직전 분기 전년동기 변화율(%p). “–”는 기준값이 0 이하(적자)이거나 비교할 분기가 없는 경우, ※는 비교 기준 영업이익률이 5% 미만이라 변화율이 부풀려진 값(가속/피크 판정에서 제외)입니다.</div>
+      <div class="sub" style="margin-top:14px;font-weight:700;">전년동기 대비 영업이익률 변화율 추이 (%)</div>
+      <canvas id="yoyChart" style="height:150px;"></canvas>
     </div>
 
     <div class="card">
@@ -148,8 +152,8 @@
   </div>
 
   <footer>
-    데이터: 네이버 금융(분기 실적·컨센서스, 주봉). 네이버 분기 실적은 최근 5개 분기 + 컨센서스 1개 분기만 제공해서,
-    “이익 증가율이 꺾였는지(가속/둔화)”는 컨센서스 분기와 직전 분기를 비교하는 잠정 판정입니다. 투자 판단의 근거로 사용하지 마세요.
+    데이터: 네이버 금융(분기 실적·컨센서스, 주봉). 분기 이력은 한국투자증권 손익계산서(최대 30개 분기, 연 단위 누적값을 분기로 환산)를 쓰고, 최근 분기는 네이버 값을 우선합니다.
+    단계 판정은 영업이익률 전년동기 변화율의 추이(가속/피크아웃/음전환)에 주봉 정배열을 더한 참고용입니다. 투자 판단의 근거로 사용하지 마세요.
   </footer>
 </div>
 
@@ -169,10 +173,22 @@ async function getJson(url) {
 
 function showError(msg) { $("err").textContent = msg; $("err").classList.toggle("show", !!msg); }
 
-function rateCell(rate, pp) {
+function accelCell(v) {
+  if (v == null) return "<td>–</td>";
+  const cls = v > 0 ? "up" : v < 0 ? "down" : "flat";
+  return `<td class="${cls}">${sign(v)}${fmt(v, 1)}</td>`;
+}
+
+// 표에는 최근 12개 실제 분기 + 컨센서스 분기를 보여준다 (계산은 전체 이력으로 이미 끝남).
+function shownQuarters(all) {
+  const actual = all.filter((q) => !q.estimate).slice(-12);
+  return actual.concat(all.filter((q) => q.estimate));
+}
+
+function rateCell(rate, pp, lowBase) {
   if (rate == null && pp == null) return "<td>–</td>";
   const cls = rate == null ? "flat" : rate > 0 ? "up" : rate < 0 ? "down" : "flat";
-  const main = rate == null ? "–" : `${sign(rate)}${fmt(rate, 1)}%`;
+  const main = rate == null ? "–" : `${sign(rate)}${fmt(rate, 1)}%${lowBase ? "※" : ""}`;
   const sub = pp == null ? "" : `<small>${sign(pp)}${fmt(pp, 1)}%p</small>`;
   return `<td class="${cls}">${main}${sub}</td>`;
 }
@@ -183,6 +199,55 @@ function stageClass(label) {
   if (/^④/.test(label)) return "red";
   if (/^관찰/.test(label)) return "blue";
   return "gray";
+}
+
+function drawYoyChart(canvas, qs) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const vals = qs.map((q) => q.opmYoyRate);
+  const okVals = qs.filter((q) => q.opmYoyRate != null && !q.opmYoyLowBase).map((q) => q.opmYoyRate);
+  if (okVals.length < 2) { ctx.fillStyle = cssVar("--sub"); ctx.font = "12px sans-serif"; ctx.fillText("표시할 변화율이 부족합니다", 8, 24); return; }
+  const max = Math.max(0, ...okVals);
+  const floor = -Math.max(max, 50);               // 흑자→적자 전환 같은 극단값이 스케일을 먹지 않게 아래쪽을 제한
+  const min = Math.max(Math.min(0, ...okVals), floor);
+  const padTop = 18, padBottom = 18, range = max - min || 1;
+  const Y = (v) => padTop + (1 - (v - min) / range) * (h - padTop - padBottom);
+  const slot = w / qs.length, bw = Math.max(slot * 0.62, 4);
+  const y0 = Y(0);
+  ctx.strokeStyle = cssVar("--border"); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, y0); ctx.lineTo(w, y0); ctx.stroke();
+  const peakVal = Math.max(...okVals);
+  qs.forEach((q, i) => {
+    const v = vals[i];
+    const x = i * slot + (slot - bw) / 2;
+    if (v == null) return;
+    if (q.opmYoyLowBase) {          // 기저 낮음: 회색 점선 막대로만 표시
+      ctx.strokeStyle = cssVar("--sub"); ctx.setLineDash([2, 2]);
+      ctx.strokeRect(x, padTop, bw, h - padTop - padBottom); ctx.setLineDash([]);
+      return;
+    }
+    ctx.globalAlpha = q.estimate ? 0.45 : 1;
+    ctx.fillStyle = v >= 0 ? cssVar("--up") : cssVar("--down");
+    const clipped = v < min;
+    const yv = Y(clipped ? min : v);
+    ctx.fillRect(x, Math.min(y0, yv), bw, Math.abs(yv - y0) || 1);
+    ctx.globalAlpha = 1;
+    if (clipped) {
+      ctx.fillStyle = cssVar("--sub"); ctx.font = "10px -apple-system, sans-serif"; ctx.textAlign = "left";
+      ctx.fillText(`${fmt(v, 0)}%`, x + bw + 3, h - padBottom - 6);
+    }
+    if (v === peakVal) {
+      ctx.fillStyle = cssVar("--text"); ctx.font = "bold 10.5px -apple-system, sans-serif"; ctx.textAlign = "center";
+      ctx.fillText(`최고 ${sign(v)}${fmt(v, 0)}%`, Math.min(Math.max(x + bw / 2, 34), w - 34), Math.max(yv - 4, 11));
+    }
+  });
+  ctx.fillStyle = cssVar("--sub"); ctx.font = "10px -apple-system, sans-serif"; ctx.textAlign = "center";
+  qs.forEach((q, i) => {
+    if (i % 2 === (qs.length - 1) % 2) ctx.fillText(q.period.slice(2) + (q.estimate ? "E" : ""), Math.min(Math.max(i * slot + slot / 2, 14), w - 16), h - 4);
+  });
 }
 
 function drawChart(canvas, s, run) {
@@ -262,11 +327,13 @@ function render(name, code, quote, a) {
   $("stage").className = "badge " + stageClass(a.stage.label);
   $("reasons").innerHTML = a.stage.reasons.map((r) => `<li>${r}</li>`).join("");
 
-  $("qbody").innerHTML = a.quarters.map((q) => `
+  const shown = shownQuarters(a.quarters);
+  $("qbody").innerHTML = shown.map((q) => `
     <tr class="${q.estimate ? "est" : ""}">
-      <td>${q.period}${q.estimate ? " (E)" : ""}</td>
-      <td>${q.opm == null ? "–" : fmt(q.opm, 2) + "%"}</td>
-      ${rateCell(q.opmQoqRate, q.opmQoqPp)}${rateCell(q.opmYoyRate, q.opmYoyPp)}
+      <td>${q.period.slice(2)}${q.estimate ? "E" : ""}</td>
+      <td>${q.opm == null ? "–" : fmt(q.opm, 1) + "%"}</td>
+      ${rateCell(q.opmYoyRate, q.opmYoyPp, q.opmYoyLowBase)}${accelCell(q.opmYoyAccel)}
+      ${rateCell(q.opmQoqRate, q.opmQoqPp)}
       <td>${fmt(q.revenue)}</td><td>${fmt(q.opIncome)}</td>
     </tr>`).join("");
 
@@ -302,6 +369,7 @@ function render(name, code, quote, a) {
   }
   $("result").classList.remove("hidden");
   drawChart($("chart"), w.series, run);
+  drawYoyChart($("yoyChart"), shown);
 }
 
 async function load(code, name) {
