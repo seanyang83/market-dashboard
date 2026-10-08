@@ -123,12 +123,12 @@
       <div class="scroll">
         <table class="q">
           <thead>
-            <tr><th>분기</th><th>영업이익(억)</th><th>증가율 YoY</th><th>가속</th><th>증가율 QoQ</th><th>가속</th><th>영업이익률</th><th>매출액(억)</th></tr>
+            <tr><th>분기</th><th>매출액(억)</th><th>매출 YoY</th><th>영업이익(억)</th><th>증가율 YoY</th><th>가속</th><th>증가율 QoQ</th><th>가속</th><th>지배순이익(억)</th><th>순이익 YoY</th></tr>
           </thead>
           <tbody id="qbody"></tbody>
         </table>
       </div>
-      <div class="sub" style="margin-top:8px;">기준 분기가 적자면 증가율 대신 흑자전환/적자지속, 흑자였다가 적자가 되면 적자전환으로 표시합니다. ※는 비교 기준 분기의 영업이익률이 5% 미만이라 증가율이 부풀려진 값(가속/피크 판정에서 제외)입니다.</div>
+      <div class="sub" style="margin-top:8px;">기준 분기가 적자면 증가율 대신 흑자전환/적자지속, 흑자였다가 적자가 되면 적자전환으로 표시합니다. ※는 비교 기준 분기의 영업이익률이 5% 미만이라 증가율이 부풀려진 값(가속/피크 판정에서 제외)입니다. 순이익은 지배주주 귀속분이며, †는 지배/비지배 구분이 없는 당기순이익(한투 이력 구간, 네이버는 최근 약 5개 분기만 지배순이익 제공)이라 지배순이익과 다를 수 있다는 표시입니다.</div>
       <div class="sub" style="margin-top:14px;font-weight:700;" id="trendTitle">영업이익 증가율 추이 (%)</div>
       <canvas id="yoyChart" style="height:150px;"></canvas>
     </div>
@@ -185,14 +185,14 @@ function accelCell(v) {
   return `<td class="${cls}">${sign(v)}${fmt(v, 0)}</td>`;
 }
 
-function growthCell(rate, state, lowBase) {
+function growthCell(rate, state, lowBase, mixed) {
   if (rate == null) {
     if (!state) return "<td>–</td>";
-    return `<td class="${state === "흑자전환" ? "up" : "down"}">${state}</td>`;
+    return `<td class="${state === "흑자전환" ? "up" : "down"}">${state}${mixed ? "†" : ""}</td>`;
   }
   const cls = rate > 0 ? "up" : rate < 0 ? "down" : "flat";
   const tag = state === "적자전환" ? "<small>적자전환</small>" : "";
-  return `<td class="${cls}">${sign(rate)}${fmt(rate, 1)}%${lowBase ? "※" : ""}${tag}</td>`;
+  return `<td class="${cls}">${sign(rate)}${fmt(rate, 1)}%${lowBase ? "※" : ""}${mixed ? "†" : ""}${tag}</td>`;
 }
 
 // 표에는 최근 12개 실제 분기 + 컨센서스 분기를 보여준다 (계산은 전체 이력으로 이미 끝남).
@@ -353,10 +353,11 @@ function render(name, code, quote, a) {
   $("qbody").innerHTML = shown.map((q) => `
     <tr class="${q.estimate ? "est" : ""}">
       <td>${q.period.slice(2)}${q.estimate ? "E" : ""}</td>
+      <td>${fmt(q.revenue)}</td>${growthCell(q.revenueYoyRate)}
       <td>${fmt(q.opIncome)}</td>
       ${growthCell(q.opYoyRate, q.opYoyState, q.opYoyLowBase)}${accelCell(q.opYoyAccel)}
       ${growthCell(q.opQoqRate, q.opQoqState, q.opQoqLowBase)}${accelCell(q.opQoqAccel)}
-      <td>${q.opm == null ? "–" : fmt(q.opm, 1) + "%"}</td><td>${fmt(q.revenue)}</td>
+      <td>${fmt(q.netIncome)}${q.netIsParent ? "" : "†"}</td>${growthCell(q.netYoyRate, q.netYoyState, false, q.netYoyMixed)}
     </tr>`).join("");
 
   const w = a.weekly;

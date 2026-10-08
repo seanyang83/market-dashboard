@@ -104,6 +104,8 @@ def _fetch_finance(code):
             "revenue": val("매출액", key),
             "opIncome": val("영업이익", key),
             "opm": val("영업이익률", key),
+            "netIncome": val("지배주주순이익", key),
+            "netIsParent": True,
         })
     return quarters
 
@@ -139,6 +141,9 @@ def _compute_rates(quarters):
         q["opYoyLowBase"] = low_base(prev_y)
         q["opQoqLowBase"] = low_base(prev_q)
         q["revenueYoyRate"] = _rate(q["revenue"], prev_y["revenue"]) if prev_y else None
+        q["netYoyRate"], q["netYoyState"] = _growth(q["netIncome"], prev_y["netIncome"]) if prev_y else (None, None)
+        # 한투 값(당기순이익, 지배 아님)이 한쪽이라도 섞이면 표에 †로 표시
+        q["netYoyMixed"] = bool(prev_y and not (q.get("netIsParent") and prev_y.get("netIsParent")))
         q["opmYoyPp"] = _pp(q["opm"], prev_y["opm"]) if prev_y else None
         q["opmQoqPp"] = _pp(q["opm"], prev_q["opm"]) if prev_q else None
     for q in quarters:
@@ -163,18 +168,19 @@ def _fetch_kis_quarters(code, kis_get):
         key = str(r.get("stac_yymm") or "")
         rev, op = _num(r.get("sale_account")), _num(r.get("bsop_prti"))
         if len(key) == 6 and rev is not None:
-            ytd[key] = (rev, op)
+            ytd[key] = (rev, op, _num(r.get("thtr_ntin")))
     out = []
     for key in sorted(ytd):
-        rev, op = ytd[key]
+        rev, op, net = ytd[key]
         prev = ytd.get(_shift_key(key, -3))
         if prev is not None and rev >= prev[0]:
             rev_q = rev - prev[0]
             op_q = op - prev[1] if op is not None and prev[1] is not None else None
+            net_q = net - prev[2] if net is not None and prev[2] is not None else None
         elif prev is None and key[4:6] != "03":
             continue  # 누적의 시작을 알 수 없는 맨 앞 분기
         else:
-            rev_q, op_q = rev, op
+            rev_q, op_q, net_q = rev, op, net
         out.append({
             "key": key,
             "period": f"{key[:4]}.{key[4:6]}",
@@ -182,6 +188,8 @@ def _fetch_kis_quarters(code, kis_get):
             "revenue": rev_q,
             "opIncome": op_q,
             "opm": round(op_q / rev_q * 100, 2) if op_q is not None and rev_q else None,
+            "netIncome": net_q,        # 한투는 지배/비지배 구분 없는 당기순이익
+            "netIsParent": False,
         })
     return out
 
