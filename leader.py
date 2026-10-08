@@ -401,9 +401,9 @@ def _earnings_state(quarters, basis="yoy"):
         if gstate == "흑자전환":
             return "가속", f"{pn} 흑자전환", []
         if gstate == "적자전환":
-            return "음전환", f"{pn} 적자전환", ["영업이익 적자전환"]
+            return "음전환", f"{pn} 적자전환", [("neg", "bad", "영업이익 적자전환")]
         if gstate == "적자지속":
-            return "악화", f"{pn} 적자 지속", ["영업이익 적자 지속"]
+            return "악화", f"{pn} 적자 지속", [("neg", "bad", "영업이익 적자 지속")]
         return None, f"{pn} 비교 분기 없음", []
     if latest[b["low"]]:
         return None, f"{pn} {g:+,.1f}% · 기저 낮아(※) 판정 제외", []
@@ -414,7 +414,7 @@ def _earnings_state(quarters, basis="yoy"):
 
     if g <= 0:
         state = "음전환" if prev_g is not None and prev_g > 0 else "악화"
-        flags.append("영업이익 감소 전환" if state == "음전환" else "영업이익 감소 지속")
+        flags.append(("neg", "bad", "영업이익 감소 전환" if state == "음전환" else "영업이익 감소 지속"))
         return state, f"{pn} {g:+,.1f}%" + (f" (직전 {prev_g:+,.1f}%)" if prev_g is not None else ""), flags
 
     line = f"{pn} {g:+,.1f}%"
@@ -429,16 +429,14 @@ def _earnings_state(quarters, basis="yoy"):
             state = "가속"
         elif prev_g >= peak:
             state = "피크아웃"
-            flags.append(f"피크아웃 — 최근 8분기 최고({_sp(peak_period)} {peak:+,.0f}%)에서 처음 꺾임")
+            flags.append(("peak", "bad", f"피크아웃 (최고 {_sp(peak_period)} {peak:+,.0f}%)"))
         else:
             state = "둔화"
-            flags.append(f"최고({_sp(peak_period)} {peak:+,.0f}%) 대비 둔화")
-        if prev_accel is not None and prev_accel > 0 > accel:
-            flags.append("가속도 플러스→마이너스")
+            flags.append(("slow", "warn", f"최고({_sp(peak_period)} {peak:+,.0f}%) 대비 둔화"))
     if est is not None:
         line += f" · 다음 E {est[b['rate']]:+,.1f}%"
         if est[b["rate"]] < g:
-            flags.append("컨센서스상 다음 분기 둔화 전망")
+            flags.append(("cons", "warn", "컨센서스상 다음 분기 둔화 전망"))
     return state, line, flags
 
 
@@ -472,11 +470,9 @@ def _trend(ys, qs, weekly):
 def _judge(quarters, weekly, basis="yoy"):
     earn, line, flags = _earnings_state(quarters, basis)
     tag = "YoY" if basis == "yoy" else "QoQ"
-    flags = [f"{tag} {f}" for f in flags]
+    flags = [{"kind": k, "level": lv, "tag": tag, "text": t} for k, lv, t in flags]
     aligned, streak = weekly["aligned"], weekly["streakWeeks"]
     run = weekly.get("run")
-    if not aligned and run and run.get("breakDate"):
-        flags.append(f"정배열 이탈 ({run['breakReason']})")
 
     if earn in ("가속", "증가") and aligned:
         label = "① 태동" if streak <= 13 else "② 추세" if streak <= 104 else "② 추세 장기화"
@@ -541,11 +537,18 @@ def analyze(code, kis_get=None):
     if mismatched:
         notes.append(f"한투 이력과 네이버 값이 {', '.join(mismatched)}에서 어긋남 (소급 수정 종목일 수 있어 과거 증가율은 참고만)")
     text, tone = _trend(stage["earnings"], stage_qoq["earnings"], weekly)
-    flags = []
+    flags, cons_tags = [], []
     for f in stage["flags"] + stage_qoq["flags"]:
-        if f not in flags:
-            flags.append(f)
-    flags.sort(key=lambda f: f.startswith("정배열"))
+        if f["kind"] == "cons":
+            cons_tags.append(f["tag"])
+        else:
+            flags.append({"level": f["level"], "text": f"{f['tag']} {f['text']}"})
+    if cons_tags:
+        flags.append({"level": "warn", "text": f"컨센서스상 다음 분기 둔화 전망 ({'·'.join(cons_tags)})"})
+    run = weekly.get("run")
+    if not weekly["aligned"] and run and run.get("breakDate"):
+        flags.append({"level": "warn", "text": f"정배열 이탈 ({run['breakReason']})"})
+    flags.sort(key=lambda f: f["level"] != "bad")
     return {
         "code": code,
         "quarters": quarters,

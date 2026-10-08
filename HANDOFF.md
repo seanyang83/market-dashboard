@@ -394,7 +394,7 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
   당기순이익이면 `netYoyMixed`로 †). 컨센서스 분기는 순이익 없음("–").
 - **화면 구조(2026-10-08 개편)**: 설명 문구 최소화. 상단 카드 = 종합 추세 한 줄(`trend.text`, tone 색) +
   YoY/QoQ 각각 단계 배지·한 줄 요약(`stage.line`/`stageQoq.line`) **동시 표시**(토글 없음) + 붉은 글씨
-  주요사항(`trend.flags`: 피크아웃·가속도 부호 전환·컨센서스 둔화·정배열 이탈, 기준 접두 "YoY "/"QoQ ").
+  주요사항(`trend.flags` = {level,text}: **bad(빨강)** 피크아웃·음전환·적자 / **warn(주황)** 둔화·컨센서스 둔화 전망(YoY·QoQ 합쳐 1줄)·정배열 이탈). 행별 한 줄 요약은 화면에서 뺌("실적 가속" 같은 상태어만).
   `_trend(yoyState, qoqState, weekly)`가 두 기준 조합으로 추세 문구 생성(예: YoY 가속+QoQ 둔화 =
   "고성장은 유지, 분기 증가 속도는 둔화 — 정점 접근"). 증가율 막대 차트도 YoY·QoQ 두 개.
 - **실적 발표일**: 분기 열에 (MM.DD). `_fetch_release_dates` — 네이버 공시 목록

@@ -9,7 +9,7 @@
     --bg: #f4f5f7; --card-bg: #ffffff; --text: #14161a; --sub: #6b7280; --border: #e5e7eb;
     --up: #d92d20; --down: #2563eb; --flat: #6b7280; --accent: #2563eb;
     --ma4: #f59e0b; --ma13: #a855f7; --ma26: #06b6d4; --ma52: #16a34a;
-    --tl-green: #16a34a; --tl-red: #dc2626; --tl-yellow: #eab308;
+    --warn: #b45309; --tl-green: #16a34a; --tl-red: #dc2626; --tl-yellow: #eab308;
     --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   }
   @media (prefers-color-scheme: dark) {
@@ -17,7 +17,7 @@
       --bg: #0b0d10; --card-bg: #15181d; --text: #f2f3f5; --sub: #9aa1ac; --border: #262a31;
       --up: #f87171; --down: #60a5fa; --flat: #9aa1ac; --accent: #60a5fa;
       --ma4: #fbbf24; --ma13: #c084fc; --ma26: #22d3ee; --ma52: #4ade80;
-      --tl-green: #4ade80; --tl-red: #f87171; --tl-yellow: #fbbf24;
+      --warn: #fbbf24; --tl-green: #4ade80; --tl-red: #f87171; --tl-yellow: #fbbf24;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
     }
   }
@@ -61,12 +61,13 @@
   .badge.red { color: var(--tl-red); } .badge.gray { color: var(--sub); } .badge.blue { color: var(--accent); }
   ul.reasons { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
   .trend { font-size: 15px; font-weight: 700; margin-top: 10px; line-height: 1.5; }
-  .trend.good { color: var(--tl-green); } .trend.warn { color: var(--tl-yellow); } .trend.bad { color: var(--up); }
+  .trend.good { color: var(--tl-green); } .trend.warn { color: var(--warn); } .trend.bad { color: var(--up); }
   .brow { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
   .brow .bl { font-size: 11.5px; font-weight: 700; color: var(--sub); width: 28px; }
   .brow .badge { margin-top: 0; padding: 3px 10px; font-size: 12px; }
-  .bline { font-size: 12.5px; font-variant-numeric: tabular-nums; }
-  ul.flags { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; color: var(--up); font-weight: 600; }
+  .bline { font-size: 12.5px; color: var(--sub); }
+  ul.flags { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; font-weight: 600; }
+  ul.flags li.bad { color: var(--up); } ul.flags li.warn { color: var(--warn); }
   ul.flags:empty { display: none; }
   .tt { margin-top: 12px; font-weight: 700; }
   .scroll { overflow-x: auto; margin-top: 10px; }
@@ -339,9 +340,9 @@ function render(name, code, quote, a) {
   $("trend").textContent = trend.text; $("trend").className = "trend " + trend.tone;
   [["Yoy", a.stage], ["Qoq", a.stageQoq]].forEach(([k, st]) => {
     $("stage" + k).textContent = st.label; $("stage" + k).className = "badge " + stageClass(st.label);
-    $("line" + k).textContent = st.line;
+    $("line" + k).textContent = st.earnings ? `실적 ${st.earnings}` : "";
   });
-  $("flags").innerHTML = trend.flags.map((f) => `<li>${f}</li>`).join("");
+  $("flags").innerHTML = trend.flags.map((f) => `<li class="${f.level}">${f.text}</li>`).join("");
   $("notes").innerHTML = trend.notes.join("<br>");
 
   const shown = shownQuarters(a.quarters);
