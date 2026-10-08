@@ -68,6 +68,8 @@
   tr:last-child td { border-bottom: none; }
   tr.est td { color: var(--sub); background: color-mix(in srgb, var(--accent) 6%, transparent); }
   td small { display: block; font-size: 10.5px; font-weight: 500; color: var(--sub); }
+  table.run { min-width: 0; font-size: 12px; }
+  table.run th, table.run td { padding: 6px 4px; }
   .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
   canvas { width: 100%; height: 220px; display: block; margin-top: 12px; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--sub); margin-top: 8px; }
@@ -123,6 +125,15 @@
     <div class="card">
       <h2>주봉 4-13-26-52 이동평균</h2>
       <div class="kv" id="wkv"></div>
+      <div id="runbox" class="hidden">
+        <div class="sub" id="runtitle" style="margin-top:12px;"></div>
+        <div class="scroll" style="margin-top:6px;">
+          <table class="run">
+            <thead><tr><th>구분</th><th>날짜(주)</th><th>종가</th><th>상승률</th></tr></thead>
+            <tbody id="runbody"></tbody>
+          </table>
+        </div>
+      </div>
       <canvas id="chart"></canvas>
       <div class="legend">
         <span><i style="background:var(--up)"></i>종가</span>
@@ -172,7 +183,7 @@ function stageClass(label) {
   return "gray";
 }
 
-function drawChart(canvas, s) {
+function drawChart(canvas, s, run) {
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -194,6 +205,24 @@ function drawChart(canvas, s) {
     x.v.forEach((v, i) => { if (v == null) return; if (!started) { ctx.moveTo(X(i), Y(v)); started = true; } else ctx.lineTo(X(i), Y(v)); });
     ctx.stroke();
   });
+  if (run) {
+    const mark = (idx, text, color, above) => {
+      if (idx == null || idx < 0 || idx >= n) return;
+      const x = X(idx), y = Y(s.close[idx]);
+      ctx.strokeStyle = color; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(x, padTop); ctx.lineTo(x, h - padBottom); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.font = "bold 11px -apple-system, sans-serif";
+      const tw = ctx.measureText(text).width;
+      const tx = Math.min(Math.max(x - tw / 2, padX), w - padX - tw);
+      const ty = above ? Math.max(y - 9, 11) : Math.min(y + 17, h - padBottom - 2);
+      ctx.lineJoin = "round"; ctx.lineWidth = 3; ctx.strokeStyle = cssVar("--card-bg");
+      ctx.strokeText(text, tx, ty);
+      ctx.fillText(text, tx, ty);
+    };
+    mark(run.startIdx, "시작", cssVar("--tl-green"), false);
+    mark(run.peakIdx, "최고", cssVar("--tl-red"), true);
+  }
   ctx.fillStyle = cssVar("--sub"); ctx.font = "10.5px -apple-system, sans-serif";
   const lab = (d) => d.slice(0, 7);
   ctx.textAlign = "left"; ctx.fillText(lab(s.dates[0]), padX, h - 3);
@@ -225,8 +254,25 @@ function render(name, code, quote, a) {
     <span>4주 <b>${fmt(w.mas["4"])}</b></span><span>13주 <b>${fmt(w.mas["13"])}</b></span>
     <span>26주 <b>${fmt(w.mas["26"])}</b></span><span>52주 <b>${fmt(w.mas["52"])}</b></span>
     <span class="sub">기준 ${w.asOf}</span>`;
+  const run = w.run;
+  if (run) {
+    const won = (v) => fmt(Math.round(v));
+    const pct = (v) => `<span class="${v > 0 ? "up" : v < 0 ? "down" : "flat"}">${sign(v)}${fmt(v, 1)}%</span>`;
+    $("runtitle").textContent = run.active
+      ? `가장 최근 정배열 구간 (종가 기준, 원) — 진행 중 (${run.weeks}주째)`
+      : `가장 최근 정배열 구간 (종가 기준, 원) — ${run.endDate}에 정배열 이탈 (총 ${run.weeks}주 유지)`;
+    $("runbody").innerHTML = `
+      <tr><td>시작</td><td>${run.startDate}</td><td>${won(run.startClose)}</td><td>–</td></tr>
+      <tr><td>최고점</td><td>${run.peakDate}</td><td>${won(run.peakClose)}</td><td>${pct(run.peakGainPct)}<small>시작 대비</small></td></tr>
+      <tr><td>현재</td><td>${w.asOf}</td><td>${won(w.price)}</td><td>${pct(run.nowGainPct)}<small>고점 대비 ${sign(run.fromPeakPct)}${fmt(run.fromPeakPct, 1)}%</small></td></tr>`;
+    $("runbox").classList.remove("hidden");
+  } else {
+    $("runtitle").textContent = "조회 가능한 기간에 4-13-26-52 정배열이었던 구간이 없습니다.";
+    $("runbody").innerHTML = "";
+    $("runbox").classList.remove("hidden");
+  }
   $("result").classList.remove("hidden");
-  drawChart($("chart"), w.series);
+  drawChart($("chart"), w.series, run);
 }
 
 async function load(code, name) {

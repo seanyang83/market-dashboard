@@ -164,13 +164,42 @@ def _weekly_analysis(weekly):
     while last - streak >= 0 and aligned(last - streak):
         streak += 1
     since = dates[last - streak + 1] if streak else None
-    n = min(CHART_WEEKS, len(closes))
-    sl = slice(len(closes) - n, None)
+
+    # 가장 최근 정배열 구간: 지금 진행 중이면 그 구간, 이미 깨졌으면 마지막으로 정배열이었던
+    # 구간. 시작 이후 최고점까지의 상승률을 본다(최고점은 구간이 끝난 뒤 포함 현재까지).
+    run = None
+    end = last
+    while end >= 0 and not aligned(end):
+        end -= 1
+    if end >= 0:
+        start = end
+        while start - 1 >= 0 and aligned(start - 1):
+            start -= 1
+        peak = max(range(start, last + 1), key=lambda i: closes[i])
+        run = {
+            "active": end == last,
+            "weeks": end - start + 1,
+            "startDate": dates[start], "startClose": closes[start],
+            "endDate": dates[end],
+            "peakDate": dates[peak], "peakClose": closes[peak],
+            "peakGainPct": round((closes[peak] / closes[start] - 1) * 100, 1),
+            "nowGainPct": round((closes[last] / closes[start] - 1) * 100, 1),
+            "fromPeakPct": round((closes[last] / closes[peak] - 1) * 100, 1),
+        }
+
+    # 차트는 기본 104주, 정배열 시작점이 더 과거면 거기까지 늘려서 시작 표시가 보이게 한다.
+    n = min(len(closes), max(CHART_WEEKS, (last - start + 10) if run else 0))
+    offset = len(closes) - n
+    if run:
+        run["startIdx"] = start - offset
+        run["peakIdx"] = peak - offset
+    sl = slice(offset, None)
     ma_last = {p: mas[p][last] for p in MA_PERIODS}
     return {
         "aligned": aligned(last),
         "streakWeeks": streak,
         "since": since,
+        "run": run,
         "price": closes[last],
         "asOf": dates[last],
         "mas": {str(p): round(v, 1) if v is not None else None for p, v in ma_last.items()},
