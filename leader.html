@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>주도주 분석</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card-bg: #ffffff; --text: #14161a; --sub: #6b7280; --border: #e5e7eb;
+    --up: #d92d20; --down: #2563eb; --flat: #6b7280; --accent: #2563eb;
+    --ma4: #f59e0b; --ma13: #a855f7; --ma26: #06b6d4; --ma52: #16a34a;
+    --tl-green: #16a34a; --tl-red: #dc2626; --tl-yellow: #eab308;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10; --card-bg: #15181d; --text: #f2f3f5; --sub: #9aa1ac; --border: #262a31;
+      --up: #f87171; --down: #60a5fa; --flat: #9aa1ac; --accent: #60a5fa;
+      --ma4: #fbbf24; --ma13: #c084fc; --ma26: #22d3ee; --ma52: #4ade80;
+      --tl-green: #4ade80; --tl-red: #f87171; --tl-yellow: #fbbf24;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; padding: 28px 20px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Apple SD Gothic Neo", Roboto, sans-serif;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  a.btn, button.btn {
+    border: 1px solid var(--border); background: var(--card-bg); color: var(--text); text-decoration: none;
+    font-size: 12.5px; padding: 6px 12px; border-radius: 999px; cursor: pointer; font-family: inherit;
+  }
+  a.btn:hover, button.btn:hover { border-color: var(--accent); color: var(--accent); }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; box-shadow: var(--shadow); margin-top: 16px; }
+  .card h2 { font-size: 14px; margin: 0 0 4px; }
+  .sub { font-size: 12px; color: var(--sub); line-height: 1.5; }
+  .search-row { display: flex; gap: 8px; margin-top: 12px; }
+  .search-row input {
+    flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 15px;
+  }
+  .search-row input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--text); cursor: pointer; }
+  .chip.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .error { color: var(--up); font-size: 13px; margin-top: 10px; display: none; line-height: 1.5; }
+  .error.show { display: block; }
+  .head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .name { font-size: 18px; font-weight: 700; }
+  .code { font-size: 12px; color: var(--sub); margin-left: 6px; }
+  .price { font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .badge {
+    display: inline-block; margin-top: 10px; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 700;
+    background: color-mix(in srgb, currentColor 14%, transparent); border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  }
+  .badge.green { color: var(--tl-green); } .badge.yellow { color: var(--tl-yellow); }
+  .badge.red { color: var(--tl-red); } .badge.gray { color: var(--sub); } .badge.blue { color: var(--accent); }
+  ul.reasons { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+  .scroll { overflow-x: auto; margin-top: 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 440px; }
+  th { text-align: right; color: var(--sub); font-weight: 600; font-size: 11px; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; font-weight: 600; }
+  th:first-child, td:first-child { text-align: left; }
+  tr:last-child td { border-bottom: none; }
+  tr.est td { color: var(--sub); background: color-mix(in srgb, var(--accent) 6%, transparent); }
+  td small { display: block; font-size: 10.5px; font-weight: 500; color: var(--sub); }
+  .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
+  canvas { width: 100%; height: 220px; display: block; margin-top: 12px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--sub); margin-top: 8px; }
+  .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .kv { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; margin-top: 10px; }
+  .kv b { font-variant-numeric: tabular-nums; }
+  footer { margin-top: 24px; font-size: 12px; color: var(--sub); line-height: 1.7; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>주도주 분석</h1>
+    <a class="btn" href="/">← 종가베팅 체크리스트</a>
+  </header>
+
+  <div class="card" style="margin-top:0;">
+    <h2>종목 조회</h2>
+    <div class="sub">영업이익률 변화율(실적)과 주봉 4-13-26-52 정배열로 주도주 단계를 가늠합니다.</div>
+    <div class="search-row">
+      <input type="text" id="q" placeholder="예: SK하이닉스" autocomplete="off" />
+      <button class="btn" id="go">조회</button>
+    </div>
+    <div class="chips" id="chips"></div>
+    <div class="error" id="err"></div>
+  </div>
+
+  <div id="result" class="hidden">
+    <div class="card">
+      <div class="head">
+        <div><span class="name" id="name">-</span><span class="code" id="code">-</span></div>
+        <div class="price" id="price">-</div>
+      </div>
+      <span class="badge gray" id="stage">-</span>
+      <ul class="reasons" id="reasons"></ul>
+    </div>
+
+    <div class="card">
+      <h2>분기 실적 — 영업이익률 변화율</h2>
+      <div class="sub">변화율 = (이번 영업이익률 − 비교 기간 영업이익률) ÷ 비교 기간 영업이익률. 괄호/작은 글씨는 %p 차이. 추정(E)은 컨센서스.</div>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr><th>분기</th><th>영업이익률</th><th>전분기 대비</th><th>전년동기 대비</th><th>매출액(억)</th><th>영업이익(억)</th></tr>
+          </thead>
+          <tbody id="qbody"></tbody>
+        </table>
+      </div>
+      <div class="sub" style="margin-top:8px;">기준값이 0 이하(적자)이거나 비교할 분기가 없으면 변화율은 “–”로 표시합니다.</div>
+    </div>
+
+    <div class="card">
+      <h2>주봉 4-13-26-52 이동평균</h2>
+      <div class="kv" id="wkv"></div>
+      <canvas id="chart"></canvas>
+      <div class="legend">
+        <span><i style="background:var(--up)"></i>종가</span>
+        <span><i style="background:var(--ma4)"></i>4주</span>
+        <span><i style="background:var(--ma13)"></i>13주</span>
+        <span><i style="background:var(--ma26)"></i>26주</span>
+        <span><i style="background:var(--ma52)"></i>52주</span>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    데이터: 네이버 금융(분기 실적·컨센서스, 주봉). 네이버 분기 실적은 최근 5개 분기 + 컨센서스 1개 분기만 제공해서,
+    “이익 증가율이 꺾였는지(가속/둔화)”는 컨센서스 분기와 직전 분기를 비교하는 잠정 판정입니다. 투자 판단의 근거로 사용하지 마세요.
+  </footer>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (n, d = 0) => n == null ? "–" : n.toLocaleString("ko-KR", { minimumFractionDigits: d, maximumFractionDigits: d });
+const sign = (n) => (n > 0 ? "+" : "");
+
+async function getJson(url) {
+  const res = await fetch(url, { cache: "no-store" });
+  if (res.status === 401) { location.href = "/login"; throw new Error("로그인이 필요합니다"); }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
+  return data;
+}
+
+function showError(msg) { $("err").textContent = msg; $("err").classList.toggle("show", !!msg); }
+
+function rateCell(rate, pp) {
+  if (rate == null && pp == null) return "<td>–</td>";
+  const cls = rate == null ? "flat" : rate > 0 ? "up" : rate < 0 ? "down" : "flat";
+  const main = rate == null ? "–" : `${sign(rate)}${fmt(rate, 1)}%`;
+  const sub = pp == null ? "" : `<small>${sign(pp)}${fmt(pp, 1)}%p</small>`;
+  return `<td class="${cls}">${main}${sub}</td>`;
+}
+
+function stageClass(label) {
+  if (/^[①②]/.test(label)) return "green";
+  if (/^③~④|^③/.test(label)) return "yellow";
+  if (/^④/.test(label)) return "red";
+  if (/^관찰/.test(label)) return "blue";
+  return "gray";
+}
+
+function drawChart(canvas, s) {
+  const ctx = canvas.getContext("2d");
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = w * dpr; canvas.height = h * dpr;
+  ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
+  const series = [
+    { v: s.ma52, c: cssVar("--ma52"), w: 1.5 }, { v: s.ma26, c: cssVar("--ma26"), w: 1.5 },
+    { v: s.ma13, c: cssVar("--ma13"), w: 1.5 }, { v: s.ma4, c: cssVar("--ma4"), w: 1.5 },
+    { v: s.close, c: cssVar("--up"), w: 2 },
+  ];
+  const all = series.flatMap((x) => x.v.filter((v) => v != null));
+  const min = Math.min(...all), max = Math.max(...all);
+  const padX = 4, padTop = 6, padBottom = 16, range = max - min || 1, n = s.close.length;
+  const X = (i) => padX + (i / (n - 1)) * (w - padX * 2);
+  const Y = (v) => padTop + (1 - (v - min) / range) * (h - padTop - padBottom);
+  series.forEach((x) => {
+    ctx.strokeStyle = x.c; ctx.lineWidth = x.w; ctx.beginPath();
+    let started = false;
+    x.v.forEach((v, i) => { if (v == null) return; if (!started) { ctx.moveTo(X(i), Y(v)); started = true; } else ctx.lineTo(X(i), Y(v)); });
+    ctx.stroke();
+  });
+  ctx.fillStyle = cssVar("--sub"); ctx.font = "10.5px -apple-system, sans-serif";
+  const lab = (d) => d.slice(0, 7);
+  ctx.textAlign = "left"; ctx.fillText(lab(s.dates[0]), padX, h - 3);
+  ctx.textAlign = "center"; ctx.fillText(lab(s.dates[Math.floor(n / 2)]), w / 2, h - 3);
+  ctx.textAlign = "right"; ctx.fillText(lab(s.dates[n - 1]), w - padX, h - 3);
+}
+
+function render(name, code, quote, a) {
+  $("name").textContent = name; $("code").textContent = code;
+  $("price").textContent = quote ? "₩" + fmt(Math.round(quote.price)) : "";
+  $("stage").textContent = a.stage.label;
+  $("stage").className = "badge " + stageClass(a.stage.label);
+  $("reasons").innerHTML = a.stage.reasons.map((r) => `<li>${r}</li>`).join("");
+
+  $("qbody").innerHTML = a.quarters.map((q) => `
+    <tr class="${q.estimate ? "est" : ""}">
+      <td>${q.period}${q.estimate ? " (E)" : ""}</td>
+      <td>${q.opm == null ? "–" : fmt(q.opm, 2) + "%"}</td>
+      ${rateCell(q.opmQoqRate, q.opmQoqPp)}${rateCell(q.opmYoyRate, q.opmYoyPp)}
+      <td>${fmt(q.revenue)}</td><td>${fmt(q.opIncome)}</td>
+    </tr>`).join("");
+
+  const w = a.weekly;
+  const dev = (v) => v == null ? "–" : `${sign(v)}${fmt(v, 1)}%`;
+  $("wkv").innerHTML = `
+    <span>정배열 <b class="${w.aligned ? "up" : "flat"}">${w.aligned ? `예 (${w.streakWeeks}주째, ${w.since}~)` : "아니오"}</b></span>
+    <span>4주선 대비 <b>${dev(w.priceVsMa4Pct)}</b></span>
+    <span>52주선 대비 <b>${w.priceVsMa52x == null ? "–" : w.priceVsMa52x + "배"}</b></span>
+    <span>4주 <b>${fmt(w.mas["4"])}</b></span><span>13주 <b>${fmt(w.mas["13"])}</b></span>
+    <span>26주 <b>${fmt(w.mas["26"])}</b></span><span>52주 <b>${fmt(w.mas["52"])}</b></span>
+    <span class="sub">기준 ${w.asOf}</span>`;
+  $("result").classList.remove("hidden");
+  drawChart($("chart"), w.series);
+}
+
+async function load(code, name) {
+  showError("");
+  $("go").disabled = true;
+  try {
+    const [a, quote] = await Promise.all([
+      getJson(`/api/leader?code=${encodeURIComponent(code)}`),
+      getJson(`/api/stock/quote?code=${encodeURIComponent(code)}`).catch(() => null),
+    ]);
+    render(name || quote?.name || code, code, quote, a);
+    history.replaceState(null, "", `/leader?code=${code}`);
+  } catch (e) {
+    $("result").classList.add("hidden");
+    showError(e.message);
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+async function search() {
+  const q = $("q").value.trim();
+  if (!q) return;
+  showError(""); $("chips").innerHTML = "";
+  $("go").disabled = true;
+  try {
+    const data = await getJson(`/api/stock/search?q=${encodeURIComponent(q)}`);
+    const items = data.items || [];
+    if (!items.length) { showError("검색 결과가 없습니다."); $("result").classList.add("hidden"); return; }
+    if (items.length > 1) {
+      $("chips").innerHTML = items.slice(0, 6).map((it, i) =>
+        `<button class="chip${i === 0 ? " active" : ""}" data-code="${it.code}" data-name="${it.name}">${it.name} ${it.code}</button>`).join("");
+      $("chips").querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => {
+        $("chips").querySelectorAll(".chip").forEach((x) => x.classList.toggle("active", x === c));
+        load(c.dataset.code, c.dataset.name);
+      }));
+    }
+    await load(items[0].code, items[0].name);
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    $("go").disabled = false;
+  }
+}
+
+$("go").addEventListener("click", search);
+$("q").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
+const initial = new URLSearchParams(location.search).get("code");
+if (initial) load(initial.toUpperCase());
+</script>
+</body>
+</html>

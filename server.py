@@ -16,6 +16,7 @@ import hashlib
 import hmac
 import http.server
 import json
+import leader
 import os
 import re
 import secrets
@@ -783,6 +784,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_trading_value()
         elif self.path.startswith("/api/market/breadth"):
             self.handle_market_breadth()
+        elif self.path.startswith("/api/leader"):
+            self.handle_leader()
+        elif urllib.parse.urlparse(self.path).path in ("/leader", "/leader.html"):
+            self.path = "/leader.html"
+            super().do_GET()
         elif urllib.parse.urlparse(self.path).path in ("/", "/index.html"):
             super().do_GET()
         else:
@@ -1188,6 +1194,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             send_telegram_message(text)
             self.send_json(200, {"ok": True})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_leader(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        try:
+            self.send_json(200, leader.analyze(code))
+        except leader.NoFinance as e:
+            self.send_json(404, {"error": str(e)})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
