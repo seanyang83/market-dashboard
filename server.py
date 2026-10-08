@@ -1771,8 +1771,13 @@ def _market_breadth_lines():
         return ["등락 종목수 데이터 없음"]
 
     def fmt(b):
-        bigger, smaller = ("상승", "하락") if b["up"] >= b["down"] else ("하락", "상승")
-        return f"{bigger} > {smaller} ({b['up']},{b['flat']},{b['down']})"
+        up, flat, down = b["up"], b["flat"], b["down"]
+        # 부등호가 많은 쪽을 가리키게: 하락이 많으면 "상승, 보합 < 하락", 상승이 많으면 "상승 > 보합, 하락".
+        if up > down:
+            return f"상승({up}) > 보합({flat}), 하락({down})"
+        if up < down:
+            return f"상승({up}), 보합({flat}) < 하락({down})"
+        return f"상승({up}), 보합({flat}) = 하락({down})"
 
     return [
         f"코스피 등락: {fmt(k)}",
