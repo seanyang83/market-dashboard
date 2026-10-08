@@ -60,6 +60,7 @@
   .badge.green { color: var(--tl-green); } .badge.yellow { color: var(--tl-yellow); }
   .badge.red { color: var(--tl-red); } .badge.gray { color: var(--sub); } .badge.blue { color: var(--accent); }
   ul.reasons { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+  .basis { display: flex; align-items: center; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
   .scroll { overflow-x: auto; margin-top: 10px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 470px; }
   th { text-align: right; color: var(--sub); font-weight: 600; font-size: 11px; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -92,7 +93,7 @@
 
   <div class="card" style="margin-top:0;">
     <h2>종목 조회</h2>
-    <div class="sub">영업이익률 변화율(실적)과 주봉 4-13-26-52 정배열로 주도주 단계를 가늠합니다.</div>
+    <div class="sub">영업이익 증가율(실적)과 주봉 4-13-26-52 정배열로 주도주 단계를 가늠합니다.</div>
     <div class="search-row">
       <input type="text" id="q" placeholder="예: SK하이닉스" autocomplete="off" />
       <button class="btn" id="go">조회</button>
@@ -107,23 +108,28 @@
         <div><span class="name" id="name">-</span><span class="code" id="code">-</span></div>
         <div class="price" id="price">-</div>
       </div>
+      <div class="basis">
+        <span class="sub">판정 기준</span>
+        <button class="chip active" id="basisYoy" data-basis="yoy">전년동기(YoY)</button>
+        <button class="chip" id="basisQoq" data-basis="qoq">전분기(QoQ)</button>
+      </div>
       <span class="badge gray" id="stage">-</span>
       <ul class="reasons" id="reasons"></ul>
     </div>
 
     <div class="card">
-      <h2>분기 실적 — 영업이익률 변화율</h2>
-      <div class="sub">변화율 = (이번 영업이익률 − 비교 기간 영업이익률) ÷ 비교 기간 영업이익률. 괄호/작은 글씨는 %p 차이. 추정(E)은 컨센서스.</div>
+      <h2>분기 실적 — 영업이익 증가율</h2>
+      <div class="sub">증가율 = (이번 분기 영업이익 − 비교 분기 영업이익) ÷ 비교 분기 영업이익. 비교 분기는 전년동기(YoY)와 전분기(QoQ) 두 가지. 가속 = 이번 증가율 − 직전 분기 증가율(%p). E는 컨센서스.</div>
       <div class="scroll">
         <table class="q">
           <thead>
-            <tr><th>분기</th><th>영업이익률</th><th>전년동기 대비</th><th>가속(%p)</th><th>전분기 대비</th><th>매출액(억)</th><th>영업이익(억)</th></tr>
+            <tr><th>분기</th><th>영업이익(억)</th><th>증가율 YoY</th><th>가속</th><th>증가율 QoQ</th><th>가속</th><th>영업이익률</th><th>매출액(억)</th></tr>
           </thead>
           <tbody id="qbody"></tbody>
         </table>
       </div>
-      <div class="sub" style="margin-top:8px;">가속 = 이번 분기 전년동기 변화율 − 직전 분기 전년동기 변화율(%p). “–”는 기준값이 0 이하(적자)이거나 비교할 분기가 없는 경우, ※는 비교 기준 영업이익률이 5% 미만이라 변화율이 부풀려진 값(가속/피크 판정에서 제외)입니다.</div>
-      <div class="sub" style="margin-top:14px;font-weight:700;">전년동기 대비 영업이익률 변화율 추이 (%)</div>
+      <div class="sub" style="margin-top:8px;">기준 분기가 적자면 증가율 대신 흑자전환/적자지속, 흑자였다가 적자가 되면 적자전환으로 표시합니다. ※는 비교 기준 분기의 영업이익률이 5% 미만이라 증가율이 부풀려진 값(가속/피크 판정에서 제외)입니다.</div>
+      <div class="sub" style="margin-top:14px;font-weight:700;" id="trendTitle">영업이익 증가율 추이 (%)</div>
       <canvas id="yoyChart" style="height:150px;"></canvas>
     </div>
 
@@ -153,7 +159,7 @@
 
   <footer>
     데이터: 네이버 금융(분기 실적·컨센서스, 주봉). 분기 이력은 한국투자증권 손익계산서(최대 30개 분기, 연 단위 누적값을 분기로 환산)를 쓰고, 최근 분기는 네이버 값을 우선합니다.
-    단계 판정은 영업이익률 전년동기 변화율의 추이(가속/피크아웃/음전환)에 주봉 정배열을 더한 참고용입니다. 투자 판단의 근거로 사용하지 마세요.
+    단계 판정은 영업이익 증가율(전년동기 또는 전분기 기준)의 추이(가속/피크아웃/음전환)에 주봉 정배열을 더한 참고용입니다. 투자 판단의 근거로 사용하지 마세요.
   </footer>
 </div>
 
@@ -176,21 +182,23 @@ function showError(msg) { $("err").textContent = msg; $("err").classList.toggle(
 function accelCell(v) {
   if (v == null) return "<td>–</td>";
   const cls = v > 0 ? "up" : v < 0 ? "down" : "flat";
-  return `<td class="${cls}">${sign(v)}${fmt(v, 1)}</td>`;
+  return `<td class="${cls}">${sign(v)}${fmt(v, 0)}</td>`;
+}
+
+function growthCell(rate, state, lowBase) {
+  if (rate == null) {
+    if (!state) return "<td>–</td>";
+    return `<td class="${state === "흑자전환" ? "up" : "down"}">${state}</td>`;
+  }
+  const cls = rate > 0 ? "up" : rate < 0 ? "down" : "flat";
+  const tag = state === "적자전환" ? "<small>적자전환</small>" : "";
+  return `<td class="${cls}">${sign(rate)}${fmt(rate, 1)}%${lowBase ? "※" : ""}${tag}</td>`;
 }
 
 // 표에는 최근 12개 실제 분기 + 컨센서스 분기를 보여준다 (계산은 전체 이력으로 이미 끝남).
 function shownQuarters(all) {
   const actual = all.filter((q) => !q.estimate).slice(-12);
   return actual.concat(all.filter((q) => q.estimate));
-}
-
-function rateCell(rate, pp, lowBase) {
-  if (rate == null && pp == null) return "<td>–</td>";
-  const cls = rate == null ? "flat" : rate > 0 ? "up" : rate < 0 ? "down" : "flat";
-  const main = rate == null ? "–" : `${sign(rate)}${fmt(rate, 1)}%${lowBase ? "※" : ""}`;
-  const sub = pp == null ? "" : `<small>${sign(pp)}${fmt(pp, 1)}%p</small>`;
-  return `<td class="${cls}">${main}${sub}</td>`;
 }
 
 function stageClass(label) {
@@ -201,15 +209,16 @@ function stageClass(label) {
   return "gray";
 }
 
-function drawYoyChart(canvas, qs) {
+function drawYoyChart(canvas, qs, basis) {
+  const rk = basis === "qoq" ? "opQoqRate" : "opYoyRate", lk = basis === "qoq" ? "opQoqLowBase" : "opYoyLowBase";
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
   canvas.width = w * dpr; canvas.height = h * dpr;
   ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-  const vals = qs.map((q) => q.opmYoyRate);
-  const okVals = qs.filter((q) => q.opmYoyRate != null && !q.opmYoyLowBase).map((q) => q.opmYoyRate);
-  if (okVals.length < 2) { ctx.fillStyle = cssVar("--sub"); ctx.font = "12px sans-serif"; ctx.fillText("표시할 변화율이 부족합니다", 8, 24); return; }
+  const vals = qs.map((q) => q[rk]);
+  const okVals = qs.filter((q) => q[rk] != null && !q[lk]).map((q) => q[rk]);
+  if (okVals.length < 2) { ctx.fillStyle = cssVar("--sub"); ctx.font = "12px sans-serif"; ctx.fillText("표시할 증가율이 부족합니다", 8, 24); return; }
   const max = Math.max(0, ...okVals);
   const floor = -Math.max(max, 50);               // 흑자→적자 전환 같은 극단값이 스케일을 먹지 않게 아래쪽을 제한
   const min = Math.max(Math.min(0, ...okVals), floor);
@@ -224,7 +233,7 @@ function drawYoyChart(canvas, qs) {
     const v = vals[i];
     const x = i * slot + (slot - bw) / 2;
     if (v == null) return;
-    if (q.opmYoyLowBase) {          // 기저 낮음: 회색 점선 막대로만 표시
+    if (q[lk]) {          // 기저 낮음: 회색 점선 막대로만 표시
       ctx.strokeStyle = cssVar("--sub"); ctx.setLineDash([2, 2]);
       ctx.strokeRect(x, padTop, bw, h - padTop - padBottom); ctx.setLineDash([]);
       return;
@@ -320,21 +329,34 @@ function drawChart(canvas, s, run) {
   ctx.textAlign = "right"; ctx.fillText(lab(s.dates[n - 1]), w - padX, h - 3);
 }
 
+let basis = "yoy", current = null;
+
+function applyBasis() {
+  if (!current) return;
+  const st = basis === "qoq" ? (current.stageQoq || current.stage) : current.stage;
+  $("stage").textContent = st.label;
+  $("stage").className = "badge " + stageClass(st.label);
+  $("reasons").innerHTML = st.reasons.map((r) => `<li>${r}</li>`).join("");
+  $("basisYoy").classList.toggle("active", basis === "yoy");
+  $("basisQoq").classList.toggle("active", basis === "qoq");
+  $("trendTitle").textContent = `영업이익 증가율 추이 — ${basis === "qoq" ? "전분기 대비" : "전년동기 대비"} (%)`;
+  if (!$("result").classList.contains("hidden")) drawYoyChart($("yoyChart"), shownQuarters(current.quarters), basis);
+}
+
 function render(name, code, quote, a) {
   $("name").textContent = name; $("code").textContent = code;
   $("price").textContent = quote ? "₩" + fmt(Math.round(quote.price)) : "";
-  $("stage").textContent = a.stage.label;
-  $("stage").className = "badge " + stageClass(a.stage.label);
-  $("reasons").innerHTML = a.stage.reasons.map((r) => `<li>${r}</li>`).join("");
+  current = a;
+  applyBasis();
 
   const shown = shownQuarters(a.quarters);
   $("qbody").innerHTML = shown.map((q) => `
     <tr class="${q.estimate ? "est" : ""}">
       <td>${q.period.slice(2)}${q.estimate ? "E" : ""}</td>
-      <td>${q.opm == null ? "–" : fmt(q.opm, 1) + "%"}</td>
-      ${rateCell(q.opmYoyRate, q.opmYoyPp, q.opmYoyLowBase)}${accelCell(q.opmYoyAccel)}
-      ${rateCell(q.opmQoqRate, q.opmQoqPp)}
-      <td>${fmt(q.revenue)}</td><td>${fmt(q.opIncome)}</td>
+      <td>${fmt(q.opIncome)}</td>
+      ${growthCell(q.opYoyRate, q.opYoyState, q.opYoyLowBase)}${accelCell(q.opYoyAccel)}
+      ${growthCell(q.opQoqRate, q.opQoqState, q.opQoqLowBase)}${accelCell(q.opQoqAccel)}
+      <td>${q.opm == null ? "–" : fmt(q.opm, 1) + "%"}</td><td>${fmt(q.revenue)}</td>
     </tr>`).join("");
 
   const w = a.weekly;
@@ -369,7 +391,7 @@ function render(name, code, quote, a) {
   }
   $("result").classList.remove("hidden");
   drawChart($("chart"), w.series, run);
-  drawYoyChart($("yoyChart"), shown);
+  drawYoyChart($("yoyChart"), shown, basis);
 }
 
 async function load(code, name) {
@@ -415,6 +437,7 @@ async function search() {
   }
 }
 
+["basisYoy", "basisQoq"].forEach((id) => $(id).addEventListener("click", () => { basis = $(id).dataset.basis; applyBasis(); }));
 $("go").addEventListener("click", search);
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
 const initial = new URLSearchParams(location.search).get("code");

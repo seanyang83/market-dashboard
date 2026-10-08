@@ -108,26 +108,47 @@ def _fetch_finance(code):
     return quarters
 
 
+def _growth(cur, base):
+    """영업이익 증가율(%)과 상태 라벨. -> (rate, state)
+    base > 0: 증가율을 계산하고, 이번에 적자면 state는 "적자전환".
+    base <= 0(적자/0): 증가율은 의미가 없어 None, 이번에 흑자면 "흑자전환", 아니면 "적자지속"."""
+    if cur is None or base is None:
+        return None, None
+    if base > 0:
+        return round((cur - base) / base * 100, 1), ("적자전환" if cur < 0 else None)
+    if cur > 0:
+        return None, "흑자전환"
+    return (None, None) if cur == 0 and base == 0 else (None, "적자지속")
+
+
 def _compute_rates(quarters):
-    """분기 리스트(키 오름차순)에 전분기/전년동기 변화율과 '변화율의 변화(가속도)'를 채운다.
-    비교 분기는 인덱스가 아니라 키(YYYYMM) 산술로 찾는다."""
+    """분기 리스트(키 오름차순)에 영업이익 증가율(전년동기 YoY / 전분기 QoQ)과 그 가속도
+    (증가율의 변화, %p)를 채운다. 비교 분기는 인덱스가 아니라 키(YYYYMM) 산술로 찾는다.
+    영업이익률(opm)과 그 변화는 성장의 질을 보는 보조 지표로 같이 남긴다."""
     by_key = {q["key"]: q for q in quarters}
+
+    def low_base(prev):
+        # 비교 기준 영업이익률이 5% 미만이면 증가율이 수백~수천 %로 부풀어 의미가 없다.
+        return bool(prev and prev["opm"] is not None and 0 < prev["opm"] < LOW_BASE_OPM)
+
     for q in quarters:
         prev_q = by_key.get(_shift_key(q["key"], -3))
         prev_y = by_key.get(_shift_key(q["key"], -12))
-        q["opmQoqRate"] = _rate(q["opm"], prev_q["opm"]) if prev_q else None
-        q["opmQoqPp"] = _pp(q["opm"], prev_q["opm"]) if prev_q else None
-        q["opmYoyRate"] = _rate(q["opm"], prev_y["opm"]) if prev_y else None
-        # 비교 기준 영업이익률이 5% 미만이면 변화율이 수백~수천 %로 부풀어 의미가 없다.
-        q["opmYoyLowBase"] = bool(prev_y and prev_y["opm"] is not None and 0 < prev_y["opm"] < LOW_BASE_OPM)
-        q["opmYoyPp"] = _pp(q["opm"], prev_y["opm"]) if prev_y else None
+        q["opYoyRate"], q["opYoyState"] = _growth(q["opIncome"], prev_y["opIncome"]) if prev_y else (None, None)
+        q["opQoqRate"], q["opQoqState"] = _growth(q["opIncome"], prev_q["opIncome"]) if prev_q else (None, None)
+        q["opYoyLowBase"] = low_base(prev_y)
+        q["opQoqLowBase"] = low_base(prev_q)
         q["revenueYoyRate"] = _rate(q["revenue"], prev_y["revenue"]) if prev_y else None
-        q["opIncomeYoyRate"] = _rate(q["opIncome"], prev_y["opIncome"]) if prev_y else None
+        q["opmYoyPp"] = _pp(q["opm"], prev_y["opm"]) if prev_y else None
+        q["opmQoqPp"] = _pp(q["opm"], prev_q["opm"]) if prev_q else None
     for q in quarters:
         prev_q = by_key.get(_shift_key(q["key"], -3))
-        cur, prev = q["opmYoyRate"], prev_q["opmYoyRate"] if prev_q else None
-        usable = cur is not None and prev is not None and not q["opmYoyLowBase"] and not prev_q["opmYoyLowBase"]
-        q["opmYoyAccel"] = round(cur - prev, 1) if usable else None
+        for name in ("Yoy", "Qoq"):
+            cur = q[f"op{name}Rate"]
+            prev = prev_q[f"op{name}Rate"] if prev_q else None
+            usable = (cur is not None and prev is not None
+                      and not q[f"op{name}LowBase"] and not prev_q[f"op{name}LowBase"])
+            q[f"op{name}Accel"] = round(cur - prev, 1) if usable else None
     return quarters
 
 
@@ -302,56 +323,75 @@ def _weekly_analysis(weekly):
     }
 
 
-def _earnings_state(quarters):
-    """영업이익률 '전년동기 대비 변화율'의 추이로 실적 단계를 판정한다.
+BASIS = {
+    "yoy": {"name": "전년동기", "rate": "opYoyRate", "state": "opYoyState", "low": "opYoyLowBase", "accel": "opYoyAccel"},
+    "qoq": {"name": "전분기", "rate": "opQoqRate", "state": "opQoqState", "low": "opQoqLowBase", "accel": "opQoqAccel"},
+}
+
+
+def _earnings_state(quarters, basis="yoy"):
+    """영업이익 증가율(전년동기 또는 전분기)의 추이로 실적 단계를 판정한다.
     반환: (state, reasons). state: 가속 / 둔화 / 피크아웃 / 음전환 / 악화 / 증가 / None."""
-    actual = [q for q in quarters if not q["estimate"] and q["opm"] is not None]
-    est = next((q for q in quarters if q["estimate"] and q["opmYoyRate"] is not None), None)
+    b = BASIS[basis]
+    actual = [q for q in quarters if not q["estimate"] and q["opIncome"] is not None]
+    est = next((q for q in quarters if q["estimate"] and q[b["rate"]] is not None), None)
     if not actual:
         return None, ["실제 분기 실적이 없어 실적 상태를 판단할 수 없습니다"]
     latest = actual[-1]
-    yoy = latest["opmYoyRate"]
-    if yoy is None:
-        return None, [f"{latest['period']} 영업이익률의 전년동기 대비 변화율을 구할 수 없습니다 (비교 기간 없음 또는 적자 기저)"]
+    g, gstate = latest[b["rate"]], latest[b["state"]]
+    nm = b["name"]
 
-    reasons = [f"{latest['period']} 영업이익률 전년동기 대비 {yoy:+.1f}%"]
-    series = [(q["period"], q["opmYoyRate"]) for q in actual if q["opmYoyRate"] is not None and not q["opmYoyLowBase"]]
-    if latest["opmYoyLowBase"]:
-        reasons.append("비교 기준 영업이익률이 5% 미만이라 변화율이 부풀려져 있습니다 (가속/둔화 판정에서 제외)")
-        return None, reasons
-    recent = series[-8:]
-    prev_yoy = series[-2][1] if len(series) >= 2 else None
+    if g is None:
+        if gstate == "흑자전환":
+            return "가속", [f"{latest['period']} 영업이익 {nm} 대비 흑자전환 (이익 개선 초기 신호)"]
+        if gstate == "적자전환":
+            return "음전환", [f"{latest['period']} 영업이익 {nm} 대비 적자전환"]
+        if gstate == "적자지속":
+            return "악화", [f"{latest['period']} 영업이익 적자 지속"]
+        return None, [f"{latest['period']} 영업이익 {nm} 증가율을 구할 수 없습니다 (비교 기간 없음)"]
+    if latest[b["low"]]:
+        return None, [f"{latest['period']} 영업이익 {nm} 증가율 {g:+.1f}% — 비교 기준 영업이익률이 5% 미만이라 증가율이 부풀려져 있어 가속/둔화 판정에서 제외합니다"]
 
-    if yoy <= 0:
-        state = "음전환" if prev_yoy is not None and prev_yoy > 0 else "악화"
-        reasons.append("전년동기 대비 변화율이 " + ("직전 분기 플러스에서 마이너스로 음전환했습니다" if state == "음전환" else "계속 마이너스입니다"))
+    reasons = [f"{latest['period']} 영업이익 {nm} 대비 {g:+.1f}%"]
+    series = [(q["period"], q[b["rate"]]) for q in actual if q[b["rate"]] is not None and not q[b["low"]]]
+    prev_g = series[-2][1] if len(series) >= 2 and series[-2][0] != latest["period"] else None
+    prev_period = series[-2][0] if prev_g is not None else None
+
+    if g <= 0:
+        state = "음전환" if prev_g is not None and prev_g > 0 else "악화"
+        reasons.append("영업이익이 " + nm + " 대비 " + ("플러스 증가에서 감소로 음전환했습니다" if state == "음전환" else "계속 감소 중입니다"))
         return state, reasons
 
-    if prev_yoy is None:
+    if prev_g is None:
         state = "증가"
-        reasons.append("비교할 직전 분기 변화율이 없어 가속/둔화는 판단하지 못했습니다")
+        reasons.append("비교할 직전 분기 증가율이 없어 가속/둔화는 판단하지 못했습니다")
     else:
-        peak_period, peak = max(recent, key=lambda x: x[1])
-        accel = round(yoy - prev_yoy, 1)
-        reasons.append(f"직전 분기 {prev_yoy:+.1f}% → 이번 분기 {yoy:+.1f}% ({accel:+.1f}%p)")
+        accel = round(g - prev_g, 1)
+        peak_period, peak = max(series[-8:], key=lambda x: x[1])
+        reasons.append(f"증가율 {prev_period} {prev_g:+.1f}% → {latest['period']} {g:+.1f}% (가속도 {accel:+.1f}%p)")
+        prev_accel = None
+        if len(series) >= 3:
+            prev_accel = round(prev_g - series[-3][1], 1)
         if accel >= 0:
             state = "가속"
-        elif prev_yoy >= peak and yoy < prev_yoy:
+        elif prev_g >= peak:
             state = "피크아웃"
-            reasons.append(f"최근 8개 분기 중 변화율 최고점은 {peak_period}({peak:+.1f}%)였고 이번 분기 처음 꺾였습니다")
+            reasons.append(f"최근 8개 분기 중 증가율 최고점은 {peak_period}({peak:+.1f}%)였고 이번 분기 처음 꺾였습니다")
         else:
             state = "둔화"
             reasons.append(f"최근 8개 분기 최고점({peak_period} {peak:+.1f}%) 대비 낮아진 상태입니다")
+        if prev_accel is not None and prev_accel > 0 > accel:
+            reasons.append("증가율의 가속도(델타)가 플러스에서 마이너스로 전환했습니다")
     if est is not None:
-        direction = "높아질" if est["opmYoyRate"] > yoy else "낮아질"
-        reasons.append(f"컨센서스 {est['period']} 전년동기 대비 {est['opmYoyRate']:+.1f}% — 이번 분기보다 {direction} 전망")
-        if est["opmYoyRate"] < yoy:
-            reasons.append("⚠ 컨센서스상 다음 분기는 변화율이 꺾일 전망 (피크아웃 임박 가능성)")
+        direction = "높아질" if est[b["rate"]] > g else "낮아질"
+        reasons.append(f"컨센서스 {est['period']} 영업이익 {nm} 대비 {est[b['rate']]:+.1f}% — 이번 분기보다 {direction} 전망")
+        if est[b["rate"]] < g:
+            reasons.append("⚠ 컨센서스상 다음 분기는 증가율이 꺾일 전망 (피크아웃 임박 가능성)")
     return state, reasons
 
 
-def _judge(quarters, weekly):
-    earn, reasons = _earnings_state(quarters)
+def _judge(quarters, weekly, basis="yoy"):
+    earn, reasons = _earnings_state(quarters, basis)
     aligned, streak = weekly["aligned"], weekly["streakWeeks"]
     if aligned:
         reasons.append(f"주봉 4>13>26>52 정배열 {streak}주째 ({weekly['since']}부터)")
@@ -366,15 +406,15 @@ def _judge(quarters, weekly):
         else:
             label = "② 추세 장기화 — 정배열 2년 초과, 둔화 여부 주시"
     elif earn in ("피크아웃", "둔화") and aligned:
-        label = f"③ 둔화 주의 (영업이익률 변화율 {earn}, 정배열은 유지 중)"
+        label = f"③ 둔화 주의 (영업이익 증가율 {earn}, 정배열은 유지 중)"
     elif earn in ("음전환", "악화") and aligned:
-        label = f"④ 종료 경고 (영업이익률 변화율 {earn}, 정배열은 아직 유지)"
+        label = f"④ 종료 경고 (영업이익 증가율 {earn}, 정배열은 아직 유지)"
     elif earn in ("가속", "증가"):
         label = "관찰 (실적은 좋아지지만 아직 정배열 아님)"
     elif earn in ("피크아웃", "둔화"):
         label = f"③~④ {earn} + 정배열 이탈 (조정 또는 종료 구간 의심)"
     elif earn in ("음전환", "악화"):
-        label = f"④ 종료 (영업이익률 변화율 {earn} + 정배열 아님)"
+        label = f"④ 종료 (영업이익 증가율 {earn} + 정배열 아님)"
     else:
         label = "판정 보류 (실적 데이터 부족)"
     if earn in ("가속", "증가") and any(r.startswith("⚠ 컨센서스") for r in reasons):
@@ -416,15 +456,19 @@ def analyze(code, kis_get=None):
     quarters = _compute_rates(_merge_quarters(naver, kis))
     weekly_raw = _cached(("wk", code), WEEKLY_TTL, lambda: _fetch_weekly_closes(code))
     weekly = _weekly_analysis(weekly_raw)
-    stage = _judge(quarters, weekly)
-    if history_note:
-        stage["reasons"].append(history_note)
+    stage = _judge(quarters, weekly, "yoy")
+    stage_qoq = _judge(quarters, weekly, "qoq")
+    for st in (stage, stage_qoq):
+        if history_note:
+            st["reasons"].append(history_note)
     if mismatched:
-        stage["reasons"].append(
-            f"※ 한투 이력과 네이버 값이 {', '.join(mismatched)}에서 어긋납니다 (사업 분할·재분류로 과거 분기가 소급 수정된 종목일 수 있음) — 과거 분기 변화율은 참고만 하세요")
+        for st in (stage, stage_qoq):
+            st["reasons"].append(
+            f"※ 한투 이력과 네이버 값이 {', '.join(mismatched)}에서 어긋납니다 (사업 분할·재분류로 과거 분기가 소급 수정된 종목일 수 있음) — 과거 분기 증가율은 참고만 하세요")
     return {
         "code": code,
         "quarters": quarters,
         "weekly": weekly,
         "stage": stage,
+        "stageQoq": stage_qoq,
     }
