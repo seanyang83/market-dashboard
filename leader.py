@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 
 HEADERS = {"User-Agent": "Mozilla/5.0", "Referer": "https://m.stock.naver.com"}
 FINANCE_URL = "https://m.stock.naver.com/api/stock/{code}/finance/quarter"
+DISCLOSURE_URL = "https://m.stock.naver.com/api/stock/{code}/disclosure?page=1&pageSize=500"
 SISE_URL = "https://api.finance.naver.com/siseJson.naver"
 FINANCE_TTL = 6 * 3600  # 분기에 한 번 바뀌는 데이터
 WEEKLY_TTL = 600
@@ -108,6 +109,45 @@ def _fetch_finance(code):
             "netIsParent": True,
         })
     return quarters
+
+
+def _month_end(key):
+    y, m = int(key[:4]), int(key[4:6])
+    return datetime(y + m // 12, m % 12 + 1, 1) - timedelta(days=1)
+
+
+def _fetch_release_dates(code, keys):
+    """네이버 공시 목록에서 분기별 실적 발표일(영업(잠정)실적 공정공시의 최초 공시일)을 찾는다.
+    정정 공시는 제외하고, 잠정실적이 없으면 매출액·손익구조 변동 공시로 대신한다.
+    공시일이 분기말 이후 110일 안이면 그 분기의 것으로 본다. -> {key: "YYYY-MM-DD"}"""
+    url = DISCLOSURE_URL.format(code=code)
+    req = urllib.request.Request(url, headers=HEADERS)
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        rows = json.loads(resp.read())
+    ends = {k: _month_end(k) for k in keys}
+    primary, fallback = {}, {}
+    for r in rows:
+        title = r.get("title") or ""
+        if "정정" in title:
+            continue
+        if "영업" in title and "잠정" in title and "실적" in title:
+            bucket = primary
+        elif "손익구조" in title and "자회사" not in title:
+            bucket = fallback
+        else:
+            continue
+        try:
+            d = datetime.strptime(r["datetime"][:10], "%Y-%m-%d")
+        except (KeyError, ValueError):
+            continue
+        cands = [k for k, e in ends.items() if e < d <= e + timedelta(days=110)]
+        if not cands:
+            continue
+        k = max(cands)
+        day = d.strftime("%Y-%m-%d")
+        if k not in bucket or day < bucket[k]:
+            bucket[k] = day
+    return {k: primary.get(k) or fallback.get(k) for k in keys if primary.get(k) or fallback.get(k)}
 
 
 def _growth(cur, base):
@@ -339,97 +379,120 @@ BASIS = {
 }
 
 
+def _sp(period):
+    """2026.06 -> 26.06"""
+    return period[2:]
+
+
 def _earnings_state(quarters, basis="yoy"):
-    """영업이익 증가율(전년동기 또는 전분기)의 추이로 실적 단계를 판정한다.
-    반환: (state, reasons). state: 가속 / 둔화 / 피크아웃 / 음전환 / 악화 / 증가 / None."""
+    """영업이익 증가율(전년동기 또는 전분기)의 추이로 실적 상태를 판정한다.
+    반환: (state, line, flags). state: 가속 / 둔화 / 피크아웃 / 음전환 / 악화 / 증가 / None.
+    line은 화면에 그대로 쓰는 한 줄 요약, flags는 붉은 글씨로 강조할 주요 사항."""
     b = BASIS[basis]
     actual = [q for q in quarters if not q["estimate"] and q["opIncome"] is not None]
     est = next((q for q in quarters if q["estimate"] and q[b["rate"]] is not None), None)
     if not actual:
-        return None, ["실제 분기 실적이 없어 실적 상태를 판단할 수 없습니다"]
+        return None, "실제 분기 실적 없음", []
     latest = actual[-1]
     g, gstate = latest[b["rate"]], latest[b["state"]]
-    nm = b["name"]
+    pn = _sp(latest["period"])
 
     if g is None:
         if gstate == "흑자전환":
-            return "가속", [f"{latest['period']} 영업이익 {nm} 대비 흑자전환 (이익 개선 초기 신호)"]
+            return "가속", f"{pn} 흑자전환", []
         if gstate == "적자전환":
-            return "음전환", [f"{latest['period']} 영업이익 {nm} 대비 적자전환"]
+            return "음전환", f"{pn} 적자전환", ["영업이익 적자전환"]
         if gstate == "적자지속":
-            return "악화", [f"{latest['period']} 영업이익 적자 지속"]
-        return None, [f"{latest['period']} 영업이익 {nm} 증가율을 구할 수 없습니다 (비교 기간 없음)"]
+            return "악화", f"{pn} 적자 지속", ["영업이익 적자 지속"]
+        return None, f"{pn} 비교 분기 없음", []
     if latest[b["low"]]:
-        return None, [f"{latest['period']} 영업이익 {nm} 증가율 {g:+.1f}% — 비교 기준 영업이익률이 5% 미만이라 증가율이 부풀려져 있어 가속/둔화 판정에서 제외합니다"]
+        return None, f"{pn} {g:+,.1f}% · 기저 낮아(※) 판정 제외", []
 
-    reasons = [f"{latest['period']} 영업이익 {nm} 대비 {g:+.1f}%"]
     series = [(q["period"], q[b["rate"]]) for q in actual if q[b["rate"]] is not None and not q[b["low"]]]
     prev_g = series[-2][1] if len(series) >= 2 and series[-2][0] != latest["period"] else None
-    prev_period = series[-2][0] if prev_g is not None else None
+    flags = []
 
     if g <= 0:
         state = "음전환" if prev_g is not None and prev_g > 0 else "악화"
-        reasons.append("영업이익이 " + nm + " 대비 " + ("플러스 증가에서 감소로 음전환했습니다" if state == "음전환" else "계속 감소 중입니다"))
-        return state, reasons
+        flags.append("영업이익 감소 전환" if state == "음전환" else "영업이익 감소 지속")
+        return state, f"{pn} {g:+,.1f}%" + (f" (직전 {prev_g:+,.1f}%)" if prev_g is not None else ""), flags
 
+    line = f"{pn} {g:+,.1f}%"
     if prev_g is None:
         state = "증가"
-        reasons.append("비교할 직전 분기 증가율이 없어 가속/둔화는 판단하지 못했습니다")
     else:
         accel = round(g - prev_g, 1)
         peak_period, peak = max(series[-8:], key=lambda x: x[1])
-        reasons.append(f"증가율 {prev_period} {prev_g:+.1f}% → {latest['period']} {g:+.1f}% (가속도 {accel:+.1f}%p)")
-        prev_accel = None
-        if len(series) >= 3:
-            prev_accel = round(prev_g - series[-3][1], 1)
+        line += f" (직전 {prev_g:+,.1f}%, 가속 {accel:+,.1f}%p)"
+        prev_accel = round(prev_g - series[-3][1], 1) if len(series) >= 3 else None
         if accel >= 0:
             state = "가속"
         elif prev_g >= peak:
             state = "피크아웃"
-            reasons.append(f"최근 8개 분기 중 증가율 최고점은 {peak_period}({peak:+.1f}%)였고 이번 분기 처음 꺾였습니다")
+            flags.append(f"피크아웃 — 최근 8분기 최고({_sp(peak_period)} {peak:+,.0f}%)에서 처음 꺾임")
         else:
             state = "둔화"
-            reasons.append(f"최근 8개 분기 최고점({peak_period} {peak:+.1f}%) 대비 낮아진 상태입니다")
+            flags.append(f"최고({_sp(peak_period)} {peak:+,.0f}%) 대비 둔화")
         if prev_accel is not None and prev_accel > 0 > accel:
-            reasons.append("증가율의 가속도(델타)가 플러스에서 마이너스로 전환했습니다")
+            flags.append("가속도 플러스→마이너스")
     if est is not None:
-        direction = "높아질" if est[b["rate"]] > g else "낮아질"
-        reasons.append(f"컨센서스 {est['period']} 영업이익 {nm} 대비 {est[b['rate']]:+.1f}% — 이번 분기보다 {direction} 전망")
+        line += f" · 다음 E {est[b['rate']]:+,.1f}%"
         if est[b["rate"]] < g:
-            reasons.append("⚠ 컨센서스상 다음 분기는 증가율이 꺾일 전망 (피크아웃 임박 가능성)")
-    return state, reasons
+            flags.append("컨센서스상 다음 분기 둔화 전망")
+    return state, line, flags
+
+
+def _trend(ys, qs, weekly):
+    """YoY/QoQ 실적 상태와 주봉 정배열을 합친 한 줄 추세 판단. -> (text, tone)
+    tone: good / warn / bad / none"""
+    good, slow, bad = ("가속", "증가"), ("피크아웃", "둔화"), ("음전환", "악화")
+    if ys is None and qs is None:
+        return "판단 보류 (실적 데이터 부족)", "none"
+    if ys in bad or qs in bad:
+        text, tone = "실적 악화 — 주도주 이탈 의심", "bad"
+    elif ys in good and qs in good:
+        text, tone = "상승 가속 — 실적 모멘텀 강함", "good"
+    elif ys in good and qs in slow:
+        text, tone = "고성장은 유지, 분기 증가 속도는 둔화 — 정점 접근", "warn"
+    elif ys in slow and qs in good:
+        text, tone = "전년 대비로는 둔화, 직전 분기보다는 재가속 — 단기 반등", "warn"
+    elif ys in slow and qs in slow:
+        text, tone = "성장 둔화 — 정점 통과 가능성", "bad"
+    elif ys in good or qs in good:
+        text, tone = "실적 개선 중 (한쪽 기준만 가속)", "good"
+    else:
+        text, tone = "방향성 불분명", "none"
+    if weekly["aligned"]:
+        text += f" · 정배열 {weekly['streakWeeks']}주째"
+    else:
+        text += " · 정배열 아님"
+    return text, tone
 
 
 def _judge(quarters, weekly, basis="yoy"):
-    earn, reasons = _earnings_state(quarters, basis)
+    earn, line, flags = _earnings_state(quarters, basis)
+    tag = "YoY" if basis == "yoy" else "QoQ"
+    flags = [f"{tag} {f}" for f in flags]
     aligned, streak = weekly["aligned"], weekly["streakWeeks"]
-    if aligned:
-        reasons.append(f"주봉 4>13>26>52 정배열 {streak}주째 ({weekly['since']}부터)")
-    else:
-        reasons.append("주봉 4-13-26-52 정배열이 아닙니다")
+    run = weekly.get("run")
+    if not aligned and run and run.get("breakDate"):
+        flags.append(f"정배열 이탈 ({run['breakReason']})")
 
     if earn in ("가속", "증가") and aligned:
-        if streak <= 13:
-            label = "① 태동 (실적 가속 + 정배열 진입 초기)"
-        elif streak <= 104:
-            label = "② 추세 (실적 가속/증가 + 정배열 유지)"
-        else:
-            label = "② 추세 장기화 — 정배열 2년 초과, 둔화 여부 주시"
+        label = "① 태동" if streak <= 13 else "② 추세" if streak <= 104 else "② 추세 장기화"
     elif earn in ("피크아웃", "둔화") and aligned:
-        label = f"③ 둔화 주의 (영업이익 증가율 {earn}, 정배열은 유지 중)"
+        label = "③ 둔화 주의"
     elif earn in ("음전환", "악화") and aligned:
-        label = f"④ 종료 경고 (영업이익 증가율 {earn}, 정배열은 아직 유지)"
+        label = "④ 종료 경고"
     elif earn in ("가속", "증가"):
-        label = "관찰 (실적은 좋아지지만 아직 정배열 아님)"
+        label = "관찰 (정배열 전)"
     elif earn in ("피크아웃", "둔화"):
-        label = f"③~④ {earn} + 정배열 이탈 (조정 또는 종료 구간 의심)"
+        label = "③~④ 조정·종료 의심"
     elif earn in ("음전환", "악화"):
-        label = f"④ 종료 (영업이익 증가율 {earn} + 정배열 아님)"
+        label = "④ 종료"
     else:
-        label = "판정 보류 (실적 데이터 부족)"
-    if earn in ("가속", "증가") and any(r.startswith("⚠ 컨센서스") for r in reasons):
-        label += " · 컨센서스는 다음 분기 둔화 전망"
-    return {"label": label, "earnings": earn, "reasons": reasons}
+        label = "판정 보류"
+    return {"label": label, "earnings": earn, "line": line, "flags": flags}
 
 
 KIS_INCOME_PATH = "/uapi/domestic-stock/v1/finance/income-statement"
@@ -466,19 +529,28 @@ def analyze(code, kis_get=None):
     quarters = _compute_rates(_merge_quarters(naver, kis))
     weekly_raw = _cached(("wk", code), WEEKLY_TTL, lambda: _fetch_weekly_closes(code))
     weekly = _weekly_analysis(weekly_raw)
+    try:
+        dates = _cached(("rel", code), FINANCE_TTL, lambda: _fetch_release_dates(code, [q["key"] for q in quarters]))
+    except Exception:
+        dates = {}  # 발표일은 부가 정보 — 실패해도 분석은 계속
+    for q in quarters:
+        q["releaseDate"] = dates.get(q["key"])
     stage = _judge(quarters, weekly, "yoy")
     stage_qoq = _judge(quarters, weekly, "qoq")
-    for st in (stage, stage_qoq):
-        if history_note:
-            st["reasons"].append(history_note)
+    notes = [history_note] if history_note else []
     if mismatched:
-        for st in (stage, stage_qoq):
-            st["reasons"].append(
-            f"※ 한투 이력과 네이버 값이 {', '.join(mismatched)}에서 어긋납니다 (사업 분할·재분류로 과거 분기가 소급 수정된 종목일 수 있음) — 과거 분기 증가율은 참고만 하세요")
+        notes.append(f"한투 이력과 네이버 값이 {', '.join(mismatched)}에서 어긋남 (소급 수정 종목일 수 있어 과거 증가율은 참고만)")
+    text, tone = _trend(stage["earnings"], stage_qoq["earnings"], weekly)
+    flags = []
+    for f in stage["flags"] + stage_qoq["flags"]:
+        if f not in flags:
+            flags.append(f)
+    flags.sort(key=lambda f: f.startswith("정배열"))
     return {
         "code": code,
         "quarters": quarters,
         "weekly": weekly,
         "stage": stage,
         "stageQoq": stage_qoq,
+        "trend": {"text": text, "tone": tone, "flags": flags, "notes": notes},
     }

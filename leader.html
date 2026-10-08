@@ -60,7 +60,15 @@
   .badge.green { color: var(--tl-green); } .badge.yellow { color: var(--tl-yellow); }
   .badge.red { color: var(--tl-red); } .badge.gray { color: var(--sub); } .badge.blue { color: var(--accent); }
   ul.reasons { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
-  .basis { display: flex; align-items: center; gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+  .trend { font-size: 15px; font-weight: 700; margin-top: 10px; line-height: 1.5; }
+  .trend.good { color: var(--tl-green); } .trend.warn { color: var(--tl-yellow); } .trend.bad { color: var(--up); }
+  .brow { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .brow .bl { font-size: 11.5px; font-weight: 700; color: var(--sub); width: 28px; }
+  .brow .badge { margin-top: 0; padding: 3px 10px; font-size: 12px; }
+  .bline { font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  ul.flags { margin: 10px 0 0; padding-left: 18px; font-size: 13px; line-height: 1.7; color: var(--up); font-weight: 600; }
+  ul.flags:empty { display: none; }
+  .tt { margin-top: 12px; font-weight: 700; }
   .scroll { overflow-x: auto; margin-top: 10px; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; min-width: 470px; }
   th { text-align: right; color: var(--sub); font-weight: 600; font-size: 11px; padding: 4px 8px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
@@ -93,7 +101,6 @@
 
   <div class="card" style="margin-top:0;">
     <h2>종목 조회</h2>
-    <div class="sub">영업이익 증가율(실적)과 주봉 4-13-26-52 정배열로 주도주 단계를 가늠합니다.</div>
     <div class="search-row">
       <input type="text" id="q" placeholder="예: SK하이닉스" autocomplete="off" />
       <button class="btn" id="go">조회</button>
@@ -108,18 +115,15 @@
         <div><span class="name" id="name">-</span><span class="code" id="code">-</span></div>
         <div class="price" id="price">-</div>
       </div>
-      <div class="basis">
-        <span class="sub">판정 기준</span>
-        <button class="chip active" id="basisYoy" data-basis="yoy">전년동기(YoY)</button>
-        <button class="chip" id="basisQoq" data-basis="qoq">전분기(QoQ)</button>
-      </div>
-      <span class="badge gray" id="stage">-</span>
-      <ul class="reasons" id="reasons"></ul>
+      <div class="trend" id="trend"></div>
+      <div class="brow"><span class="bl">YoY</span><span class="badge gray" id="stageYoy">-</span><span class="bline" id="lineYoy"></span></div>
+      <div class="brow"><span class="bl">QoQ</span><span class="badge gray" id="stageQoq">-</span><span class="bline" id="lineQoq"></span></div>
+      <ul class="flags" id="flags"></ul>
+      <div class="sub" id="notes"></div>
     </div>
 
     <div class="card">
       <h2>분기 실적 — 영업이익 증가율</h2>
-      <div class="sub">증가율 = (이번 분기 영업이익 − 비교 분기 영업이익) ÷ 비교 분기 영업이익. 비교 분기는 전년동기(YoY)와 전분기(QoQ) 두 가지. 가속 = 이번 증가율 − 직전 분기 증가율(%p). E는 컨센서스.</div>
       <div class="scroll">
         <table class="q">
           <thead>
@@ -128,9 +132,11 @@
           <tbody id="qbody"></tbody>
         </table>
       </div>
-      <div class="sub" style="margin-top:8px;">기준 분기가 적자면 증가율 대신 흑자전환/적자지속, 흑자였다가 적자가 되면 적자전환으로 표시합니다. ※는 비교 기준 분기의 영업이익률이 5% 미만이라 증가율이 부풀려진 값(가속/피크 판정에서 제외)입니다. 순이익은 지배주주 귀속분이며, †는 지배/비지배 구분이 없는 당기순이익(한투 이력 구간, 네이버는 최근 약 5개 분기만 지배순이익 제공)이라 지배순이익과 다를 수 있다는 표시입니다.</div>
-      <div class="sub" style="margin-top:14px;font-weight:700;" id="trendTitle">영업이익 증가율 추이 (%)</div>
-      <canvas id="yoyChart" style="height:150px;"></canvas>
+      <div class="sub" style="margin-top:8px;">(괄호) 실적 발표일 · 증가율 = 비교 분기 대비, 가속 = 직전 분기 증가율 대비 변화(%p) · E 컨센서스 · ※ 비교 기준 이익률 5% 미만(판정 제외) · † 한투 당기순이익(지배 아님)</div>
+      <div class="sub tt">영업이익 증가율 — 전년동기(YoY)</div>
+      <canvas id="yoyChart" style="height:120px;"></canvas>
+      <div class="sub tt">영업이익 증가율 — 전분기(QoQ)</div>
+      <canvas id="qoqChart" style="height:120px;"></canvas>
     </div>
 
     <div class="card">
@@ -144,7 +150,6 @@
             <tbody id="runbody"></tbody>
           </table>
         </div>
-        <div class="sub" style="margin-top:6px;">날짜는 주봉 기준(YY.MM.DD), 상승률은 정배열 시작 종가 대비. 데드크로스 = 시작 이후 4주선이 13주선을 아래로 뚫은 첫 주.</div>
       </div>
       <canvas id="chart"></canvas>
       <div class="legend">
@@ -157,10 +162,7 @@
     </div>
   </div>
 
-  <footer>
-    데이터: 네이버 금융(분기 실적·컨센서스, 주봉). 분기 이력은 한국투자증권 손익계산서(최대 30개 분기, 연 단위 누적값을 분기로 환산)를 쓰고, 최근 분기는 네이버 값을 우선합니다.
-    단계 판정은 영업이익 증가율(전년동기 또는 전분기 기준)의 추이(가속/피크아웃/음전환)에 주봉 정배열을 더한 참고용입니다. 투자 판단의 근거로 사용하지 마세요.
-  </footer>
+  <footer>데이터: 네이버 금융, 한국투자증권. 참고용이며 투자 판단의 근거가 아닙니다.</footer>
 </div>
 
 <script>
@@ -203,7 +205,8 @@ function shownQuarters(all) {
 
 function stageClass(label) {
   if (/^[①②]/.test(label)) return "green";
-  if (/^③~④|^③/.test(label)) return "yellow";
+  if (/^③~④/.test(label)) return "red";
+  if (/^③/.test(label)) return "yellow";
   if (/^④/.test(label)) return "red";
   if (/^관찰/.test(label)) return "blue";
   return "gray";
@@ -329,30 +332,22 @@ function drawChart(canvas, s, run) {
   ctx.textAlign = "right"; ctx.fillText(lab(s.dates[n - 1]), w - padX, h - 3);
 }
 
-let basis = "yoy", current = null;
-
-function applyBasis() {
-  if (!current) return;
-  const st = basis === "qoq" ? (current.stageQoq || current.stage) : current.stage;
-  $("stage").textContent = st.label;
-  $("stage").className = "badge " + stageClass(st.label);
-  $("reasons").innerHTML = st.reasons.map((r) => `<li>${r}</li>`).join("");
-  $("basisYoy").classList.toggle("active", basis === "yoy");
-  $("basisQoq").classList.toggle("active", basis === "qoq");
-  $("trendTitle").textContent = `영업이익 증가율 추이 — ${basis === "qoq" ? "전분기 대비" : "전년동기 대비"} (%)`;
-  if (!$("result").classList.contains("hidden")) drawYoyChart($("yoyChart"), shownQuarters(current.quarters), basis);
-}
-
 function render(name, code, quote, a) {
   $("name").textContent = name; $("code").textContent = code;
   $("price").textContent = quote ? "₩" + fmt(Math.round(quote.price)) : "";
-  current = a;
-  applyBasis();
+  const trend = a.trend;
+  $("trend").textContent = trend.text; $("trend").className = "trend " + trend.tone;
+  [["Yoy", a.stage], ["Qoq", a.stageQoq]].forEach(([k, st]) => {
+    $("stage" + k).textContent = st.label; $("stage" + k).className = "badge " + stageClass(st.label);
+    $("line" + k).textContent = st.line;
+  });
+  $("flags").innerHTML = trend.flags.map((f) => `<li>${f}</li>`).join("");
+  $("notes").innerHTML = trend.notes.join("<br>");
 
   const shown = shownQuarters(a.quarters);
   $("qbody").innerHTML = shown.map((q) => `
     <tr class="${q.estimate ? "est" : ""}">
-      <td>${q.period.slice(2)}${q.estimate ? "E" : ""}</td>
+      <td>${q.period.slice(2)}${q.estimate ? "E" : ""}${q.releaseDate ? `<small>(${q.releaseDate.slice(5).replace("-", ".")})</small>` : ""}</td>
       <td>${fmt(q.revenue)}</td>${growthCell(q.revenueYoyRate)}${accelCell(q.revenueYoyAccel)}
       <td>${fmt(q.opIncome)}</td>
       ${growthCell(q.opYoyRate, q.opYoyState, q.opYoyLowBase)}${accelCell(q.opYoyAccel)}
@@ -392,7 +387,8 @@ function render(name, code, quote, a) {
   }
   $("result").classList.remove("hidden");
   drawChart($("chart"), w.series, run);
-  drawYoyChart($("yoyChart"), shown, basis);
+  drawYoyChart($("yoyChart"), shown, "yoy");
+  drawYoyChart($("qoqChart"), shown, "qoq");
 }
 
 async function load(code, name) {
@@ -438,7 +434,6 @@ async function search() {
   }
 }
 
-["basisYoy", "basisQoq"].forEach((id) => $(id).addEventListener("click", () => { basis = $(id).dataset.basis; applyBasis(); }));
 $("go").addEventListener("click", search);
 $("q").addEventListener("keydown", (e) => { if (e.key === "Enter") search(); });
 const initial = new URLSearchParams(location.search).get("code");
