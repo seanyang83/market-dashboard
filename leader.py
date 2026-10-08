@@ -300,6 +300,19 @@ def _judge(quarters, weekly):
     return {"label": label, "earnings": earn, "reasons": reasons}
 
 
+KIS_INCOME_PATH = "/uapi/domestic-stock/v1/finance/income-statement"
+
+
+def kis_income_raw(code, kis_get, div="1"):
+    """한투 국내주식 손익계산서(FHKST66430200). div "1"=분기(연 단위 누적), "0"=연간.
+    확인/디버그용으로 원본 응답을 그대로 돌려준다."""
+    return kis_get(
+        KIS_INCOME_PATH,
+        "FHKST66430200",
+        {"FID_DIV_CLS_CODE": div, "fid_cond_mrkt_div_code": "J", "fid_input_iscd": code},
+    )
+
+
 def analyze(code):
     quarters = _cached(("fin", code), FINANCE_TTL, lambda: _fetch_finance(code))
     weekly_raw = _cached(("wk", code), WEEKLY_TTL, lambda: _fetch_weekly_closes(code))

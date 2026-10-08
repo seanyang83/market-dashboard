@@ -610,6 +610,7 @@ DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "")
 AUTH_COOKIE = "dash_auth"
 AUTH_COOKIE_MAX_AGE = 30 * 24 * 3600
 KEY_PROTECTED_PREFIXES = (
+    "/api/ops/",
     "/api/telegram/send-summary",
     "/api/telegram/check-alert",
     "/api/telegram/announce",
@@ -784,6 +785,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_trading_value()
         elif self.path.startswith("/api/market/breadth"):
             self.handle_market_breadth()
+        elif self.path.startswith("/api/ops/kis-income"):
+            self.handle_ops_kis_income()
         elif self.path.startswith("/api/leader"):
             self.handle_leader()
         elif urllib.parse.urlparse(self.path).path in ("/leader", "/leader.html"):
@@ -1194,6 +1197,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             send_telegram_message(text)
             self.send_json(200, {"ok": True})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_ops_kis_income(self):
+        # 운영 확인용: 한투 손익계산서 원본 응답. TELEGRAM_SUMMARY_KEY로 보호.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        code = self.require_stock_code()
+        if not code:
+            return
+        try:
+            self.send_json(200, leader.kis_income_raw(code, kis_get, self.query_param("div") or "1"))
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
