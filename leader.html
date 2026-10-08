@@ -134,6 +134,7 @@
         </table>
       </div>
       <div class="sub" style="margin-top:8px;">(괄호) 실적 발표일 · 증가율 = 비교 분기 대비, 가속 = 직전 분기 증가율 대비 변화(%p) · E 컨센서스 · ※ 비교 기준 이익률 5% 미만(판정 제외) · † 한투 당기순이익(지배 아님)</div>
+      <div class="sub" id="peakNote" style="margin-top:10px;font-weight:600;"></div>
       <canvas id="fundChart" style="height:360px;"></canvas>
     </div>
 
@@ -207,6 +208,22 @@ function stageClass(label) {
   return "gray";
 }
 
+// 주가 고점 분기와 증가율 고점 분기의 시차를 한 줄로 요약한다.
+function peakNote(qs, price) {
+  const dates = price.dates || [];
+  if (!dates.length) return "";
+  const first = new Date(+qs[0].key.slice(0, 4), +qs[0].key.slice(4, 6) - 3, 0).getTime();
+  let pi = -1;
+  dates.forEach((d, i) => { if (new Date(d).getTime() > first && (pi < 0 || price.close[i] > price.close[pi])) pi = i; });
+  if (pi < 0) return "";
+  const t = new Date(dates[pi]);
+  const qOf = (d) => { const m = d.getMonth() + 1; return `${String(d.getFullYear()).slice(2)}.${String(Math.ceil(m / 3) * 3).padStart(2, "0")}`; };
+  const peakOf = (rk, lk) => { const c = qs.filter((q) => !q.estimate && q[rk] != null && !q[lk]); return c.length ? c.reduce((a, b) => (b[rk] > a[rk] ? b : a)) : null; };
+  const qq = peakOf("opQoqRate", "opQoqLowBase"), yy = peakOf("opYoyRate", "opYoyLowBase");
+  const d = dates[pi].slice(2).replace(/-/g, ".");
+  return `주가 고점 ${d}(${qOf(t)} 분기) · 증가율 고점: QoQ ${qq ? qq.period.slice(2) : "–"}, YoY ${yy ? yy.period.slice(2) : "–"}`;
+}
+
 const BAD_STATES = ["피크아웃", "둔화", "음전환", "악화"];
 
 // 분기별 매출액·영업이익 막대와 주가(주봉 종가)를 같은 가로축(분기)에 맞춰 세 단으로 그린다.
@@ -248,9 +265,9 @@ function drawFundChart(canvas, qs, price) {
     }
     ctx.setLineDash([]);
   };
-  const bars = (key, top, label) => {
+  const bars = (key, top, label, fmtV, skipKey) => {
     guides(top); title(label, top);
-    const vals = qs.map((q) => q[key]);
+    const vals = qs.map((q) => (skipKey && q[skipKey] ? null : q[key]));
     const ok = vals.filter((v) => v != null);
     if (!ok.length) return;
     const max = Math.max(0, ...ok), min = Math.min(0, ...ok), range = max - min || 1;
@@ -260,6 +277,8 @@ function drawFundChart(canvas, qs, price) {
     ctx.strokeStyle = border; ctx.beginPath(); ctx.moveTo(padX, y0); ctx.lineTo(w - padX, y0); ctx.stroke();
     const bw = Math.max(slot * 0.6, 4);
     const peak = Math.max(...ok);
+    let lastActual = n - 1;
+    while (lastActual > 0 && qs[lastActual].estimate) lastActual--;
     vals.forEach((v, i) => {
       if (v == null) return;
       const x = padX + i * slot + (slot - bw) / 2;
@@ -267,18 +286,15 @@ function drawFundChart(canvas, qs, price) {
       ctx.fillStyle = v >= 0 ? up : down;
       ctx.fillRect(x, Math.min(y0, Y(v)), bw, Math.abs(Y(v) - y0) || 1);
       ctx.globalAlpha = 1;
-      if (v === peak || i === n - 1 || (i === n - 2 && qs[n - 1].estimate)) {
+      if (v === peak || i === lastActual) {
         ctx.fillStyle = txt; ctx.font = "bold 10px -apple-system, sans-serif"; ctx.textAlign = "center";
         const lx = Math.min(Math.max(x + bw / 2, 22), w - 22);
-        ctx.fillText(short(v), lx, v >= 0 ? Y(v) - 3 : Y(v) + 11);
+        ctx.fillText(fmtV(v), lx, v >= 0 ? Y(v) - 3 : Y(v) + 11);
       }
     });
   };
-  bars("revenue", 0, "매출액");
-  bars("opIncome", panelH + gap, "영업이익");
-
   // 주가: 같은 가로축 위에 주봉 종가 선. 실적 발표일은 연한 세로 눈금.
-  const top3 = (panelH + gap) * 2;
+  const top3 = 0;
   guides(top3); title("주가 (주봉 종가)", top3);
   const pts = [];
   (price.dates || []).forEach((d, i) => { const x = xOfDate(d); if (x != null) pts.push([x, price.close[i], d]); });
@@ -305,6 +321,16 @@ function drawFundChart(canvas, qs, price) {
     if (peakPt !== last) ctx.fillText(fmtP(last[1]), Math.min(Math.max(last[0], 24), w - 24), Y(last[1]) + 13);
   }
 
+  const pct = (v) => `${v > 0 ? "+" : ""}${Math.round(v).toLocaleString("ko-KR")}%`;
+  bars("opQoqRate", panelH + gap, "영업이익 증가율 QoQ (전분기 대비)", pct, "opQoqLowBase");
+  bars("opYoyRate", (panelH + gap) * 2, "영업이익 증가율 YoY (전년동기 대비)", pct, "opYoyLowBase");
+  // 주가 고점이 있는 분기를 세 단에 걸쳐 연하게 칠해, 그 분기에 증가율이 어땠는지 바로 보이게 한다.
+  if (pts.length > 1) {
+    const pk = pts.reduce((a, b) => (b[1] > a[1] ? b : a));
+    const qi = Math.min(n - 1, Math.max(0, Math.floor((pk[0] - padX) / slot)));
+    ctx.globalAlpha = 0.07; ctx.fillStyle = txt;
+    ctx.fillRect(padX + qi * slot, 0, slot, h - axisH); ctx.globalAlpha = 1;
+  }
   ctx.fillStyle = sub; ctx.font = "10px -apple-system, sans-serif"; ctx.textAlign = "center";
   qs.forEach((q, i) => {
     if (i % 2 === (n - 1) % 2) ctx.fillText(q.period.slice(2) + (q.estimate ? "E" : ""), Math.min(Math.max(padX + i * slot + slot / 2, 14), w - 16), h - 4);
@@ -438,6 +464,7 @@ function render(name, code, quote, a) {
   $("result").classList.remove("hidden");
   drawChart($("chart"), w.series, run);
   drawFundChart($("fundChart"), shown, a.priceWeekly || {});
+  $("peakNote").textContent = peakNote(shown, a.priceWeekly || {});
 }
 
 async function load(code, name) {
