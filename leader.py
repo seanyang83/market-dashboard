@@ -570,6 +570,8 @@ def analyze(code, kis_get=None):
         "code": code,
         "quarters": quarters,
         "weekly": weekly,
+        # 분기 실적 차트와 나란히 그리는 주가(주봉 종가). 표시 분기(최근 12개+E)를 덮도록 4년치.
+        "priceWeekly": {"dates": [d for d, _ in weekly_raw[-210:]], "close": [c for _, c in weekly_raw[-210:]]},
         "stage": stage,
         "stageQoq": stage_qoq,
         "trend": {"text": text, "tone": tone, "flags": flags, "notes": notes},
