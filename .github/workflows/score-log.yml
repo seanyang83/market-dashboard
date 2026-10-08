@@ -1,0 +1,102 @@
+name: Log score snapshot
+
+# 종베 점수 기록(승률 검증용): 정규장 마감 직후(15:35 KST)와 연장 마감 직후(20:05 KST)에
+# 매크로/종목 체크 점수를 받아 data 브랜치의 data/scores.csv 에 한 줄씩 붙인다.
+# main 이 아니라 data 브랜치에 커밋하므로 Render 자동 배포는 일어나지 않는다.
+on:
+  schedule:
+    # cron 은 UTC, KST = UTC+9 (두 시각 모두 같은 날짜 월~금)
+    - cron: "35 6 * * 1-5"   # 15:35 KST
+    - cron: "5 11 * * 1-5"   # 20:05 KST
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "auto = 현재 시각으로 판단, manual = 테스트 기록(승률 분석에서 제외)"
+        default: auto
+        type: choice
+        options: [auto, close, extended, manual]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: score-log
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide slot
+        id: slot
+        run: |
+          # Actions cron 은 10~20분 늦게 돌기도 해서 시각 구간으로 나눈다.
+          IN="${{ github.event.inputs.slot }}"
+          if [ -n "$IN" ] && [ "$IN" != "auto" ]; then echo "slot=$IN" >> "$GITHUB_OUTPUT"; exit 0; fi
+          H=$(TZ=Asia/Seoul date +%H)
+          if [ "$H" -lt 18 ]; then echo "slot=close" >> "$GITHUB_OUTPUT"; else echo "slot=extended" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Fetch snapshot
+        run: |
+          # 무료 Render 서버는 잠들어 있으면 깨어나는 데 ~1분 걸려서 타임아웃/재시도를 넉넉히 둔다.
+          curl -sf -m 120 --retry 3 --retry-delay 20 --retry-all-errors \
+            "https://market-dashboard-gqxq.onrender.com/api/ops/score-snapshot?key=${{ secrets.TELEGRAM_SUMMARY_KEY }}&slot=${{ steps.slot.outputs.slot }}" \
+            -o "$RUNNER_TEMP/snap.json"
+          python3 -c "import json,os; d=json.load(open(os.environ['RUNNER_TEMP']+'/snap.json')); print({k:v for k,v in d.items() if k!='row'}, (d.get('row') or {}).get('date'), (d.get('row') or {}).get('slot'))"
+
+      - uses: actions/checkout@v4
+
+      - name: Append to data branch
+        run: |
+          python3 - <<'PY'
+          import csv, io, json, os, subprocess, sys
+          snap = json.load(open(os.environ["RUNNER_TEMP"] + "/snap.json"))
+          row = snap.get("row")
+          if not row:
+              print("건너뜀:", snap.get("skipped", "row 없음"))
+              sys.exit(0)
+
+          def sh(*a, check=True):
+              return subprocess.run(a, check=check, capture_output=True, text=True)
+
+          sh("git", "config", "user.name", "score-log[bot]")
+          sh("git", "config", "user.email", "score-log@users.noreply.github.com")
+          have = sh("git", "ls-remote", "--exit-code", "--heads", "origin", "data", check=False).returncode == 0
+          if have:
+              sh("git", "fetch", "origin", "data")
+              sh("git", "checkout", "-B", "data", "origin/data")
+          else:
+              sh("git", "checkout", "--orphan", "data")
+              sh("git", "rm", "-rf", ".", check=False)
+
+          cols = ["date", "slot", "time", "macro", "stock", "stock_code", "stock_name", "macro_sig", "stock_sig"]
+          path = "data/scores.csv"
+          os.makedirs("data", exist_ok=True)
+          rows = []
+          if os.path.exists(path):
+              rows = list(csv.DictReader(open(path, encoding="utf-8")))
+          # 같은 날짜+슬롯이 이미 있으면 덮어쓴다(수동 재실행/지연 중복 방지).
+          rows = [r for r in rows if not (r["date"] == row["date"] and r["slot"] == row["slot"])]
+          rows.append({c: row.get(c, "") for c in cols})
+          rows.sort(key=lambda r: (r["date"], r["slot"] != "close"))
+          with open(path, "w", encoding="utf-8", newline="") as f:
+              w = csv.DictWriter(f, fieldnames=cols)
+              w.writeheader()
+              w.writerows(rows)
+
+          open("README.md", "w", encoding="utf-8").write(
+              "# 종베 점수 기록\n\n"
+              "`data/scores.csv` — GitHub Actions(`score-log.yml`)가 거래일 15:35(close)·20:05(extended) KST에 자동 기록.\n\n"
+              "- macro/stock: 종가베팅 체크리스트 점수(%)\n"
+              "- macro_sig 키: tnx wti ndq btc kospiDir kospiMa / stock_sig 키: candle usSector krSector ma flow program\n"
+              "- slot: close(15:35)/extended(20:05)/manual(수동 테스트, 분석에서 제외)\n"
+              "- 신호 값: G=초록(좋음) Y=노랑 R=빨강(나쁨) N=데이터 없음\n"
+          )
+          sh("git", "add", "data/scores.csv", "README.md")
+          if sh("git", "diff", "--cached", "--quiet", check=False).returncode == 0:
+              print("변경 없음")
+              sys.exit(0)
+          sh("git", "commit", "-m", f"score {row['date']} {row['slot']} macro={row['macro']} stock={row['stock']}")
+          sh("git", "push", "origin", "data")
+          print("기록 완료", row["date"], row["slot"])
+          PY

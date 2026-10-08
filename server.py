@@ -785,6 +785,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_trading_value()
         elif self.path.startswith("/api/market/breadth"):
             self.handle_market_breadth()
+        elif self.path.startswith("/api/ops/score-snapshot"):
+            self.handle_ops_score_snapshot()
         elif self.path.startswith("/api/ops/kis-income"):
             self.handle_ops_kis_income()
         elif self.path.startswith("/api/leader"):
@@ -1197,6 +1199,20 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             send_telegram_message(text)
             self.send_json(200, {"ok": True})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_ops_score_snapshot(self):
+        # 승률 검증용 점수 기록: 매크로/종목 체크 점수를 한 줄로 돌려준다(저장은 GitHub Actions가
+        # data 브랜치 CSV에 붙임 - Render 무료 서버는 파일이 사라지므로 서버에 저장하지 않는다).
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        if not is_krx_trading_day():
+            self.send_json(200, {"ok": True, "skipped": "market_holiday"})
+            return
+        try:
+            self.send_json(200, {"ok": True, "row": build_score_snapshot(self.query_param("slot") or "")})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -1834,6 +1850,46 @@ def _compute_scores():
         stock_pct, stock_name, stock_lines = None, TELEGRAM_SUMMARY_STOCK_CODE, [f"⚪ 종목 체크 데이터 없음 ({e})"]
 
     return macro_pct, macro_lines, stock_pct, stock_name, stock_lines
+
+
+_SIGNAL_LETTER = {"🟢": "G", "🟡": "Y", "🔴": "R", "⚪": "N"}
+
+
+_MACRO_KEYS = (("tnx", "미국채10Y"), ("wti", "WTI"), ("ndq", "나스닥100선물"), ("btc", "비트코인"),
+               ("kospiMa", "코스피 순위"), ("kospiDir", "코스피 "))
+_STOCK_KEYS = (("usSector", "미국 동일"), ("krSector", "국내 동일"), ("ma", "이평선 순위"),
+               ("flow", "수급:"), ("program", "프로그램매매"))
+
+
+def _signal_map(lines, keys, fallback_key=None):
+    """신호 이모지(🟢🟡🔴⚪)로 시작하는 줄을 키별 G/Y/R/N 문자열("tnx:R wti:G ...")로.
+    섹터 ETF처럼 없는 항목이 있어도 위치가 밀리지 않도록 키를 붙인다."""
+    out = {}
+    for l in lines:
+        if not l or l[0] not in _SIGNAL_LETTER:
+            continue
+        key = next((k for k, s in keys if s in l), fallback_key)
+        if key and key not in out:
+            out[key] = _SIGNAL_LETTER[l[0]]
+    return " ".join(f"{k}:{v}" for k, v in out.items())
+
+
+def build_score_snapshot(slot):
+    """점수 기록 한 줄. macro_sig 키: tnx wti ndq btc kospiDir kospiMa. stock_sig 키: candle usSector
+    krSector ma flow program (없는 항목은 생략)."""
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    macro_pct, macro_lines, stock_pct, stock_name, stock_lines = _compute_scores()
+    return {
+        "date": now.strftime("%Y-%m-%d"),
+        "slot": slot if slot in ("close", "extended") else "manual",
+        "time": now.strftime("%H:%M"),
+        "macro": macro_pct,
+        "stock": stock_pct,
+        "stock_code": TELEGRAM_SUMMARY_STOCK_CODE,
+        "stock_name": stock_name,
+        "macro_sig": _signal_map(macro_lines, _MACRO_KEYS),
+        "stock_sig": _signal_map(stock_lines, _STOCK_KEYS, "candle"),
+    }
 
 
 def build_dashboard_summary_text():
