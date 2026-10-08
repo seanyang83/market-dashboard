@@ -286,7 +286,7 @@ function render(name, code, quote, a) {
     const pct = (v) => `<span class="${v > 0 ? "up" : v < 0 ? "down" : "flat"}">${sign(v)}${fmt(v, 1)}%</span>`;
     $("runtitle").textContent = run.active
       ? `가장 최근 정배열 구간 (종가 기준, 원) — 진행 중 (${run.weeks}주째)`
-      : `가장 최근 정배열 구간 (종가 기준, 원) — ${run.endDate}에 정배열 이탈 (총 ${run.weeks}주 유지)`;
+      : `가장 최근 정배열 구간 (종가 기준, 원) — ${run.breakDate}에 정배열 이탈 (${run.breakReason}), 직전 주(${run.endDate})까지 ${run.weeks}주 유지`;
     $("runbody").innerHTML = `
       <tr><td>시작</td><td>${sd(run.startDate)}</td><td>${won(run.startClose)}</td><td>–</td></tr>
       <tr><td>최고점</td><td>${sd(run.peakDate)}</td><td>${won(run.peakClose)}</td><td>${pct(run.peakGainPct)}<small>시작 대비</small></td></tr>

@@ -176,7 +176,16 @@ def _weekly_analysis(weekly):
         while start - 1 >= 0 and aligned(start - 1):
             start -= 1
         peak = max(range(start, last + 1), key=lambda i: closes[i])
+        break_date, break_reason = None, None
+        if end < last:
+            # end = 마지막으로 정배열이던 주, end+1 = 처음으로 깨진 주.
+            break_date = dates[end + 1]
+            m = [mas[p][end + 1] for p in MA_PERIODS]
+            names = ("4주", "13주", "26주", "52주")
+            broken = [f"{names[k]}<{names[k + 1]}" for k in range(3) if m[k] <= m[k + 1]]
+            break_reason = ", ".join(broken)
         run = {
+            "breakDate": break_date, "breakReason": break_reason,
             "active": end == last,
             "weeks": end - start + 1,
             "startDate": dates[start], "startClose": closes[start],
