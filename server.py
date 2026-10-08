@@ -1775,16 +1775,14 @@ def _market_breadth_lines():
         # 부등호가 많은 쪽을 가리키게: 하락이 많으면 "상승, 보합 < 하락", 상승이 많으면 "상승 > 보합, 하락".
         # 많은 쪽 표시: 하락 우세 ⬇️(파랑), 상승 우세 🔺(빨강) — 한국 관례 색.
         if up > down:
-            return "🔺", f"상승({up}) > 보합({flat}), 하락({down})"
+            return f"🔺상승({up}) > 보합({flat}), 하락({down})"
         if up < down:
-            return "⬇️", f"상승({up}), 보합({flat}) < 하락({down})"
-        return "", f"상승({up}), 보합({flat}) = 하락({down})"
-
-    (km, kt), (qm, qt) = fmt(k), fmt(q)
+            return f"상승({up}), 보합({flat}) < ⬇️하락({down})"
+        return f"상승({up}), 보합({flat}) = 하락({down})"
 
     return [
-        f"코스피 등락{km}: {kt}",
-        f"코스닥 등락{qm}: {qt}",
+        f"코스피 등락: {fmt(k)}",
+        f"코스닥 등락: {fmt(q)}",
     ]
 
 
