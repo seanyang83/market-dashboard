@@ -475,7 +475,17 @@ def _judge(quarters, weekly, basis="yoy"):
     run = weekly.get("run")
 
     if earn in ("가속", "증가") and aligned:
-        label = "① 태동" if streak <= 13 else "② 추세" if streak <= 104 else "② 추세 장기화"
+        # 책 기준: 주도주 정배열은 보통 1년(52주)이 사실상 한계, 길어야 2년(104주).
+        if streak <= 13:
+            label = "① 태동"
+        elif streak <= 39:
+            label = "② 추세"
+        elif streak <= 52:
+            label = "② 추세 후반 (1년 임박)"
+        elif streak <= 104:
+            label = "③ 1년 초과 (막바지 주의)"
+        else:
+            label = "④ 2년 초과 (이례적 장기)"
     elif earn in ("피크아웃", "둔화") and aligned:
         label = "③ 둔화 주의"
     elif earn in ("음전환", "악화") and aligned:
@@ -545,6 +555,13 @@ def analyze(code, kis_get=None):
             flags.append({"level": f["level"], "text": f"{f['tag']} {f['text']}"})
     if cons_tags:
         flags.append({"level": "warn", "text": f"컨센서스상 다음 분기 둔화 전망 ({'·'.join(cons_tags)})"})
+    streak = weekly["streakWeeks"]
+    if weekly["aligned"] and streak > 104:
+        flags.append({"level": "bad", "text": f"정배열 {streak}주째 — 2년 초과, 주도주 통상 한계 넘음"})
+    elif weekly["aligned"] and streak > 52:
+        flags.append({"level": "warn", "text": f"정배열 {streak}주째 — 1년 초과, 막바지 구간"})
+    elif weekly["aligned"] and streak >= 40:
+        flags.append({"level": "warn", "text": f"정배열 {streak}주째 — 1년 임박"})
     run = weekly.get("run")
     if not weekly["aligned"] and run and run.get("breakDate"):
         flags.append({"level": "warn", "text": f"정배열 이탈 ({run['breakReason']})"})

@@ -205,6 +205,7 @@ function shownQuarters(all) {
 }
 
 function stageClass(label) {
+  if (/1년 임박/.test(label)) return "yellow";
   if (/^[①②]/.test(label)) return "green";
   if (/^③~④/.test(label)) return "red";
   if (/^③/.test(label)) return "yellow";
