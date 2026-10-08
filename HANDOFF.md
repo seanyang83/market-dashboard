@@ -387,7 +387,7 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
   겹치는 분기에서 매출 3% 넘게 다르면 경고 문구 표시.
 - 운영 확인용: `GET /api/ops/kis-income?key=<TELEGRAM_SUMMARY_KEY>&code=&div=1|0` — 한투 손익계산서
   원본 응답(`/api/ops/`는 로그인 대신 같은 키로 보호).
-- **분기 표 열**(2026-10-08): 매출액, 매출 YoY(`revenueYoyRate`), 영업이익, 증가율 YoY/가속, 증가율 QoQ/가속,
+- **분기 표 열**(2026-10-08): 매출액, 매출 YoY(`revenueYoyRate`)와 그 가속(`revenueYoyAccel` = 이번 − 직전 분기 YoY, %p), 영업이익, 증가율 YoY/가속, 증가율 QoQ/가속,
   지배순이익(`netIncome`), 순이익 YoY(`netYoyRate`/`netYoyState`). 영업이익률 열은 뺐음(데이터 `opm`은 유지,
   low-base 판정에 사용). **지배순이익은 네이버(`지배주주순이익`, 최근 약 5분기)만 제공**하고 한투 손익계산서에는
   지배/비지배 구분이 없어 `thtr_ntin`(당기순이익)으로 대체 → `netIsParent=false`, 표에 †(순이익 YoY는 한쪽이라도

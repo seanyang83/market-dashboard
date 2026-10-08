@@ -123,7 +123,7 @@
       <div class="scroll">
         <table class="q">
           <thead>
-            <tr><th>분기</th><th>매출액(억)</th><th>매출 YoY</th><th>영업이익(억)</th><th>증가율 YoY</th><th>가속</th><th>증가율 QoQ</th><th>가속</th><th>지배순이익(억)</th><th>순이익 YoY</th></tr>
+            <tr><th>분기</th><th>매출액(억)</th><th>매출 YoY</th><th>가속</th><th>영업이익(억)</th><th>증가율 YoY</th><th>가속</th><th>증가율 QoQ</th><th>가속</th><th>지배순이익(억)</th><th>순이익 YoY</th></tr>
           </thead>
           <tbody id="qbody"></tbody>
         </table>
@@ -353,7 +353,7 @@ function render(name, code, quote, a) {
   $("qbody").innerHTML = shown.map((q) => `
     <tr class="${q.estimate ? "est" : ""}">
       <td>${q.period.slice(2)}${q.estimate ? "E" : ""}</td>
-      <td>${fmt(q.revenue)}</td>${growthCell(q.revenueYoyRate)}
+      <td>${fmt(q.revenue)}</td>${growthCell(q.revenueYoyRate)}${accelCell(q.revenueYoyAccel)}
       <td>${fmt(q.opIncome)}</td>
       ${growthCell(q.opYoyRate, q.opYoyState, q.opYoyLowBase)}${accelCell(q.opYoyAccel)}
       ${growthCell(q.opQoqRate, q.opQoqState, q.opQoqLowBase)}${accelCell(q.opQoqAccel)}

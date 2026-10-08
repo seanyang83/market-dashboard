@@ -148,6 +148,8 @@ def _compute_rates(quarters):
         q["opmQoqPp"] = _pp(q["opm"], prev_q["opm"]) if prev_q else None
     for q in quarters:
         prev_q = by_key.get(_shift_key(q["key"], -3))
+        cur, prev = q["revenueYoyRate"], prev_q["revenueYoyRate"] if prev_q else None
+        q["revenueYoyAccel"] = round(cur - prev, 1) if cur is not None and prev is not None else None
         for name in ("Yoy", "Qoq"):
             cur = q[f"op{name}Rate"]
             prev = prev_q[f"op{name}Rate"] if prev_q else None
