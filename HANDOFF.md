@@ -447,7 +447,7 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
 목적: 종베 점수(매크로 %·종목 %)가 높았던 날 베팅하면 승률이 괜찮은지 나중에 검증. Render 무료 서버는 파일이 사라지므로
 **서버에 저장하지 않고** GitHub Actions가 `data` 브랜치의 `data/scores.csv`에 쌓는다(`main`이 아니라 Render 자동 배포 안 일어남,
 저장소가 공개라 기록도 공개 — 사용자 허락함).
-- **시각**: 거래일 15:35 KST(slot `close`, 정규장 마감 직후)와 20:05 KST(slot `extended`, 연장 마감 직후) 두 번만.
+- **시각**: 거래일 15:10 KST(slot `close`, 정규장 마감 전)와 19:40 KST(slot `extended`, 연장 마감 전) 두 번만 — 텔레 정시 메시지(15:10/19:40)와 같은 시각(사용자 지시).
   워크플로 `.github/workflows/score-log.yml`. Actions cron 지연(10~20분)이 있어 현재 시각이 18시 전이면 close, 이후 extended.
   수동 실행(`workflow_dispatch`)에서 slot=manual 이면 테스트 기록(분석에서 제외).
 - **엔드포인트**: `GET /api/ops/score-snapshot?key=<TELEGRAM_SUMMARY_KEY>&slot=` → `{"ok":true,"row":{...}}`(휴장일이면 skipped).

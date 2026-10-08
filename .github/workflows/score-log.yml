@@ -1,13 +1,13 @@
 name: Log score snapshot
 
-# 종베 점수 기록(승률 검증용): 정규장 마감 직후(15:35 KST)와 연장 마감 직후(20:05 KST)에
+# 종베 점수 기록(승률 검증용): 텔레 정시 메시지와 같은 15:10 KST(마감 전)와 19:40 KST(연장 마감 전)에
 # 매크로/종목 체크 점수를 받아 data 브랜치의 data/scores.csv 에 한 줄씩 붙인다.
 # main 이 아니라 data 브랜치에 커밋하므로 Render 자동 배포는 일어나지 않는다.
 on:
   schedule:
     # cron 은 UTC, KST = UTC+9 (두 시각 모두 같은 날짜 월~금)
-    - cron: "35 6 * * 1-5"   # 15:35 KST
-    - cron: "5 11 * * 1-5"   # 20:05 KST
+    - cron: "10 6 * * 1-5"   # 15:10 KST
+    - cron: "40 10 * * 1-5"  # 19:40 KST
   workflow_dispatch:
     inputs:
       slot:
@@ -86,10 +86,10 @@ jobs:
 
           open("README.md", "w", encoding="utf-8").write(
               "# 종베 점수 기록\n\n"
-              "`data/scores.csv` — GitHub Actions(`score-log.yml`)가 거래일 15:35(close)·20:05(extended) KST에 자동 기록.\n\n"
+              "`data/scores.csv` — GitHub Actions(`score-log.yml`)가 거래일 15:10(close)·19:40(extended) KST에 자동 기록.\n\n"
               "- macro/stock: 종가베팅 체크리스트 점수(%)\n"
               "- macro_sig 키: tnx wti ndq btc kospiDir kospiMa / stock_sig 키: candle usSector krSector ma flow program\n"
-              "- slot: close(15:35)/extended(20:05)/manual(수동 테스트, 분석에서 제외)\n"
+              "- slot: close(15:10)/extended(19:40)/manual(수동 테스트, 분석에서 제외)\n"
               "- 신호 값: G=초록(좋음) Y=노랑 R=빨강(나쁨) N=데이터 없음\n"
           )
           sh("git", "add", "data/scores.csv", "README.md")
