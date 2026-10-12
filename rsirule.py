@@ -141,44 +141,33 @@ def _w(v):
 
 
 def format_message(name, cur, events, tag=""):
-    """텔레그램 평문. events가 비면 빈 문자열(보낼 게 없음)."""
+    """텔레그램 평문(짧게). events가 비면 빈 문자열(보낼 게 없음)."""
     if not events:
         return ""
     d, slot = cur["date"], cur["slot"]
-    when = f"{d[4:6]}/{d[6:8]} {SLOT_END[slot]}"
-    head = [f"📉 RSI 과매도 규칙{tag} · {name} · {when} 120분봉 마감",
-            f"종가 {_w(cur['close'])} · RSI {cur['rsi']:.1f}"]
-    body = []
+    lines = [f"📉 {name}{tag} · {d[4:6]}/{d[6:8]} {SLOT_END[slot]} · 종가 {_w(cur['close'])} · RSI {cur['rsi']:.1f}"]
     for ev in events:
         k = ev["kind"]
         if k == "signal1":
-            body += ["", "👀 1번째 과매도 신호 — 관찰 (2번째 신호부터 분할매수)",
-                     f" · 1번째 신호가 {_w(ev['p1'])}"]
+            lines.append(f"👀 1번째 신호 — 관찰 (1번째 가 {_w(ev['p1'])})")
         elif k == "signal2":
-            body += ["", "🛒 2번째 신호 — 1차 매수 (절반)",
-                     f" · 1번째 {_w(ev['p1'])} · 2번째 {_w(ev['p2'])}",
-                     f" · 다음: 3번째 신호 때 나머지 절반 매수",
-                     f" · 2번째 가격 {_w(ev['p2'])} 위로 종가 마감하면 절반 매도"]
+            lines.append(f"🛒 2번째 신호 — 1차 매수(절반)\n절반 매도 기준 {_w(ev['p2'])} 위 종가")
         elif k == "signal3":
-            body += ["", "🛒🛒 3번째 신호 — 2차 매수 (나머지 절반)",
-                     f" · 평단 {_w(ev['avg'])} (2번째 {_w(ev['p2'])} · 3번째 {_w(ev['p3'])})",
-                     f" · 매도 ① {_w(ev['p2'])} 위로 종가 마감 시 절반",
-                     f" · 매도 ② 나머지는 {_w(ev['p1'])} 위 종가 또는 RSI 50",
-                     f" · 5일 안에 2번째 가격({_w(ev['p2'])})을 못 넘으면 정리 검토"]
+            lines.append(f"🛒🛒 3번째 신호 — 2차 매수(나머지 절반)\n평단 {_w(ev['avg'])}\n"
+                         f"매도 ① {_w(ev['p2'])} 위 종가: 절반 ② {_w(ev['p1'])} 위 종가/RSI 50: 나머지")
         elif k == "signalN":
-            body += ["", f"⚠️ {ev['n']}번째 신호 지속 — 규칙상 추가 매수 없음 (기존 매도 기준 유지)"]
+            lines.append(f"⚠️ {ev['n']}번째 신호 지속 — 추가 매수 없음")
         elif k == "sell_half":
-            body += ["", f"💰 절반 매도 — 종가 {_w(cur['close'])} > 2번째 가격 {_w(ev['p2'])} (평단 대비 {ev['gain']:+.1f}%)",
-                     f" · 나머지: {_w(ev['p1'])} 위 종가 또는 RSI 50에서 매도"]
+            lines.append(f"💰 절반 매도 — 2번째 가 {_w(ev['p2'])} 돌파 (평단 {ev['gain']:+.1f}%)\n"
+                         f"나머지: {_w(ev['p1'])} 위 종가/RSI 50")
         elif k == "sell_rest":
-            why = f"종가 {_w(cur['close'])} > 1번째 가격 {_w(ev['p1'])}" if ev["reason"] == "p1" else "RSI 50 도달"
-            body += ["", f"💰 나머지 매도 — {why} (평단 대비 {ev['gain']:+.1f}%)"]
+            why = f"1번째 가 {_w(ev['p1'])} 돌파" if ev["reason"] == "p1" else "RSI 50 도달"
+            lines.append(f"💰 나머지 매도 — {why} (평단 {ev['gain']:+.1f}%)")
         elif k == "timeout1":
-            body += ["", f"⏰ 5일 경과 — 2번째 가격({_w(ev['p2'])})을 못 넘음, 전량 정리 검토 (평단 대비 {ev['gain']:+.1f}%)"]
+            lines.append(f"⏰ 5일 경과, 2번째 가 {_w(ev['p2'])} 미돌파 — 전량 정리 검토 (평단 {ev['gain']:+.1f}%)")
         elif k == "timeout2":
-            body += ["", f"⏰ 10일 경과 — 나머지 절반 정리 검토 (평단 대비 {ev['gain']:+.1f}%)"]
-    foot = ["", "(120분봉 RSI14 · 과거 데이터 백테스트 기반 참고용)"]
-    return "\n".join(head + body + foot)
+            lines.append(f"⏰ 10일 경과 — 나머지 정리 검토 (평단 {ev['gain']:+.1f}%)")
+    return "\n".join(lines)
 
 
 def status_of(bars):
