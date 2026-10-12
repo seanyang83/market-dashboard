@@ -149,20 +149,20 @@ def format_message(name, cur, events, tag=""):
     for ev in events:
         k = ev["kind"]
         if k == "signal1":
-            lines.append(f"👀 1번째 신호 — 관찰 (1번째 가 {_w(ev['p1'])})")
+            lines.append(f"🟡 1번째 신호 — 관찰 (1번째 가 {_w(ev['p1'])})")
         elif k == "signal2":
-            lines.append(f"🛒 2번째 신호 — 1차 매수(절반)\n절반 매도 기준 {_w(ev['p2'])} 위 종가")
+            lines.append(f"🔴 2번째 신호 — 1차 매수(절반)\n절반 매도 기준 {_w(ev['p2'])} 위 종가")
         elif k == "signal3":
-            lines.append(f"🛒🛒 3번째 신호 — 2차 매수(나머지 절반)\n평단 {_w(ev['avg'])}\n"
+            lines.append(f"🔴🔴 3번째 신호 — 2차 매수(나머지 절반)\n평단 {_w(ev['avg'])}\n"
                          f"매도 ① {_w(ev['p2'])} 위 종가: 절반 ② {_w(ev['p1'])} 위 종가/RSI 50: 나머지")
         elif k == "signalN":
             lines.append(f"⚠️ {ev['n']}번째 신호 지속 — 추가 매수 없음")
         elif k == "sell_half":
-            lines.append(f"💰 절반 매도 — 2번째 가 {_w(ev['p2'])} 돌파 (평단 {ev['gain']:+.1f}%)\n"
+            lines.append(f"🔵 절반 매도 — 2번째 가 {_w(ev['p2'])} 돌파 (평단 {ev['gain']:+.1f}%)\n"
                          f"나머지: {_w(ev['p1'])} 위 종가/RSI 50")
         elif k == "sell_rest":
             why = f"1번째 가 {_w(ev['p1'])} 돌파" if ev["reason"] == "p1" else "RSI 50 도달"
-            lines.append(f"💰 나머지 매도 — {why} (평단 {ev['gain']:+.1f}%)")
+            lines.append(f"🔵🔵 나머지 매도 — {why} (평단 {ev['gain']:+.1f}%)")
         elif k == "timeout1":
             lines.append(f"⏰ 5일 경과, 2번째 가 {_w(ev['p2'])} 미돌파 — 전량 정리 검토 (평단 {ev['gain']:+.1f}%)")
         elif k == "timeout2":
