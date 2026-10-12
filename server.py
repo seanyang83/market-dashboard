@@ -1687,6 +1687,10 @@ def check_rsi_rule_alerts():
 
 
 def _rsi_scheduler():
+    # 서버가 켜지자마자 분봉 이력을 받아둔다(처음 60거래일은 한투 호출이 많아 1~3분 걸려서,
+    # 첫 봉 마감 때 받기 시작하면 알림이 늦는다).
+    for code in get_rsi_watch_codes():
+        _rsi_refresh_async(code)
     while True:
         try:
             check_rsi_rule_alerts()
