@@ -17,6 +17,7 @@ import hmac
 import http.server
 import json
 import leader
+import rsirule
 import os
 import re
 import secrets
@@ -771,6 +772,14 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_check_threshold_alert()
         elif self.path.startswith("/api/telegram/announce"):
             self.handle_telegram_announce()
+        elif self.path.startswith("/api/rsi-rule/add"):
+            self.handle_rsi_watch_add()
+        elif self.path.startswith("/api/rsi-rule/remove"):
+            self.handle_rsi_watch_remove()
+        elif self.path.startswith("/api/rsi-rule/watch"):
+            self.handle_rsi_watch_get()
+        elif self.path.startswith("/api/ops/rsi-rule"):
+            self.handle_ops_rsi_rule()
         elif self.path.startswith("/api/watchlist/add"):
             self.handle_watchlist_add()
         elif self.path.startswith("/api/watchlist/remove"):
@@ -1181,6 +1190,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             result = check_threshold_alert()
             result["ma"] = check_ma_proximity_alert()
+            result["rsi"] = check_rsi_rule_alerts()
             self.send_json(200, result)
         except Exception as e:
             self.send_json(502, {"error": str(e)})
@@ -1231,29 +1241,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(400, {"error": "date=YYYYMMDD 필요"})
             return
         try:
-            rows, hour = {}, "153000"
-            for _ in range(6):
-                data = kis_get(
-                    "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
-                    "FHKST03010230",
-                    {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_HOUR_1": hour,
-                     "FID_INPUT_DATE_1": date, "FID_PW_DATA_INCU_YN": "N", "FID_FAKE_TICK_INCU_YN": ""},
-                )
-                chunk = [r for r in (data.get("output2") or []) if r.get("stck_bsop_date") == date and r.get("stck_cntg_hour")]
-                if not chunk:
-                    break
-                for r in chunk:
-                    rows[r["stck_cntg_hour"][:4]] = [
-                        r["stck_cntg_hour"][:4], r.get("stck_oprc"), r.get("stck_hgpr"),
-                        r.get("stck_lwpr"), r.get("stck_prpr"), r.get("cntg_vol"),
-                    ]
-                oldest = min(r["stck_cntg_hour"] for r in chunk)
-                if oldest <= "090000" or len(chunk) < 100:
-                    break
-                hh, mm = int(oldest[:2]), int(oldest[2:4])
-                hh, mm = (hh, mm - 1) if mm else (hh - 1, 59)
-                hour = f"{hh:02d}{mm:02d}00"
-            self.send_json(200, {"code": code, "date": date, "bars": [rows[k] for k in sorted(rows)]})
+            self.send_json(200, {"code": code, "date": date, "bars": _fetch_day_minutes(code, date)})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -1278,6 +1266,54 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, leader.analyze(code, kis_get if KIS_APP_KEY and KIS_APP_SECRET else None))
         except leader.NoFinance as e:
             self.send_json(404, {"error": str(e)})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_rsi_watch_get(self):
+        items = []
+        for code in get_rsi_watch_codes():
+            try:
+                name = _local_get(f"/api/stock/quote?code={code}").get("name") or code
+            except Exception:
+                name = code
+            items.append({"code": code, "name": name, "status": rsi_rule_status(code)})
+        self.send_json(200, {"items": items})
+
+    def handle_rsi_watch_add(self):
+        code = self.require_stock_code()
+        if code:
+            self.send_json(200, {"ok": True, "codes": add_rsi_watch_code(code)})
+
+    def handle_rsi_watch_remove(self):
+        code = self.require_stock_code()
+        if code:
+            self.send_json(200, {"ok": True, "codes": remove_rsi_watch_code(code)})
+
+    def handle_ops_rsi_rule(self):
+        # 점검/재현용: 특정 봉(asof=YYYYMMDD&slot=A~D)에서 규칙이 뭘 알렸을지 계산한다.
+        # send=1이면 텔레그램으로도 보내며, 과거 재현(asof 지정)은 [테스트] 표시를 붙인다.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        code = self.require_stock_code()
+        if not code:
+            return
+        try:
+            now = datetime.now(timezone.utc) + timedelta(hours=9)
+            asof = self.query_param("asof") or now.strftime("%Y%m%d")
+            slot = (self.query_param("slot") or "").upper()
+            if slot not in ("A", "B", "C", "D"):
+                done = _last_completed_slot(now) if asof == now.strftime("%Y%m%d") else "D"
+                slot = done or "D"
+            ndays = int(self.query_param("ndays") or RSI_HISTORY_DAYS)
+            events, cur, name = rsi_rule_evaluate(code, asof, slot, ndays)
+            tag = " [테스트·과거 재현]" if self.query_param("asof") else ""
+            text = rsirule.format_message(name, cur, events, tag) if cur else ""
+            sent = False
+            if self.query_param("send") == "1" and text:
+                send_telegram_message(text)
+                sent = True
+            self.send_json(200, {"cur": cur, "events": events, "text": text, "sent": sent})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -1427,6 +1463,236 @@ def check_threshold_alert():
     text = "\n".join(lines)
     send_telegram_message(text)
     return {"sent": True, "text": text}
+
+
+# --- 120분봉 RSI 과매도 분할매수 규칙 알림 (rsirule.py) ---
+# 감시 종목은 5일선 감시와 같은 방식으로 웹에서 추가/삭제하고 Render 환경변수
+# (TELEGRAM_RSI_WATCH_CODES)에 써둔다. 120분봉은 한투 1분봉(주식일별분봉조회)으로
+# 키움식(09:00~11:00, 11:00~13:00, 13:00~15:00, 15:00~15:30)으로 직접 만든다.
+# 지난 거래일 분봉은 바뀌지 않으므로 메모리+파일(.rsi_min_cache.json)에 캐시한다.
+RSI_HISTORY_DAYS = 60   # 거래일 기준 워밍업(RSI 수렴 + 묶음/보유 구간 추적)
+_rsi_watch_lock = threading.Lock()
+_rsi_watch_codes = [c.strip() for c in os.environ.get("TELEGRAM_RSI_WATCH_CODES", "000660").split(",") if c.strip()]
+RSI_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".rsi_min_cache.json")
+_rsi_day_cache = {}          # {code: {YYYYMMDD: rows}}
+_rsi_cache_lock = threading.Lock()
+_rsi_fetch_lock = threading.Lock()   # 분봉 수집은 한 번에 하나씩 (한투 호출 폭주 방지)
+_rsi_status_cache = {}       # {code: (ts, status)}
+_rsi_refreshing = set()
+_rsi_done = set()            # 이미 평가한 (날짜, 봉, 종목)
+_rsi_done_lock = threading.Lock()
+RSI_EVAL_WINDOWS = {         # 봉 마감 +1분부터 40분 동안 평가 (재시작/지연 시 따라잡기)
+    "A": (11 * 60 + 2, 11 * 60 + 42),
+    "B": (13 * 60 + 2, 13 * 60 + 42),
+    "C": (15 * 60 + 2, 15 * 60 + 42),
+    "D": (15 * 60 + 33, 16 * 60 + 13),
+}
+_SLOT_LAST_MINUTE = {"A": "1056", "B": "1256", "C": "1456", "D": "1526"}   # 이 분 이후 분봉이 있어야 마감된 것으로 본다
+_SLOT_END_MIN = {"A": 11 * 60, "B": 13 * 60, "C": 15 * 60, "D": 15 * 60 + 30}
+
+
+def get_rsi_watch_codes():
+    with _rsi_watch_lock:
+        return list(_rsi_watch_codes)
+
+
+def add_rsi_watch_code(code):
+    with _rsi_watch_lock:
+        if code not in _rsi_watch_codes:
+            _rsi_watch_codes.append(code)
+        codes = list(_rsi_watch_codes)
+    _render_set_env_var("TELEGRAM_RSI_WATCH_CODES", ",".join(codes))
+    _rsi_refresh_async(code)   # 분봉 이력을 미리 받아둔다
+    return codes
+
+
+def remove_rsi_watch_code(code):
+    with _rsi_watch_lock:
+        if code in _rsi_watch_codes:
+            _rsi_watch_codes.remove(code)
+        codes = list(_rsi_watch_codes)
+    _render_set_env_var("TELEGRAM_RSI_WATCH_CODES", ",".join(codes))
+    return codes
+
+
+def _fetch_day_minutes(code, date):
+    """하루치 1분봉 [[HHMM, 시, 고, 저, 종, 거래량], ...] (KRX 정규장). 한 번에 120개씩만 주므로
+    마감(15:30)부터 거꾸로 이어서 받는다."""
+    rows, hour = {}, "153000"
+    for _ in range(6):
+        data = kis_get(
+            "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
+            "FHKST03010230",
+            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_HOUR_1": hour,
+             "FID_INPUT_DATE_1": date, "FID_PW_DATA_INCU_YN": "N", "FID_FAKE_TICK_INCU_YN": ""},
+        )
+        chunk = [r for r in (data.get("output2") or []) if r.get("stck_bsop_date") == date and r.get("stck_cntg_hour")]
+        if not chunk:
+            break
+        for r in chunk:
+            rows[r["stck_cntg_hour"][:4]] = [
+                r["stck_cntg_hour"][:4], r.get("stck_oprc"), r.get("stck_hgpr"),
+                r.get("stck_lwpr"), r.get("stck_prpr"), r.get("cntg_vol"),
+            ]
+        oldest = min(r["stck_cntg_hour"] for r in chunk)
+        if oldest <= "090000" or len(chunk) < 100:
+            break
+        hh, mm = int(oldest[:2]), int(oldest[2:4])
+        hh, mm = (hh, mm - 1) if mm else (hh - 1, 59)
+        hour = f"{hh:02d}{mm:02d}00"
+    return [rows[k] for k in sorted(rows)]
+
+
+def _rsi_cache_load():
+    try:
+        with open(RSI_CACHE_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        with _rsi_cache_lock:
+            for code, days in data.items():
+                _rsi_day_cache.setdefault(code, {}).update(days)
+    except Exception:
+        pass
+
+
+def _rsi_cache_save():
+    try:
+        with _rsi_cache_lock:
+            snapshot = json.dumps(_rsi_day_cache)
+        with open(RSI_CACHE_FILE, "w", encoding="utf-8") as f:
+            f.write(snapshot)
+    except Exception:
+        pass
+
+
+def _weekdays_back(upto, n):
+    """upto(YYYYMMDD) 포함해 거꾸로 평일 n개 (공휴일은 분봉이 비어 있어 건너뛴다)."""
+    d = datetime.strptime(upto, "%Y%m%d")
+    out = []
+    while len(out) < n:
+        if d.weekday() < 5:
+            out.append(d.strftime("%Y%m%d"))
+        d -= timedelta(days=1)
+    return sorted(out)
+
+
+def _rsi_history(code, upto, ndays):
+    """{날짜: 1분봉 rows}. 오늘 이전 날짜는 캐시(휴장일은 빈 리스트)하고, 오늘은 매번 새로 받는다."""
+    today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    out, fetched = {}, False
+    with _rsi_fetch_lock:
+        for d in _weekdays_back(upto, ndays):
+            with _rsi_cache_lock:
+                cached = _rsi_day_cache.get(code, {}).get(d)
+            if cached is not None and d < today:
+                out[d] = cached
+                continue
+            rows = _fetch_day_minutes(code, d)
+            out[d] = rows
+            fetched = True
+            if d < today:
+                with _rsi_cache_lock:
+                    _rsi_day_cache.setdefault(code, {})[d] = rows
+    if fetched:
+        _rsi_cache_save()
+    return out
+
+
+def _last_completed_slot(now):
+    """오늘 정규장에서 마감이 확정된 마지막 120분봉(없으면 None)."""
+    mins = now.hour * 60 + now.minute
+    done = [s for s, end in _SLOT_END_MIN.items() if mins >= end + 1]
+    return done[-1] if done else None
+
+
+def rsi_rule_evaluate(code, date, slot, ndays=RSI_HISTORY_DAYS):
+    """date/slot 봉이 막 마감했다고 보고 규칙 이벤트를 계산. -> (events, cur, name)"""
+    rows = _rsi_history(code, date, ndays)
+    bars = rsirule.build_bars(rows, upto=(date, slot))
+    if not bars or (bars[-1]["date"], bars[-1]["slot"]) != (date, slot):
+        raise ValueError(f"{date} {slot} 봉 데이터가 없습니다")
+    today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    if date == today and max((r[0] for r in rows.get(date, [])), default="") < _SLOT_LAST_MINUTE[slot]:
+        raise ValueError(f"{date} {slot} 봉이 아직 완성되지 않았습니다")
+    events, cur = rsirule.evaluate_bar(bars)
+    try:
+        name = _local_get(f"/api/stock/quote?code={code}").get("name") or code
+    except Exception:
+        name = code
+    return events, cur, name
+
+
+def rsi_rule_status(code):
+    """웹 표시용 현재 상태. 이력이 아직 없으면 백그라운드로 받기 시작하고 None."""
+    cached = _rsi_status_cache.get(code)
+    if cached and time.time() - cached[0] < 300:
+        return cached[1]
+    _rsi_refresh_async(code)
+    return cached[1] if cached else None
+
+
+def _rsi_refresh_async(code):
+    with _rsi_done_lock:
+        if code in _rsi_refreshing:
+            return
+        _rsi_refreshing.add(code)
+
+    def work():
+        try:
+            now = datetime.now(timezone.utc) + timedelta(hours=9)
+            today = now.strftime("%Y%m%d")
+            rows = _rsi_history(code, today, RSI_HISTORY_DAYS)
+            slot = _last_completed_slot(now) if now.weekday() < 5 else "D"
+            bars = rsirule.build_bars(rows, upto=(today, slot or ""))
+            _rsi_status_cache[code] = (time.time(), rsirule.status_of(bars))
+        except Exception as e:
+            print(f"rsi status refresh failed for {code}: {e}")
+        finally:
+            with _rsi_done_lock:
+                _rsi_refreshing.discard(code)
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def check_rsi_rule_alerts():
+    """120분봉이 막 마감한 시각이면 감시 종목마다 규칙 이벤트를 평가해 텔레그램으로 보낸다.
+    같은 (날짜, 봉, 종목)은 한 번만 - 스케줄러 스레드와 30분 알림 크론이 둘 다 불러도 안전하다."""
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    if now.weekday() >= 5 or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return {"checked": False}
+    mins = now.hour * 60 + now.minute
+    due = [s for s, (a, b) in RSI_EVAL_WINDOWS.items() if a <= mins <= b]
+    if not due or not is_krx_trading_day():
+        return {"checked": False}
+    date = now.strftime("%Y%m%d")
+    sent = []
+    for slot in due:
+        for code in get_rsi_watch_codes():
+            key = (date, slot, code)
+            with _rsi_done_lock:
+                if key in _rsi_done:
+                    continue
+            try:
+                events, cur, name = rsi_rule_evaluate(code, date, slot)
+                text = rsirule.format_message(name, cur, events)
+                if text:
+                    send_telegram_message(text)
+                    sent.append({"code": code, "slot": slot, "events": [e["kind"] for e in events]})
+                with _rsi_done_lock:
+                    _rsi_done.add(key)
+                _rsi_status_cache[code] = (time.time(), rsirule.status_of(
+                    rsirule.build_bars(_rsi_history(code, date, RSI_HISTORY_DAYS), upto=(date, slot))))
+            except Exception as e:
+                print(f"rsi rule check failed for {code} {slot}: {e}")
+    return {"checked": True, "sent": sent}
+
+
+def _rsi_scheduler():
+    while True:
+        try:
+            check_rsi_rule_alerts()
+        except Exception as e:
+            print(f"rsi scheduler error: {e}")
+        time.sleep(20)
 
 
 # --- 5일선 근접 알림 (09:00~20:00, KRX 거래시간) ---
@@ -1980,6 +2246,8 @@ class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 
 if __name__ == "__main__":
+    _rsi_cache_load()
+    threading.Thread(target=_rsi_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()
