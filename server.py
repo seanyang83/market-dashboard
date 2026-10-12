@@ -1657,6 +1657,9 @@ def _rsi_refresh_async(code):
 def check_rsi_rule_alerts():
     """120분봉이 막 마감한 시각이면 감시 종목마다 규칙 이벤트를 평가해 텔레그램으로 보낸다.
     같은 (날짜, 봉, 종목)은 한 번만 - 스케줄러 스레드와 30분 알림 크론이 둘 다 불러도 안전하다."""
+    if os.environ.get("RSI_RULE_ALERTS_OFF", "1") == "1":
+        # 키움 차트(통합 120분봉, RSI가 30 아래로 "새로 내려갈 때"가 신호)와 기준이 달라서 임시로 끔.
+        return {"checked": False, "off": True}
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     if now.weekday() >= 5 or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return {"checked": False}
