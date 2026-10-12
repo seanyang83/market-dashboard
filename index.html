@@ -611,7 +611,7 @@
     <h2 class="section-title">120분봉 RSI 과매도 규칙 종목</h2>
   </div>
   <div class="card">
-    <div class="sub-label">120분봉 RSI(14)가 30 미만인 신호가 4일 안에 3번 쌓이면: 2번째 신호에 절반 · 3번째 신호에 나머지 절반 매수 → 종가가 2번째 신호 가격을 넘으면 절반 매도 → 나머지는 1번째 신호 가격 위 종가 또는 RSI 50에서 매도. 봉 마감(11:00·13:00·15:00·15:30)마다 텔레그램으로 알려줍니다. 과거 SK하이닉스 데이터 백테스트 기반 참고용입니다.</div>
+    <div class="sub-label">키움 통합 120분봉(08:00 시작, 하루 6봉)에서 RSI(14)가 30 아래로 새로 내려간 신호가 4거래일 안에 3번 쌓이면: 2번째 신호에 절반 · 3번째 신호에 나머지 절반 매수 → 종가가 2번째 신호 가격을 넘으면 절반 매도 → 나머지는 1번째 신호 가격 위 종가 또는 RSI 50에서 매도. 봉이 마감될 때마다(10·12·14·16·18·20시) 텔레그램으로 알려줍니다. 과거 SK하이닉스 데이터 백테스트 기반 참고용입니다.</div>
     <div class="stock-search-row">
       <input type="text" id="rsiWatchInput" placeholder="예: SK하이닉스" />
       <button class="refresh-btn" id="rsiWatchAddBtn">추가</button>
@@ -1153,14 +1153,14 @@ async function loadRsiWatch() {
       bodyEl.innerHTML = '<tr><td colspan="4">선택된 종목이 없습니다</td></tr>';
       return;
     }
-    const slotEnd = { A: "11:00", B: "13:00", C: "15:00", D: "15:30" };
+    const slotStart = { A: "08:00", B: "10:00", C: "12:00", D: "14:00", E: "16:00", F: "18:00" };
     bodyEl.innerHTML = items.map((it) => {
       const s = it.status;
       let st = '<span class="sub-label">이력 불러오는 중 (처음엔 1분 정도)</span>';
       if (s && s.rsi != null) {
         const cls = s.oversold ? "down" : "";
         st = `<span class="${cls}"><b>${s.rsi.toFixed(1)}</b>${s.oversold ? " 과매도" : ""}</span>`
-          + `<span class="sub-label"> · ${s.date.slice(4, 6)}/${s.date.slice(6, 8)} ${slotEnd[s.slot]} 기준${s.signals ? ` · 신호 ${s.signals}회` : ""}</span>`;
+          + `<span class="sub-label"> · ${s.date.slice(4, 6)}/${s.date.slice(6, 8)} ${slotStart[s.slot]}봉 기준${s.signals ? ` · 신호 ${s.signals}회` : ""}</span>`;
       }
       return `
       <tr>
