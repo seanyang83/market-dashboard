@@ -787,6 +787,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_breadth()
         elif self.path.startswith("/api/ops/score-snapshot"):
             self.handle_ops_score_snapshot()
+        elif self.path.startswith("/api/ops/kis-minute"):
+            self.handle_ops_kis_minute()
         elif self.path.startswith("/api/ops/kis-income"):
             self.handle_ops_kis_income()
         elif self.path.startswith("/api/leader"):
@@ -1213,6 +1215,45 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         try:
             self.send_json(200, {"ok": True, "row": build_score_snapshot(self.query_param("slot") or "")})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_ops_kis_minute(self):
+        # 운영/분석용: 한투 주식일별분봉조회(FHKST03010230)로 하루치 1분봉을 모아 돌려준다.
+        # 한 번에 120개씩만 주므로 마감(15:30)부터 거꾸로 이어서 받는다. TELEGRAM_SUMMARY_KEY로 보호.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        code = self.require_stock_code()
+        date = self.query_param("date")
+        if not code or not re.fullmatch(r"\d{8}", date or ""):
+            if code:
+                self.send_json(400, {"error": "date=YYYYMMDD 필요"})
+            return
+        try:
+            rows, hour = {}, "153000"
+            for _ in range(6):
+                data = kis_get(
+                    "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
+                    "FHKST03010230",
+                    {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_HOUR_1": hour,
+                     "FID_INPUT_DATE_1": date, "FID_PW_DATA_INCU_YN": "N", "FID_FAKE_TICK_INCU_YN": ""},
+                )
+                chunk = [r for r in (data.get("output2") or []) if r.get("stck_bsop_date") == date and r.get("stck_cntg_hour")]
+                if not chunk:
+                    break
+                for r in chunk:
+                    rows[r["stck_cntg_hour"][:4]] = [
+                        r["stck_cntg_hour"][:4], r.get("stck_oprc"), r.get("stck_hgpr"),
+                        r.get("stck_lwpr"), r.get("stck_prpr"), r.get("cntg_vol"),
+                    ]
+                oldest = min(r["stck_cntg_hour"] for r in chunk)
+                if oldest <= "090000" or len(chunk) < 100:
+                    break
+                hh, mm = int(oldest[:2]), int(oldest[2:4])
+                hh, mm = (hh, mm - 1) if mm else (hh - 1, 59)
+                hour = f"{hh:02d}{mm:02d}00"
+            self.send_json(200, {"code": code, "date": date, "bars": [rows[k] for k in sorted(rows)]})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
