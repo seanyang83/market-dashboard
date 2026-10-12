@@ -1241,7 +1241,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(400, {"error": "date=YYYYMMDD 필요"})
             return
         try:
-            self.send_json(200, {"code": code, "date": date, "bars": _fetch_day_minutes(code, date)})
+            mkt = (self.query_param("mkt") or "J").upper()
+            self.send_json(200, {"code": code, "date": date, "mkt": mkt, "bars": _fetch_day_minutes(code, date, mkt)})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -1515,15 +1516,15 @@ def remove_rsi_watch_code(code):
     return codes
 
 
-def _fetch_day_minutes(code, date):
+def _fetch_day_minutes(code, date, mkt="J"):
     """하루치 1분봉 [[HHMM, 시, 고, 저, 종, 거래량], ...] (KRX 정규장). 한 번에 120개씩만 주므로
     마감(15:30)부터 거꾸로 이어서 받는다."""
-    rows, hour = {}, "153000"
-    for _ in range(6):
+    rows, hour = {}, ("200000" if mkt != "J" else "153000")   # 통합(UN)·NXT는 20:00까지
+    for _ in range(10):
         data = kis_get(
             "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice",
             "FHKST03010230",
-            {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_HOUR_1": hour,
+            {"FID_COND_MRKT_DIV_CODE": mkt, "FID_INPUT_ISCD": code, "FID_INPUT_HOUR_1": hour,
              "FID_INPUT_DATE_1": date, "FID_PW_DATA_INCU_YN": "N", "FID_FAKE_TICK_INCU_YN": ""},
         )
         chunk = [r for r in (data.get("output2") or []) if r.get("stck_bsop_date") == date and r.get("stck_cntg_hour")]
@@ -1535,7 +1536,7 @@ def _fetch_day_minutes(code, date):
                 r.get("stck_lwpr"), r.get("stck_prpr"), r.get("cntg_vol"),
             ]
         oldest = min(r["stck_cntg_hour"] for r in chunk)
-        if oldest <= "090000" or len(chunk) < 100:
+        if oldest <= ("080000" if mkt != "J" else "090000") or len(chunk) < 100:
             break
         hh, mm = int(oldest[:2]), int(oldest[2:4])
         hh, mm = (hh, mm - 1) if mm else (hh - 1, 59)
