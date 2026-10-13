@@ -205,15 +205,16 @@
     white-space: nowrap;
   }
   .flow-table td:first-child { color: var(--sub); font-weight: 500; }
-  .mv-table th, .mv-table td { padding-left: 3px; padding-right: 3px; font-size: 11px; vertical-align: top; }
-  .mv-table th.grp { text-align: center; font-size: 12px; color: var(--text); border-bottom: 1px solid var(--border); }
-  .mv-table th.g1 { background: color-mix(in srgb, var(--accent, #2563eb) 9%, transparent); }
-  .mv-table th.g2 { background: color-mix(in srgb, #8b5cf6 9%, transparent); }
-  .mv-table .sep { border-left: 1px solid var(--border); }
+  .mv-table { table-layout: fixed; }
+  .mv-table th:nth-child(1) { width: 25%; } .mv-table th:nth-child(2) { width: 22%; } .mv-table th:nth-child(3) { width: 22%; } .mv-table th:nth-child(4) { width: 31%; }
+  .mv-table th, .mv-table td { padding-left: 3px; padding-right: 3px; font-size: 12px; vertical-align: top; }
+  .mv-table td small { display: block; font-weight: 600; font-size: 10.5px; }
+  .mv-table td small.sub { color: var(--sub); }
+  .mv-band { margin-top: 8px; padding: 4px 8px; border-radius: 6px; font-size: 12.5px; font-weight: 700; }
+  .mv-band.g1 { background: color-mix(in srgb, var(--accent, #2563eb) 10%, transparent); }
+  .mv-band.g2 { background: color-mix(in srgb, #8b5cf6 10%, transparent); }
   .mv-table td.warncell { background: rgba(234, 179, 8, .18); border-radius: 4px; }
   .mv-table tbody tr + tr td { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
-  .mv-table td small { display: block; font-weight: 600; font-size: 10px; }
-  .mv-table td small.sub { color: var(--sub); }
   .rank-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
   .rank-table th {
     text-align: right; color: var(--sub); font-weight: 600; font-size: 10.5px;
@@ -427,14 +428,17 @@
       </div>
       <div class="checklist-item">
         <div class="checklist-title">최근 7거래일</div>
+        <div class="mv-band g1">코스피</div>
         <table class="flow-table mv-table">
-          <thead>
-            <tr><th rowspan="2">날짜</th><th colspan="3" class="grp g1">코스피</th><th colspan="3" class="grp g2 sep">코스닥</th></tr>
-            <tr><th>지수</th><th>거래대금</th><th>신용잔고</th><th class="sep">지수</th><th>거래대금</th><th>신용잔고</th></tr>
-          </thead>
-          <tbody id="marketValueBody"><tr><td colspan="7">불러오는 중</td></tr></tbody>
+          <thead><tr><th>날짜</th><th>지수</th><th>거래대금</th><th>신용잔고</th></tr></thead>
+          <tbody id="marketValueKospiBody"><tr><td colspan="4">불러오는 중</td></tr></tbody>
         </table>
-        <div class="sub-label" style="margin-top:6px;">지수 = 전일 대비 등락률 · 신용잔고 괄호 = 전일 대비 · 신용잔고 = 신용융자(금융투자협회, 하루 늦게 공표) · ⚠(노란 칸) = 지수가 내린 날 신용잔고가 줄지 않음(반대매매 소진 전)</div>
+        <div class="mv-band g2" style="margin-top:14px;">코스닥</div>
+        <table class="flow-table mv-table">
+          <thead><tr><th>날짜</th><th>지수</th><th>거래대금</th><th>신용잔고</th></tr></thead>
+          <tbody id="marketValueKosdaqBody"><tr><td colspan="4">불러오는 중</td></tr></tbody>
+        </table>
+        <div class="sub-label" style="margin-top:6px;">지수 = 전일 대비 등락률 · 신용잔고 = 신용융자(금융투자협회, 하루 늦게 공표), 괄호 = 전일 대비 · ⚠(노란 칸) = 지수가 내린 날 신용잔고가 줄지 않음(반대매매 소진 전)</div>
       </div>
       <div class="error-msg" id="marketValueError"></div>
     </div>
@@ -628,10 +632,10 @@
     <div class="error-msg" id="rsiWatchError"></div>
     <table class="flow-table" style="margin-top:12px;">
       <thead>
-        <tr><th>종목코드</th><th>종목명</th><th>120분 RSI</th><th></th></tr>
+        <tr><th>종목</th><th>120분 RSI</th><th></th></tr>
       </thead>
       <tbody id="rsiWatchBody">
-        <tr><td colspan="4">불러오는 중</td></tr>
+        <tr><td colspan="3">불러오는 중</td></tr>
       </tbody>
     </table>
   </div>
@@ -1062,20 +1066,24 @@ async function updateMarketTradingValue() {
     const cellVal = (m) => (m ? fmtJo(m.value) : "—");
     const cellCredit = (m) => !m || m.credit == null ? "—<small class=\"sub\">(—)</small>"
       : `${fmtJo(m.credit)}<small class="${m.cdiff == null ? "sub" : cls(m.cdiff)}">${m.cdiff == null ? "(—)" : `(${signed(Math.round(m.cdiff / 1e8), 0, "억")}${m.warn ? " ⚠" : ""})`}</small>`;
-    const rows = kospiHist.slice(0, 7).map((r, i) => {
-      const k = metrics(kospiHist, "kospi", i);
-      const q = metrics(kosdaqHist, "kosdaq", kosdaqHist.findIndex((x) => x.date === r.date));
-      const w = (m) => (m && m.warn ? ' class="warncell"' : "");
-      return `<tr>
-        <td>${fmtDate(r.date)}</td>
-        <td>${cellIdx(k)}</td><td>${cellVal(k)}</td><td${w(k)}>${cellCredit(k)}</td>
-        <td class="sep">${cellIdx(q)}</td><td>${cellVal(q)}</td><td${w(q)}>${cellCredit(q)}</td>
-      </tr>`;
-    });
-    document.getElementById("marketValueBody").innerHTML = rows.join("");
+    const render = (hist, key, bodyId) => {
+      document.getElementById(bodyId).innerHTML = hist.slice(0, 7).map((r, i) => {
+        const m = metrics(hist, key, i);
+        return `<tr>
+          <td>${fmtDate(r.date)}</td>
+          <td>${cellIdx(m)}</td>
+          <td>${cellVal(m)}</td>
+          <td${m && m.warn ? ' class="warncell"' : ""}>${cellCredit(m)}</td>
+        </tr>`;
+      }).join("");
+    };
+    render(kospiHist, "kospi", "marketValueKospiBody");
+    render(kosdaqHist, "kosdaq", "marketValueKosdaqBody");
     errorEl.classList.remove("show");
   } catch (e) {
-    document.getElementById("marketValueBody").innerHTML = '<tr><td colspan="7">데이터를 불러오지 못했습니다</td></tr>';
+    ["marketValueKospiBody", "marketValueKosdaqBody"].forEach((id) => {
+      document.getElementById(id).innerHTML = '<tr><td colspan="4">데이터를 불러오지 못했습니다</td></tr>';
+    });
     errorEl.textContent = e.message;
     errorEl.classList.add("show");
   }
@@ -1186,7 +1194,7 @@ async function loadRsiWatch() {
     const data = await fetchJson("/api/rsi-rule/watch");
     const items = data.items || [];
     if (!items.length) {
-      bodyEl.innerHTML = '<tr><td colspan="4">선택된 종목이 없습니다</td></tr>';
+      bodyEl.innerHTML = '<tr><td colspan="3">선택된 종목이 없습니다</td></tr>';
       return;
     }
     const slotStart = { A: "08:00", B: "10:00", C: "12:00", D: "14:00", E: "16:00", F: "18:00" };
@@ -1200,9 +1208,8 @@ async function loadRsiWatch() {
       }
       return `
       <tr>
-        <td>${it.code}</td>
-        <td style="text-align:left;">${it.name}</td>
-        <td style="text-align:left;">${st}</td>
+        <td style="text-align:left;"><b>${it.name}</b><small class="sub-label" style="display:block;">${it.code}</small></td>
+        <td style="text-align:left; white-space:normal;">${st}</td>
         <td><button class="refresh-btn rsiwatch-remove-btn" data-code="${it.code}">삭제</button></td>
       </tr>`;
     }).join("");
@@ -1220,7 +1227,7 @@ async function loadRsiWatch() {
     // 이력을 받는 중인 종목이 있으면 잠시 뒤 다시 불러온다
     if (items.some((it) => !it.status)) setTimeout(loadRsiWatch, 15000);
   } catch (e) {
-    bodyEl.innerHTML = '<tr><td colspan="4">종목을 불러오지 못했습니다</td></tr>';
+    bodyEl.innerHTML = '<tr><td colspan="3">종목을 불러오지 못했습니다</td></tr>';
   }
 }
 
