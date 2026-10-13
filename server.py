@@ -229,7 +229,7 @@ _market_trading_value_cache = {"data": None, "ts": 0}
 _market_trading_value_cache_lock = threading.Lock()
 
 
-def _fetch_market_trading_value_history(market, days=7):
+def _fetch_market_trading_value_history(market, days=8):
     url = NAVER_MARKET_TREND_URL.format(market=market, page_size=days)
     req = urllib.request.Request(url, headers=NAVER_HEADERS)
     with urllib.request.urlopen(req, timeout=8) as resp:
@@ -251,10 +251,86 @@ def _fetch_market_trading_value():
         "kospi": _fetch_market_trading_value_history("KOSPI"),
         "kosdaq": _fetch_market_trading_value_history("KOSDAQ"),
     }
+    # 지수 등락과 신용융자 잔고는 거래대금 표에 같이 보여주는 부가 정보 - 하나가 실패해도 표는 나오게 따로 감싼다.
+    try:
+        result["index"] = {"kospi": _fetch_index_closes("KOSPI"), "kosdaq": _fetch_index_closes("KOSDAQ")}
+    except Exception as e:
+        result["index"] = {"error": str(e)}
+    try:
+        result["credit"] = _fetch_market_credit()
+    except Exception as e:
+        result["credit"] = {"error": str(e)}
     with _market_trading_value_cache_lock:
         _market_trading_value_cache["data"] = result
         _market_trading_value_cache["ts"] = now
     return result
+
+
+# --- 지수 일봉 종가 (네이버 siseJson) / 신용융자 잔고 (금융투자협회 FreeSIS) ---
+# 신용융자 잔고는 코스피(유가증권)/코스닥을 나눠 공표되고 하루 늦게(T+1) 나온다. FreeSIS 화면이 쓰는 조회
+# 주소(키 불필요)를 호출한다 - 공식 API가 아니라 바뀔 수 있어 실패하면 표에서 "—"로 보이게 둔다.
+# 응답 컬럼(추정, 합계 검증: TMPV2 = TMPV3 + TMPV4): TMPV1 날짜, TMPV2 합계, TMPV3 유가증권(코스피),
+# TMPV4 코스닥 — 단위 백만원. 네이버 증시자금동향의 신용잔고(합계)와 약 1% 이내로 비슷하게 움직임.
+KOFIA_CREDIT_URL = "https://freesis.kofia.or.kr/meta/getMetaDataList.do"
+CREDIT_CACHE_TTL = 1800
+INDEX_CLOSES_CACHE_TTL = 60
+_credit_cache = {"data": None, "ts": 0}
+_index_closes_cache = {}
+_market_extra_lock = threading.Lock()
+
+
+def _fetch_index_closes(symbol, days=40):
+    """{YYYYMMDD: 종가} - 오늘(장중)은 현재가. 네이버 siseJson 일봉."""
+    now = time.time()
+    with _market_extra_lock:
+        hit = _index_closes_cache.get(symbol)
+        if hit and now - hit[0] < INDEX_CLOSES_CACHE_TTL:
+            return hit[1]
+    end = datetime.now(timezone.utc) + timedelta(hours=9)
+    start = end - timedelta(days=days)
+    url = ("https://api.finance.naver.com/siseJson.naver?symbol=%s&requestType=1&timeframe=day&startTime=%s&endTime=%s"
+           % (symbol, start.strftime("%Y%m%d"), end.strftime("%Y%m%d")))
+    req = urllib.request.Request(url, headers=NAVER_HEADERS)
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+    import ast
+    rows = ast.literal_eval(body.strip().replace("null", "None"))[1:]
+    out = {str(r[0]): float(r[4]) for r in rows if r[4] is not None}
+    with _market_extra_lock:
+        _index_closes_cache[symbol] = (now, out)
+    return out
+
+
+def _fetch_market_credit(days=40):
+    """{YYYYMMDD: {"kospi": 원, "kosdaq": 원}} - 신용융자 잔고."""
+    now = time.time()
+    with _market_extra_lock:
+        if _credit_cache["data"] and now - _credit_cache["ts"] < CREDIT_CACHE_TTL:
+            return _credit_cache["data"]
+    end = datetime.now(timezone.utc) + timedelta(hours=9)
+    start = end - timedelta(days=days)
+    body = json.dumps({"dmSearch": {
+        "tmpV40": "1000000", "tmpV41": "1", "tmpV1": "D",
+        "tmpV45": start.strftime("%Y%m%d"), "tmpV46": end.strftime("%Y%m%d"),
+        "OBJ_NM": "STATSCU0100000070BO",
+    }}).encode()
+    req = urllib.request.Request(KOFIA_CREDIT_URL, data=body, headers={
+        "Content-Type": "application/json", "User-Agent": "Mozilla/5.0",
+        "Referer": "https://freesis.kofia.or.kr/", "Origin": "https://freesis.kofia.or.kr",
+    })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+    out = {}
+    for r in data.get("ds1") or []:
+        try:
+            out[str(r["TMPV1"])] = {"kospi": int(r["TMPV3"]) * 1_000_000, "kosdaq": int(r["TMPV4"]) * 1_000_000}
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not out:
+        raise ValueError("신용융자 잔고 데이터가 비어 있습니다")
+    with _market_extra_lock:
+        _credit_cache["data"], _credit_cache["ts"] = out, now
+    return out
 
 
 # --- 코스피 당일 투자자별 순매수 추이 (키움 "당일추이"와 같은 데이터) ---

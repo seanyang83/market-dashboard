@@ -205,6 +205,8 @@
     white-space: nowrap;
   }
   .flow-table td:first-child { color: var(--sub); font-weight: 500; }
+  .mv-table th, .mv-table td { padding-left: 3px; padding-right: 3px; font-size: 11px; }
+  .mv-table td small { display: block; font-weight: 500; font-size: 10px; color: var(--sub); }
   .rank-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
   .rank-table th {
     text-align: right; color: var(--sub); font-weight: 600; font-size: 10.5px;
@@ -417,15 +419,23 @@
         </div>
       </div>
       <div class="checklist-item">
-        <div class="checklist-title">최근 7거래일 거래대금</div>
-        <table class="flow-table">
+        <div class="checklist-title">최근 7거래일 — 코스피</div>
+        <table class="flow-table mv-table">
           <thead>
-            <tr><th>날짜</th><th>코스피</th><th>코스닥</th></tr>
+            <tr><th>날짜</th><th>지수</th><th>거래대금</th><th>전일비</th><th>신용잔고</th><th>전일비</th></tr>
           </thead>
-          <tbody id="marketValueHistoryBody">
-            <tr><td colspan="3">불러오는 중</td></tr>
-          </tbody>
+          <tbody id="marketValueKospiBody"><tr><td colspan="6">불러오는 중</td></tr></tbody>
         </table>
+      </div>
+      <div class="checklist-item">
+        <div class="checklist-title">최근 7거래일 — 코스닥</div>
+        <table class="flow-table mv-table">
+          <thead>
+            <tr><th>날짜</th><th>지수</th><th>거래대금</th><th>전일비</th><th>신용잔고</th><th>전일비</th></tr>
+          </thead>
+          <tbody id="marketValueKosdaqBody"><tr><td colspan="6">불러오는 중</td></tr></tbody>
+        </table>
+        <div class="sub-label" style="margin-top:6px;">지수 = 전일 대비 등락률 · 신용잔고 = 신용융자(금융투자협회, 하루 늦게 공표) · ⚠ = 지수가 내린 날 신용잔고가 줄지 않음(반대매매 소진 전)</div>
       </div>
       <div class="error-msg" id="marketValueError"></div>
     </div>
@@ -996,7 +1006,6 @@ async function updateMarketBreadth() {
 
 async function updateMarketTradingValue() {
   const errorEl = document.getElementById("marketValueError");
-  const bodyEl = document.getElementById("marketValueHistoryBody");
   try {
     const data = await fetchJson("/api/market/trading-value");
     const kospiHist = data.kospi || [];
@@ -1024,22 +1033,46 @@ async function updateMarketTradingValue() {
     setToday("Kosdaq", kosdaqHist);
 
     const WEEKDAY_KO = ["일", "월", "화", "수", "목", "금", "토"];
-    const maxLen = Math.max(kospiHist.length, kosdaqHist.length);
-    const rows = [];
-    for (let i = 0; i < maxLen; i++) {
-      const k = kospiHist[i], q = kosdaqHist[i];
-      const dateRaw = (k && k.date) || (q && q.date) || "";
-      let dateFmt = dateRaw;
-      if (dateRaw.length === 8) {
-        const dt = new Date(Date.UTC(+dateRaw.slice(0, 4), +dateRaw.slice(4, 6) - 1, +dateRaw.slice(6, 8)));
-        dateFmt = `${dateRaw.slice(4, 6)}/${dateRaw.slice(6, 8)}(${WEEKDAY_KO[dt.getUTCDay()]})`;
-      }
-      rows.push(`<tr><td>${dateFmt}</td><td>${k ? fmtJo(k.value) : "-"}</td><td>${q ? fmtJo(q.value) : "-"}</td></tr>`);
-    }
-    bodyEl.innerHTML = rows.join("");
+    const fmtDate = (raw) => {
+      if (!raw || raw.length !== 8) return raw || "";
+      const dt = new Date(Date.UTC(+raw.slice(0, 4), +raw.slice(4, 6) - 1, +raw.slice(6, 8)));
+      return `${raw.slice(4, 6)}/${raw.slice(6, 8)}(${WEEKDAY_KO[dt.getUTCDay()]})`;
+    };
+    const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "flat");
+    const signed = (v, d, unit) => `${v > 0 ? "+" : v < 0 ? "-" : ""}${Math.abs(v).toLocaleString("ko-KR", { minimumFractionDigits: d, maximumFractionDigits: d })}${unit}`;
+    const idx = (data.index && !data.index.error) ? data.index : {};
+    const credit = (data.credit && !data.credit.error) ? data.credit : {};
+    const creditDates = Object.keys(credit).sort();
+    const buildRows = (hist, key) => {
+      const closes = idx[key] || {};
+      const idxDates = Object.keys(closes).sort();
+      return hist.slice(0, 7).map((r, i) => {
+        const prev = hist[i + 1];
+        // 지수 등락률: 같은 날짜의 직전 거래일 종가 대비
+        const pd = idxDates[idxDates.indexOf(r.date) - 1];
+        const idxPct = closes[r.date] != null && closes[pd] != null ? (closes[r.date] / closes[pd] - 1) * 100 : null;
+        const valDiff = prev ? r.value - prev.value : null;
+        const c = credit[r.date];
+        const cprevDate = creditDates[creditDates.indexOf(r.date) - 1];
+        const cdiff = c && credit[cprevDate] ? c[key] - credit[cprevDate][key] : null;
+        const warn = idxPct != null && idxPct < 0 && cdiff != null && cdiff >= 0;
+        return `<tr>
+          <td>${fmtDate(r.date)}</td>
+          <td class="${idxPct == null ? "" : cls(idxPct)}">${idxPct == null ? "—" : signed(idxPct, 2, "%")}</td>
+          <td>${fmtJo(r.value)}</td>
+          <td class="${valDiff == null ? "" : cls(valDiff)}">${valDiff == null ? "—" : signed(valDiff / 1e12, 2, "조")}</td>
+          <td>${c ? fmtJo(c[key]) : "—"}</td>
+          <td class="${cdiff == null ? "" : cls(cdiff)}">${cdiff == null ? "—" : signed(Math.round(cdiff / 1e8), 0, "억")}${warn ? " ⚠" : ""}</td>
+        </tr>`;
+      }).join("");
+    };
+    document.getElementById("marketValueKospiBody").innerHTML = buildRows(kospiHist, "kospi");
+    document.getElementById("marketValueKosdaqBody").innerHTML = buildRows(kosdaqHist, "kosdaq");
     errorEl.classList.remove("show");
   } catch (e) {
-    bodyEl.innerHTML = '<tr><td colspan="3">거래대금 데이터를 불러오지 못했습니다</td></tr>';
+    ["marketValueKospiBody", "marketValueKosdaqBody"].forEach((id) => {
+      document.getElementById(id).innerHTML = '<tr><td colspan="6">데이터를 불러오지 못했습니다</td></tr>';
+    });
     errorEl.textContent = e.message;
     errorEl.classList.add("show");
   }

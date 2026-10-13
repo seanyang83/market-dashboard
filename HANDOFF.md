@@ -511,3 +511,17 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
   두 알림 모두 하루 1회/상태 기계라 GitHub 백업(`/api/telegram/check-alert`)이 같이 불러도 중복 안 나감.
 - **남은 단계(원래 계획)**: ~~2단계~~ 5일선 근접·임계값 알림(30분 크론 `threshold-alert.yml`)도 서버 스케줄러로, 3단계 `keepalive.yml` 정리. 하루쯤 1단계를
   관찰한 뒤 진행(사용자 합의).
+
+
+## 16. 종베 "최근 7거래일" 표 확장: 지수·거래대금·신용융자 (2026-10-13)
+
+목적: 지수가 하락할 때 신용융자 잔고가 줄어드는지(반대매매 소진) 같이 보기 — "지수는 빠지는데 잔고가 그대로면 더 하락할 수 있다"(사용자).
+- 화면: 종베 "코스피·코스닥 거래대금" 카드의 7거래일 표를 **코스피/코스닥 두 표**로 분리. 열: 날짜 | 지수(전일 대비 %) | 거래대금 | 전일비(조) |
+  신용잔고(조) | 전일비(억). **⚠ = 지수가 내린 날 신용잔고가 줄지 않음**(증가 또는 보합). 신용잔고는 하루 늦게 나와 오늘 행은 "—".
+- API: `GET /api/market/trading-value` 응답에 `index`({kospi,kosdaq: {YYYYMMDD: 종가}}, 네이버 siseJson 일봉)와 `credit`({YYYYMMDD: {kospi,kosdaq}} 원)가
+  추가됨. 거래대금 이력은 전일비 계산용으로 8일을 받음. 지수/신용 조회가 실패하면 해당 필드에 `{"error":...}`만 들어가고 표는 "—"로 표시(거래대금은 정상).
+- **신용융자 출처 = 금융투자협회 FreeSIS**(공식 API 아님, 키 불필요): `POST https://freesis.kofia.or.kr/meta/getMetaDataList.do`,
+  JSON `{"dmSearch":{"tmpV40":"1000000","tmpV41":"1","tmpV1":"D","tmpV45":시작YYYYMMDD,"tmpV46":끝,"OBJ_NM":"STATSCU0100000070BO"}}`
+  (Referer/Origin 헤더 필요). 응답 `ds1[]`: TMPV1 날짜, TMPV2 합계(=TMPV3+TMPV4), **TMPV3 유가증권(코스피), TMPV4 코스닥**, 단위 백만원(컬럼 의미는 합계 검증으로 추정 —
+  공식 컬럼명은 확인 못 함). 네이버 증시자금동향(`stock.naver.com/api/domestic/market/trendDeposit`, 합계만)의 신용잔고와 약 1% 이내로 비슷하게 움직임.
+  30분 캐시. 주소/약관이 바뀌면 깨질 수 있음.
