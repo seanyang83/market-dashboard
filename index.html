@@ -206,7 +206,12 @@
   }
   .flow-table td:first-child { color: var(--sub); font-weight: 500; }
   .mv-table th, .mv-table td { padding-left: 3px; padding-right: 3px; font-size: 11px; vertical-align: top; }
-  .mv-table th.grp { text-align: center; border-bottom: 1px solid var(--border); }
+  .mv-table th.grp { text-align: center; font-size: 12px; color: var(--text); border-bottom: 1px solid var(--border); }
+  .mv-table th.g1 { background: color-mix(in srgb, var(--accent, #2563eb) 9%, transparent); }
+  .mv-table th.g2 { background: color-mix(in srgb, #8b5cf6 9%, transparent); }
+  .mv-table .sep { border-left: 1px solid var(--border); }
+  .mv-table td.warncell { background: rgba(234, 179, 8, .18); border-radius: 4px; }
+  .mv-table tbody tr + tr td { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
   .mv-table td small { display: block; font-weight: 600; font-size: 10px; }
   .mv-table td small.sub { color: var(--sub); }
   .rank-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
@@ -424,12 +429,12 @@
         <div class="checklist-title">최근 7거래일</div>
         <table class="flow-table mv-table">
           <thead>
-            <tr><th rowspan="2">날짜</th><th colspan="2" class="grp">지수</th><th colspan="2" class="grp">거래대금 (전일비)</th><th colspan="2" class="grp">신용잔고 (전일비)</th></tr>
-            <tr><th>코스피</th><th>코스닥</th><th>코스피</th><th>코스닥</th><th>코스피</th><th>코스닥</th></tr>
+            <tr><th rowspan="2">날짜</th><th colspan="3" class="grp g1">코스피</th><th colspan="3" class="grp g2 sep">코스닥</th></tr>
+            <tr><th>지수</th><th>거래대금</th><th>신용잔고</th><th class="sep">지수</th><th>거래대금</th><th>신용잔고</th></tr>
           </thead>
           <tbody id="marketValueBody"><tr><td colspan="7">불러오는 중</td></tr></tbody>
         </table>
-        <div class="sub-label" style="margin-top:6px;">지수 = 전일 대비 등락률 · 신용잔고 = 신용융자(금융투자협회, 하루 늦게 공표) · ⚠ = 지수가 내린 날 신용잔고가 줄지 않음(반대매매 소진 전)</div>
+        <div class="sub-label" style="margin-top:6px;">지수 = 전일 대비 등락률 · 거래대금·신용잔고 괄호 = 전일 대비 · 신용잔고 = 신용융자(금융투자협회, 하루 늦게 공표) · ⚠(노란 칸) = 지수가 내린 날 신용잔고가 줄지 않음(반대매매 소진 전)</div>
       </div>
       <div class="error-msg" id="marketValueError"></div>
     </div>
@@ -1060,11 +1065,11 @@ async function updateMarketTradingValue() {
     const rows = kospiHist.slice(0, 7).map((r, i) => {
       const k = metrics(kospiHist, "kospi", i);
       const q = metrics(kosdaqHist, "kosdaq", kosdaqHist.findIndex((x) => x.date === r.date));
+      const w = (m) => (m && m.warn ? ' class="warncell"' : "");
       return `<tr>
         <td>${fmtDate(r.date)}</td>
-        <td>${cellIdx(k)}</td><td>${cellIdx(q)}</td>
-        <td>${cellVal(k)}</td><td>${cellVal(q)}</td>
-        <td>${cellCredit(k)}</td><td>${cellCredit(q)}</td>
+        <td>${cellIdx(k)}</td><td>${cellVal(k)}</td><td${w(k)}>${cellCredit(k)}</td>
+        <td class="sep">${cellIdx(q)}</td><td>${cellVal(q)}</td><td${w(q)}>${cellCredit(q)}</td>
       </tr>`;
     });
     document.getElementById("marketValueBody").innerHTML = rows.join("");
