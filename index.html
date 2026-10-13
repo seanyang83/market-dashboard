@@ -629,26 +629,6 @@
     </table>
   </div>
 
-  <div class="section-head">
-    <h2 class="section-title">120분봉 RSI 과매도 규칙 종목</h2>
-  </div>
-  <div class="card">
-    <div class="sub-label">키움 통합 120분봉(08:00 시작, 하루 6봉)에서 RSI(14)가 30 아래로 새로 내려간 신호가 4거래일 안에 3번 쌓이면: 2번째 신호에 절반 · 3번째 신호에 나머지 절반 매수 → 종가가 2번째 신호 가격을 넘으면 절반 매도 → 나머지는 1번째 신호 가격 위 종가 또는 RSI 50에서 매도. 봉이 마감될 때마다(10·12·14·16·18·20시) 텔레그램으로 알려줍니다. 과거 SK하이닉스 데이터 백테스트 기반 참고용입니다.</div>
-    <div class="stock-search-row">
-      <input type="text" id="rsiWatchInput" placeholder="예: SK하이닉스" />
-      <button class="refresh-btn" id="rsiWatchAddBtn">추가</button>
-    </div>
-    <div class="error-msg" id="rsiWatchError"></div>
-    <table class="flow-table" style="margin-top:12px;">
-      <thead>
-        <tr><th>종목</th><th>120분 RSI</th><th></th></tr>
-      </thead>
-      <tbody id="rsiWatchBody">
-        <tr><td colspan="3">불러오는 중</td></tr>
-      </tbody>
-    </table>
-  </div>
-
   <footer>
     데이터 출처: Yahoo Finance(미국 지수·원자재·코인, 실시간 또는 최대 15~20분 지연 시세), 네이버 금융(코스피, 실시간).
     브라우저가 각 API를 직접 호출하면 CORS 정책에 막히기 때문에, 같은 폴더의 <code>server.py</code>가 로컬 프록시 역할을 합니다.
@@ -1189,76 +1169,6 @@ async function handleWatchlistAdd() {
     await fetchJson(`/api/watchlist/add?code=${items[0].code}`);
     input.value = "";
     await loadWatchlist();
-  } catch (e) {
-    errorEl.textContent = "추가 중 오류: " + e.message;
-    errorEl.classList.add("show");
-  } finally {
-    addBtn.disabled = false;
-  }
-}
-
-async function loadRsiWatch() {
-  const bodyEl = document.getElementById("rsiWatchBody");
-  try {
-    const data = await fetchJson("/api/rsi-rule/watch");
-    const items = data.items || [];
-    if (!items.length) {
-      bodyEl.innerHTML = '<tr><td colspan="3">선택된 종목이 없습니다</td></tr>';
-      return;
-    }
-    const slotStart = { A: "08:00", B: "10:00", C: "12:00", D: "14:00", E: "16:00", F: "18:00" };
-    bodyEl.innerHTML = items.map((it) => {
-      const s = it.status;
-      let st = '<span class="sub-label">이력 불러오는 중 (처음엔 1분 정도)</span>';
-      if (s && s.rsi != null) {
-        const cls = s.oversold ? "down" : "";
-        st = `<span class="${cls}"><b>${s.rsi.toFixed(1)}</b>${s.oversold ? " 과매도" : ""}</span>`
-          + `<span class="sub-label"> · ${s.date.slice(4, 6)}/${s.date.slice(6, 8)} ${slotStart[s.slot]}봉 기준${s.signals ? ` · 신호 ${s.signals}회` : ""}</span>`;
-      }
-      return `
-      <tr>
-        <td style="text-align:left;"><b>${it.name}</b><small class="sub-label" style="display:block;">${it.code}</small></td>
-        <td style="text-align:left; white-space:normal;">${st}</td>
-        <td><button class="refresh-btn rsiwatch-remove-btn" data-code="${it.code}">삭제</button></td>
-      </tr>`;
-    }).join("");
-    bodyEl.querySelectorAll(".rsiwatch-remove-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        btn.disabled = true;
-        try {
-          await fetchJson(`/api/rsi-rule/remove?code=${encodeURIComponent(btn.dataset.code)}`);
-          await loadRsiWatch();
-        } catch (e) {
-          btn.disabled = false;
-        }
-      });
-    });
-    // 이력을 받는 중인 종목이 있으면 잠시 뒤 다시 불러온다
-    if (items.some((it) => !it.status)) setTimeout(loadRsiWatch, 15000);
-  } catch (e) {
-    bodyEl.innerHTML = '<tr><td colspan="3">종목을 불러오지 못했습니다</td></tr>';
-  }
-}
-
-async function handleRsiWatchAdd() {
-  const input = document.getElementById("rsiWatchInput");
-  const errorEl = document.getElementById("rsiWatchError");
-  const addBtn = document.getElementById("rsiWatchAddBtn");
-  const q = input.value.trim();
-  if (!q) return;
-  errorEl.classList.remove("show");
-  addBtn.disabled = true;
-  try {
-    const search = await fetchJson(`/api/stock/search?q=${encodeURIComponent(q)}`);
-    const items = search.items || [];
-    if (!items.length) {
-      errorEl.textContent = "검색 결과가 없습니다.";
-      errorEl.classList.add("show");
-      return;
-    }
-    await fetchJson(`/api/rsi-rule/add?code=${items[0].code}`);
-    input.value = "";
-    await loadRsiWatch();
   } catch (e) {
     errorEl.textContent = "추가 중 오류: " + e.message;
     errorEl.classList.add("show");
@@ -1869,11 +1779,6 @@ function setMarketTab(market) {
 document.querySelectorAll(".mv-tab").forEach((b) => b.addEventListener("click", () => setMarketTab(b.dataset.market)));
 try { if (localStorage.getItem("mvTab") === "kosdaq") setMarketTab("kosdaq"); } catch (e) { /* ignore */ }
 
-document.getElementById("rsiWatchAddBtn").addEventListener("click", handleRsiWatchAdd);
-document.getElementById("rsiWatchInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") handleRsiWatchAdd();
-});
-loadRsiWatch();
 
 const DEFAULT_STOCK = { code: "000660", name: "SK하이닉스" };
 stockQueryInput.value = DEFAULT_STOCK.name;

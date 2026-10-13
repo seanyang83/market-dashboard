@@ -1276,7 +1276,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             result = check_threshold_alert()
             result["ma"] = check_ma_proximity_alert()
-            result["rsi"] = check_rsi_rule_alerts()
             self.send_json(200, result)
         except Exception as e:
             self.send_json(502, {"error": str(e)})
@@ -1750,7 +1749,7 @@ def _rsi_refresh_async(code):
 def check_rsi_rule_alerts():
     """120분봉이 막 마감한 시각이면 감시 종목마다 규칙 이벤트를 평가해 텔레그램으로 보낸다.
     같은 (날짜, 봉, 종목)은 한 번만 - 스케줄러 스레드와 30분 알림 크론이 둘 다 불러도 안전하다."""
-    if os.environ.get("RSI_RULE_ALERTS_OFF", "0") == "1":   # 긴급 차단용 스위치
+    if os.environ.get("RSI_RULE_ALERTS_OFF", "1") == "1":   # 기본 꺼짐(2026-10-13 사용자 요청). 켜려면 환경변수 RSI_RULE_ALERTS_OFF=0
         return {"checked": False, "off": True}
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     if now.weekday() >= 5 or not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -2469,7 +2468,8 @@ class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
 
 if __name__ == "__main__":
     _rsi_cache_load()
-    threading.Thread(target=_rsi_scheduler, daemon=True).start()
+    # 120분봉 RSI 규칙 알림은 사용자 요청으로 중단(2026-10-13): 키움 차트와 신호가 안 맞는다고 판단.
+    # threading.Thread(target=_rsi_scheduler, daemon=True).start()   # ← 다시 켜려면 주석 해제
     threading.Thread(target=_summary_scheduler, daemon=True).start()
     threading.Thread(target=_alert_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:

@@ -526,3 +526,13 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
   (Referer/Origin 헤더 필요). 응답 `ds1[]`: TMPV1 날짜, TMPV2 합계(=TMPV3+TMPV4), **TMPV3 유가증권(코스피), TMPV4 코스닥**, 단위 백만원(컬럼 의미는 합계 검증으로 추정 —
   공식 컬럼명은 확인 못 함). 네이버 증시자금동향(`stock.naver.com/api/domestic/market/trendDeposit`, 합계만)의 신용잔고와 약 1% 이내로 비슷하게 움직임.
   30분 캐시. 주소/약관이 바뀌면 깨질 수 있음.
+
+
+## 17. 120분봉 RSI 규칙: 중단됨 (2026-10-13)
+
+사용자가 "120분봉 체크가 안 맞는 것 같다"며 **페이지 카드와 텔레그램 알림을 모두 중단**하라고 함(14장은 이력/참고용으로 남김).
+- 종베 하단 "120분봉 RSI 과매도 규칙 종목" 카드와 JS 제거. 서버 스케줄러(`_rsi_scheduler`) 시작 코드는 주석 처리, 30분 알림 크론 훅(`result["rsi"]`) 제거,
+  `check_rsi_rule_alerts()`는 `RSI_RULE_ALERTS_OFF` 기본값을 "1"로 바꿔 항상 꺼짐. 다시 켜려면: 스레드 주석 해제 + 환경변수 `RSI_RULE_ALERTS_OFF=0` + 카드 복구(git 이력 `0b73135` 이전 index.html).
+- 코드(`rsirule.py`, server.py의 RSI 블록, `/api/rsi-rule/*`, `/api/ops/rsi-rule`, `/api/ops/kis-minute`)는 삭제하지 않고 남겨둠(비활성). Render 환경변수 `TELEGRAM_RSI_WATCH_CODES`도 그대로.
+- 맞지 않는다고 느낀 원인은 확정 못 함. 후보: ① 키움 통합 120분봉과 봉/RSI가 미세하게 다름(우리는 한투 통합 분봉 이력 약 50거래일로 RSI 계산, 키움은 더 긴 이력) ② 신호 정의(30 아래 "새로 내려감")나
+  "4거래일 내 3번 묶음" 해석 차이 ③ 백테스트 표본이 매우 작음. 다시 만들 땐 사용자의 키움 화면(신호 화살표 날짜/시각)과 먼저 1:1 대조할 것.
