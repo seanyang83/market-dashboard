@@ -1517,6 +1517,32 @@ def _update_alert_state(key, pct):
     return events
 
 
+def _kst_now():
+    return datetime.now(timezone.utc) + timedelta(hours=9)
+
+
+def _boot_silent_day(start_min, end_min):
+    """서버가 [start_min, end_min](KST 분) 구간 중에 켜졌으면 오늘 날짜를, 아니면 None.
+    재시작 직후에는 메모리의 '이미 보냈다/발동했다' 기록이 비어 있어, 그냥 평가하면 방금 전에 보낸 알림이
+    다시 나간다(2026-10-13 배포 때 5일선 근접 알림과 정시 요약이 또 나옴). 이 날짜에 한해 첫 평가는
+    상태만 갱신하고 발송하지 않는다."""
+    now = _kst_now()
+    mins = now.hour * 60 + now.minute
+    return now.strftime("%Y%m%d") if now.weekday() < 5 and start_min <= mins <= end_min else None
+
+
+_boot_silent = {"threshold": _boot_silent_day(9 * 60, 15 * 60 + 30), "ma": _boot_silent_day(9 * 60, 20 * 60)}
+
+
+def _consume_boot_silent(key):
+    """오늘 부팅 후 첫 평가면 True(한 번만)."""
+    with _alert_state_lock:
+        if _boot_silent.get(key) == _kst_now().strftime("%Y%m%d"):
+            _boot_silent[key] = None
+            return True
+    return False
+
+
 def check_threshold_alert():
     # 80%/20% 돌파 알림은 정규장(09:00~15:30)에만 - 이후 NXT 시간대에는 보내지
     # 않는다. (5일선 근접 알림은 별도로 20:00까지.)
@@ -1528,8 +1554,11 @@ def check_threshold_alert():
 
     macro_events = _update_alert_state("macro", macro_pct)
     stock_events = _update_alert_state("stock", stock_pct)
+    silent = _consume_boot_silent("threshold")
     if not macro_events and not stock_events:
         return {"sent": False, "macroPct": macro_pct, "stockPct": stock_pct}
+    if silent:
+        return {"sent": False, "silent": "boot", "macroPct": macro_pct, "stockPct": stock_pct}
 
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     lines = [f"⏰ 실시간 알림 · {now.strftime('%m/%d %H:%M')}"]
@@ -1823,6 +1852,16 @@ def release_summary_slot(now, slot):
 
 
 def _summary_scheduler():
+    # 서버가 정시 슬롯 구간(슬롯 시각 +30분) 안에 켜졌다면 그 슬롯은 이미 처리됐다고 본다 - 재시작 때마다
+    # 방금 보낸 정시 요약이 다시 나가는 걸 막는다(메모리 기록이 비기 때문). 그 사이 정말 서버가 죽어 있었다면
+    # 그 슬롯은 건너뛰게 되지만, 항상 켜진 유료 인스턴스에서는 드물다.
+    boot = _kst_now()
+    if boot.weekday() < 5:
+        slot = _summary_slot_due(boot)
+        if slot:
+            with _summary_lock:
+                _summary_done.add((boot.strftime("%Y%m%d"), slot))
+            print(f"summary slot {slot} marked as handled at boot")
     while True:
         try:
             now = datetime.now(timezone.utc) + timedelta(hours=9)
@@ -1985,6 +2024,7 @@ def check_ma_proximity_alert():
     today = now.strftime("%Y-%m-%d")
     events = []
     detail = {}
+    silent = _consume_boot_silent("ma")
     for code in get_ma_watch_codes():
         try:
             quote = _local_get(f"/api/stock/quote?code={code}")
@@ -2015,6 +2055,8 @@ def check_ma_proximity_alert():
 
     if not events:
         return {"sent": False, "detail": detail}
+    if silent:
+        return {"sent": False, "silent": "boot", "detail": detail}
 
     text = "\n".join([f"📍 5일선 근접 알림 · {now.strftime('%m/%d %H:%M')}", "", *events])
     send_telegram_message(text)
