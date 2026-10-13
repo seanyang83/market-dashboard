@@ -434,7 +434,7 @@
           </thead>
           <tbody id="marketValueBody"><tr><td colspan="7">불러오는 중</td></tr></tbody>
         </table>
-        <div class="sub-label" style="margin-top:6px;">지수 = 전일 대비 등락률 · 거래대금·신용잔고 괄호 = 전일 대비 · 신용잔고 = 신용융자(금융투자협회, 하루 늦게 공표) · ⚠(노란 칸) = 지수가 내린 날 신용잔고가 줄지 않음(반대매매 소진 전)</div>
+        <div class="sub-label" style="margin-top:6px;">지수 = 전일 대비 등락률 · 신용잔고 괄호 = 전일 대비 · 신용잔고 = 신용융자(금융투자협회, 하루 늦게 공표) · ⚠(노란 칸) = 지수가 내린 날 신용잔고가 줄지 않음(반대매매 소진 전)</div>
       </div>
       <div class="error-msg" id="marketValueError"></div>
     </div>
@@ -1059,7 +1059,7 @@ async function updateMarketTradingValue() {
                warn: idxPct != null && idxPct < 0 && cdiff != null && cdiff >= 0 };
     };
     const cellIdx = (m) => (m && m.idxPct != null ? `<span class="${cls(m.idxPct)}">${signed(m.idxPct, 2, "%")}</span>` : "—");
-    const cellVal = (m) => !m ? "—" : `${fmtJo(m.value)}<small class="${m.valDiff == null ? "sub" : cls(m.valDiff)}">${m.valDiff == null ? "(—)" : `(${signed(m.valDiff / 1e12, 2, "조")})`}</small>`;
+    const cellVal = (m) => (m ? fmtJo(m.value) : "—");
     const cellCredit = (m) => !m || m.credit == null ? "—<small class=\"sub\">(—)</small>"
       : `${fmtJo(m.credit)}<small class="${m.cdiff == null ? "sub" : cls(m.cdiff)}">${m.cdiff == null ? "(—)" : `(${signed(Math.round(m.cdiff / 1e8), 0, "억")}${m.warn ? " ⚠" : ""})`}</small>`;
     const rows = kospiHist.slice(0, 7).map((r, i) => {
