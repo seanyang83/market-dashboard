@@ -1777,6 +1777,43 @@ def _summary_scheduler():
         time.sleep(20)
 
 
+# --- 임계값(80/20%) 알림 + 5일선 근접 알림을 서버 안 스케줄러로 (30분 간격, 09:00~20:00) ---
+# 둘 다 "하루 한 번/상태 기계"로 중복을 막으므로 GitHub 크론(threshold-alert.yml)이 백업으로 같이 불러도
+# 같은 알림이 두 번 나가지 않는다. 서버가 켜지는 순간 이번 30분 구간을 아직 안 돌았으면 바로 한 번 돈다(따라잡기).
+_alert_last_slot = {"key": None}
+
+
+def run_alert_checks():
+    """임계값 알림 + 5일선 근접 알림 한 번. 정규장 제한 등은 각 함수가 알아서 처리한다."""
+    out = {}
+    try:
+        out["threshold"] = check_threshold_alert()
+    except Exception as e:
+        out["threshold"] = {"error": str(e)}
+        print(f"threshold alert failed: {e}")
+    try:
+        out["ma"] = check_ma_proximity_alert()
+    except Exception as e:
+        out["ma"] = {"error": str(e)}
+        print(f"ma alert failed: {e}")
+    return out
+
+
+def _alert_scheduler():
+    while True:
+        try:
+            now = datetime.now(timezone.utc) + timedelta(hours=9)
+            mins = now.hour * 60 + now.minute
+            if now.weekday() < 5 and 9 * 60 <= mins <= 20 * 60 and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                key = (now.strftime("%Y%m%d"), mins // 30)
+                if key != _alert_last_slot["key"] and is_krx_trading_day():
+                    _alert_last_slot["key"] = key
+                    run_alert_checks()
+        except Exception as e:
+            print(f"alert scheduler error: {e}")
+        time.sleep(20)
+
+
 def _rsi_scheduler():
     # 서버가 켜지자마자 분봉 이력을 받아둔다(처음 60거래일은 한투 호출이 많아 1~3분 걸려서,
     # 첫 봉 마감 때 받기 시작하면 알림이 늦는다).
@@ -2358,6 +2395,7 @@ if __name__ == "__main__":
     _rsi_cache_load()
     threading.Thread(target=_rsi_scheduler, daemon=True).start()
     threading.Thread(target=_summary_scheduler, daemon=True).start()
+    threading.Thread(target=_alert_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()

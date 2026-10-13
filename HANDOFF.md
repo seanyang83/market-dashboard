@@ -506,5 +506,8 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
   브랜치에 CSV 붙임)이 늦게 와도 `/api/ops/score-snapshot`이 보관본을 돌려줘 기록 시각이 15:10/19:40으로 유지됨(없으면 그 순간 계산).
   CSV를 쓰는 쪽은 여전히 GitHub Actions(서버엔 깃 쓰기 토큰 없음).
 - `_compute_scores`에 60초 캐시(정시 요약·점수 기록이 같이 계산해도 외부 호출 2배 방지).
-- **남은 단계**: 2단계 5일선 근접·임계값 알림(30분 크론 `threshold-alert.yml`)도 서버 스케줄러로, 3단계 `keepalive.yml` 정리. 하루쯤 1단계를
+- **2단계(같은 날 앞당겨 완료)**: 오늘 GitHub 크론이 아침 내내 한 번도 안 돌아(임계값 20% 알림도 누락) 바로 이전. `_alert_scheduler`가 09:00~20:00 30분 구간마다
+  `run_alert_checks()`(= `check_threshold_alert()` + `check_ma_proximity_alert()`)를 호출, 서버가 켜질 때 이번 구간을 아직 안 돌았으면 즉시 한 번(따라잡기).
+  두 알림 모두 하루 1회/상태 기계라 GitHub 백업(`/api/telegram/check-alert`)이 같이 불러도 중복 안 나감.
+- **남은 단계(원래 계획)**: ~~2단계~~ 5일선 근접·임계값 알림(30분 크론 `threshold-alert.yml`)도 서버 스케줄러로, 3단계 `keepalive.yml` 정리. 하루쯤 1단계를
   관찰한 뒤 진행(사용자 합의).
