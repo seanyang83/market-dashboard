@@ -1164,11 +1164,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not is_krx_trading_day():
             self.send_json(200, {"ok": True, "skipped": "market_holiday"})
             return
+        # 서버 안 스케줄러(_summary_scheduler)가 이미 이 시각 요약을 보냈으면(GitHub 크론이 늦게 와도)
+        # 중복 발송하지 않는다. 수동 테스트는 force=1로 우회(이 경우 시각 기록도 안 남김).
+        force = self.query_param("force") == "1"
+        if not force:
+            now = datetime.now(timezone.utc) + timedelta(hours=9)
+            slot, fresh = claim_summary_slot(now, window=150)
+            if slot and not fresh:
+                self.send_json(200, {"ok": True, "skipped": "already_sent", "slot": slot})
+                return
         try:
-            text = build_dashboard_summary_text()
-            send_telegram_message(text)
+            send_telegram_message(build_dashboard_summary_text())
             self.send_json(200, {"ok": True})
         except Exception as e:
+            if not force and slot and fresh:
+                release_summary_slot(now, slot)
             self.send_json(502, {"error": str(e)})
 
     def handle_check_threshold_alert(self):
@@ -1224,7 +1234,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"ok": True, "skipped": "market_holiday"})
             return
         try:
-            self.send_json(200, {"ok": True, "row": build_score_snapshot(self.query_param("slot") or "")})
+            slot = self.query_param("slot") or ""
+            today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y-%m-%d")
+            # 서버 스케줄러가 15:10/19:40에 정시 계산해 둔 것이 있으면 그것을 돌려준다
+            # (GitHub 크론이 늦게 와도 기록 시각이 어긋나지 않게).
+            row = _score_snap.get((today, slot)) or build_score_snapshot(slot)
+            self.send_json(200, {"ok": True, "row": row})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -1691,6 +1706,77 @@ def check_rsi_rule_alerts():
     return {"checked": True, "sent": sent}
 
 
+# --- 정시 요약 / 점수 기록을 서버 안 스케줄러로 (Render 유료 인스턴스 = 항상 켜짐) ---
+# GitHub Actions 크론은 10~30분 늦거나 아예 안 도는 날이 있어서(2026-10-13 아침 요약 누락),
+# 서버가 직접 시각을 맞춘다. GitHub 크론은 백업으로 남겨두되, 이미 보낸 슬롯이면 서버가 건너뛴다.
+SUMMARY_SLOTS = ((9, 10), (12, 10), (15, 10), (17, 10), (19, 40))   # KST
+SCORE_LOG_SLOTS = {"1510": "close", "1940": "extended"}
+SUMMARY_WINDOW_MIN = 30     # 슬롯 시각 + 30분 안이면 그 슬롯으로 본다(재시작/지연 따라잡기)
+_summary_done = set()       # (YYYYMMDD, "HHMM") - 보냈거나 보내는 중
+_summary_attempts = {}
+_summary_lock = threading.Lock()
+_score_snap = {}            # {("YYYY-MM-DD", "close"|"extended"): row}
+
+
+def _summary_slot_due(now, window=SUMMARY_WINDOW_MIN):
+    """지금 시각이 속한 정시 슬롯 = 가장 최근 슬롯 시각부터 window분 안이면 그 슬롯, 아니면 None."""
+    mins = now.hour * 60 + now.minute
+    best = None
+    for h, m in SUMMARY_SLOTS:
+        if h * 60 + m <= mins <= h * 60 + m + window:
+            best = f"{h:02d}{m:02d}"
+    return best
+
+
+def claim_summary_slot(now, window=SUMMARY_WINDOW_MIN):
+    """지금 시각의 정시 슬롯을 선점한다. -> (slot, fresh). slot이 None이면 정시 구간이 아님.
+    fresh가 False면 이미 보낸 슬롯. GitHub 크론 호출은 지연(최대 1시간쯤)을 감안해 window를 크게 준다."""
+    slot = _summary_slot_due(now, window)
+    if not slot:
+        return None, False
+    key = (now.strftime("%Y%m%d"), slot)
+    with _summary_lock:
+        if key in _summary_done:
+            return slot, False
+        _summary_done.add(key)
+    return slot, True
+
+
+def release_summary_slot(now, slot):
+    with _summary_lock:
+        _summary_done.discard((now.strftime("%Y%m%d"), slot))
+
+
+def _summary_scheduler():
+    while True:
+        try:
+            now = datetime.now(timezone.utc) + timedelta(hours=9)
+            if now.weekday() < 5 and _summary_slot_due(now) and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID \
+                    and is_krx_trading_day():
+                slot, fresh = claim_summary_slot(now)
+                if slot and fresh:
+                    key = (now.strftime("%Y%m%d"), slot)
+                    try:
+                        # 점수 기록용 스냅샷은 정시에 계산해 둔다(요약과 같은 점수, 60초 캐시 공유).
+                        if slot in SCORE_LOG_SLOTS:
+                            row = build_score_snapshot(SCORE_LOG_SLOTS[slot])
+                            _score_snap[(row["date"], row["slot"])] = row
+                        send_telegram_message(build_dashboard_summary_text())
+                        print(f"summary sent {key}")
+                    except Exception as e:
+                        release_summary_slot(now, slot)
+                        n = _summary_attempts.get(key, 0) + 1
+                        _summary_attempts[key] = n
+                        print(f"summary failed {key} attempt {n}: {e}")
+                        if n >= 3:                  # 계속 실패하면 이 슬롯은 포기(GitHub 백업이 시도할 수 있음)
+                            with _summary_lock:
+                                _summary_done.add(key)
+                        time.sleep(60)
+        except Exception as e:
+            print(f"summary scheduler error: {e}")
+        time.sleep(20)
+
+
 def _rsi_scheduler():
     # 서버가 켜지자마자 분봉 이력을 받아둔다(처음 60거래일은 한투 호출이 많아 1~3분 걸려서,
     # 첫 봉 마감 때 받기 시작하면 알림이 늦는다).
@@ -2133,7 +2219,21 @@ def _volume_rank_lines():
     return lines
 
 
+_scores_cache = {"ts": 0, "val": None}
+_scores_cache_lock = threading.Lock()
+
+
 def _compute_scores():
+    """60초 캐시 - 같은 시각에 정시 요약과 점수 기록이 같이 계산해도 외부 호출이 두 배가 되지 않게."""
+    with _scores_cache_lock:
+        if _scores_cache["val"] is not None and time.time() - _scores_cache["ts"] < 60:
+            return _scores_cache["val"]
+        val = _compute_scores_uncached()
+        _scores_cache["val"], _scores_cache["ts"] = val, time.time()
+        return val
+
+
+def _compute_scores_uncached():
     macro_signals = []
     macro_lines = []
     for key, label, symbol, sentiment, prefix, decimals in [
@@ -2257,6 +2357,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.TCPServer):
 if __name__ == "__main__":
     _rsi_cache_load()
     threading.Thread(target=_rsi_scheduler, daemon=True).start()
+    threading.Thread(target=_summary_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()

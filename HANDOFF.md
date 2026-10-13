@@ -357,7 +357,7 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
   두 페이지에 같은 요소(차트·표·종목 검색 등)가 있어 모호하면 어느 쪽인지 되묻거나 양쪽 필요 여부를 알릴 것.
 - **텔레 테스트 발송**: 사용자가 "테스트 보내줘"라고 할 때만 보낸다(실제 구독자 3명 채널). 키(`TELEGRAM_SUMMARY_KEY`)는
   저장소에 두지 않고 사용자 로컬 파일 `~/.config/jongbae/telegram_key`(chmod 600)에 있다 — 새 환경이면 사용자에게
-  키를 받아 같은 방식으로 저장하고, 값은 화면/답변에 찍지 말 것. 호출: `GET /api/telegram/send-summary?key=<키>`.
+  키를 받아 같은 방식으로 저장하고, 값은 화면/답변에 찍지 말 것. 호출: `GET /api/telegram/send-summary?key=<키>&force=1` (force=1: 정시 중복 검사 우회, 2026-10-13~).
 - 코드 변경 전에 화면 스크린샷으로 실제 렌더링 결과를 보여주면서 요구사항을
   구체화하는 방식을 선호함 (텔레그램 메시지 포맷도 스크린샷 기반으로 여러
   차례 반복 수정).
@@ -490,3 +490,21 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
   기본 000660). 각 종목의 현재 120분 RSI·신호 횟수 표시(`/api/rsi-rule/watch|add|remove`).
 - **점검/재현**: `GET /api/ops/rsi-rule?key=<TELEGRAM_SUMMARY_KEY>&code=000660&asof=YYYYMMDD&slot=A~F&ndays=45[&send=1]` — 특정 봉에서
   규칙이 뭘 알렸을지 계산(과거 재현은 [테스트·과거 재현] 표시, send=1일 때만 발송). 분봉 원본: `/api/ops/kis-minute?...&mkt=UN`.
+
+
+## 15. 서버 안 스케줄러로 이전 (2026-10-13, 1단계)
+
+배경: GitHub Actions 크론이 10~30분 늦거나 아예 안 도는 날이 있어(2026-10-13 아침 요약 누락, Actions는 정상 표시) Render를 **유료 인스턴스
+($7, 0.5 CPU/512MB, 항상 켜짐)**로 올리고 시각을 서버가 직접 맞추게 함. 무료 인스턴스는 15분 무접속이면 잠들어 이 방식이 불가능했음.
+- **정시 요약**: `_summary_scheduler`(20초 주기 스레드)가 09:10·12:10·15:10·17:10·19:40 KST 거래일에 `build_dashboard_summary_text()` 발송.
+  슬롯 시각+30분 안이면 그 슬롯으로 보고(재시작/지연 따라잡기), 최대 3번 재시도.
+- **중복 방지**: GitHub 크론(`telegram-summary.yml`)은 **백업으로 남겨둠** — 서버가 이미 보낸 슬롯이면 `send-summary`가
+  `{"skipped":"already_sent"}`로 건너뜀(`claim_summary_slot`, GitHub 호출은 지연을 감안해 슬롯 시각+150분까지 같은 슬롯으로 봄).
+  서버가 못 보냈으면(스케줄러 실패) GitHub 호출이 대신 보내고 슬롯을 선점. 상태는 메모리라 재시작 직후엔 중복 가능.
+  **수동 테스트는 `&force=1`** (중복 검사/기록 우회): `GET /api/telegram/send-summary?key=<키>&force=1`.
+- **점수 기록**: 15:10(close)·19:40(extended) 스케줄러가 정시에 스냅샷을 계산해 메모리(`_score_snap`)에 보관, `score-log.yml`(GitHub, `data`
+  브랜치에 CSV 붙임)이 늦게 와도 `/api/ops/score-snapshot`이 보관본을 돌려줘 기록 시각이 15:10/19:40으로 유지됨(없으면 그 순간 계산).
+  CSV를 쓰는 쪽은 여전히 GitHub Actions(서버엔 깃 쓰기 토큰 없음).
+- `_compute_scores`에 60초 캐시(정시 요약·점수 기록이 같이 계산해도 외부 호출 2배 방지).
+- **남은 단계**: 2단계 5일선 근접·임계값 알림(30분 크론 `threshold-alert.yml`)도 서버 스케줄러로, 3단계 `keepalive.yml` 정리. 하루쯤 1단계를
+  관찰한 뒤 진행(사용자 합의).
