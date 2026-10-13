@@ -210,6 +210,13 @@
   .mv-table th, .mv-table td { padding-left: 3px; padding-right: 3px; font-size: 12px; vertical-align: top; }
   .mv-table td small { display: block; font-weight: 600; font-size: 10.5px; }
   .mv-table td small.sub { color: var(--sub); }
+  .mv-tabs { display: flex; gap: 6px; margin-top: 8px; }
+  .mv-tab {
+    flex: 1; padding: 6px 0; border-radius: 8px; border: 1px solid var(--border); background: transparent;
+    color: var(--sub); font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit;
+  }
+  .mv-tab.active.g1 { background: color-mix(in srgb, var(--accent, #2563eb) 12%, transparent); color: var(--text); border-color: color-mix(in srgb, var(--accent, #2563eb) 45%, transparent); }
+  .mv-tab.active.g2 { background: color-mix(in srgb, #8b5cf6 12%, transparent); color: var(--text); border-color: color-mix(in srgb, #8b5cf6 45%, transparent); }
   .mv-band { margin-top: 8px; padding: 4px 8px; border-radius: 6px; font-size: 12.5px; font-weight: 700; }
   .mv-band.g1 { background: color-mix(in srgb, var(--accent, #2563eb) 10%, transparent); }
   .mv-band.g2 { background: color-mix(in srgb, #8b5cf6 10%, transparent); }
@@ -428,13 +435,15 @@
       </div>
       <div class="checklist-item">
         <div class="checklist-title">최근 7거래일</div>
-        <div class="mv-band g1">코스피</div>
-        <table class="flow-table mv-table">
+        <div class="mv-tabs" role="tablist">
+          <button class="mv-tab active g1" data-market="kospi" role="tab" aria-selected="true">코스피</button>
+          <button class="mv-tab g2" data-market="kosdaq" role="tab" aria-selected="false">코스닥</button>
+        </div>
+        <table class="flow-table mv-table" id="mvTableKospi">
           <thead><tr><th>날짜</th><th>지수</th><th>거래대금</th><th>신용잔고</th></tr></thead>
           <tbody id="marketValueKospiBody"><tr><td colspan="4">불러오는 중</td></tr></tbody>
         </table>
-        <div class="mv-band g2" style="margin-top:14px;">코스닥</div>
-        <table class="flow-table mv-table">
+        <table class="flow-table mv-table" id="mvTableKosdaq" style="display:none;">
           <thead><tr><th>날짜</th><th>지수</th><th>거래대금</th><th>신용잔고</th></tr></thead>
           <tbody id="marketValueKosdaqBody"><tr><td colspan="4">불러오는 중</td></tr></tbody>
         </table>
@@ -1846,6 +1855,19 @@ document.getElementById("watchlistInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") handleWatchlistAdd();
 });
 loadWatchlist();
+
+function setMarketTab(market) {
+  document.getElementById("mvTableKospi").style.display = market === "kospi" ? "" : "none";
+  document.getElementById("mvTableKosdaq").style.display = market === "kosdaq" ? "" : "none";
+  document.querySelectorAll(".mv-tab").forEach((b) => {
+    const on = b.dataset.market === market;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-selected", String(on));
+  });
+  try { localStorage.setItem("mvTab", market); } catch (e) { /* 저장 불가여도 화면은 동작 */ }
+}
+document.querySelectorAll(".mv-tab").forEach((b) => b.addEventListener("click", () => setMarketTab(b.dataset.market)));
+try { if (localStorage.getItem("mvTab") === "kosdaq") setMarketTab("kosdaq"); } catch (e) { /* ignore */ }
 
 document.getElementById("rsiWatchAddBtn").addEventListener("click", handleRsiWatchAdd);
 document.getElementById("rsiWatchInput").addEventListener("keydown", (e) => {
