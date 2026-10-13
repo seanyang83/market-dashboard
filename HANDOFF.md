@@ -16,9 +16,10 @@ server.py                          백엔드: 정적 파일 서버 + 데이터 �
 index.html                         프론트엔드: 순수 HTML/CSS/JS, 프레임워크 없음
 leader.py / leader.html            주도주 분석(별도 페이지 /leader): 분기 실적 영업이익률 변화율 + 주봉 4-13-26-52 정배열
 render.yaml                        Render 배포 설정 (python3 server.py 실행)
-.github/workflows/keepalive.yml    10분마다 핑 (Render 무료 티어 슬립 방지)
-.github/workflows/telegram-summary.yml  평일 09:10/12:10/15:10/17:10/19:40 텔레그램 요약 발송 트리거
-.github/workflows/threshold-alert.yml   평일 09:00~20:00 30분마다 실시간 임계값/5일선 근접 체크 트리거
+.github/workflows/keepalive.yml    [2026-10-13 삭제] 10분마다 핑 — 유료 인스턴스(항상 켜짐)라 불필요
+.github/workflows/telegram-summary.yml  [2026-10-13 삭제] 정시 요약은 서버 스케줄러가 직접 발송
+.github/workflows/threshold-alert.yml   [2026-10-13 삭제] 임계값/5일선 알림도 서버 스케줄러가 직접 처리
+.github/workflows/score-log.yml      점수 기록(data 브랜치 CSV) — 유일하게 남은 워크플로(깃에 쓰려면 Actions 토큰 필요)
 .kis_token_cache.json              KIS 토큰 로컬 캐시 (gitignore 대상, Render에선 매 배포마다 사라짐)
 .claude/launch.json                로컬 프리뷰용 (Claude Code 개발 환경 설정)
 ```
@@ -550,3 +551,14 @@ Render 무료 티어는 ~15분 무트래픽 시 슬립 → `keepalive.yml`이 10
 ### 18-b. GitHub 크론이 몇 시간 늦게 와서 밤에 정시 요약이 나간 건 (2026-10-13 23:04)
 GitHub 크론(백업)의 19:40 슬롯 호출이 **23:04에 도착**(3시간 24분 지연) → 서버의 중복 방지 창(슬롯+150분)이 이미 끝나 "슬롯 아님"으로 보고 **새 요약으로 발송**. 수정: `send-summary`는 자동 호출(force 없음)이
 어느 슬롯 창에도 안 속하면 `{"skipped":"outside_schedule"}`로 건너뜀(수동 테스트는 `force=1`). 같은 지연으로 `Log score snapshot`도 늦게 돌지만 서버가 정시에 계산해 둔 스냅샷(15:10/19:40)을 돌려줘 기록 시각은 유지됨.
+
+
+## 19. 3단계 완료: GitHub 크론 정리 (2026-10-13)
+
+Render 유료 인스턴스(항상 켜짐) + 서버 안 스케줄러로 모든 알림이 서버에서 나가게 되어 GitHub 크론 워크플로를 **삭제**:
+`keepalive.yml`(서버 깨우기), `telegram-summary.yml`(정시 요약 백업), `threshold-alert.yml`(30분 알림 백업). 이유: GitHub 예약 실행이 몇 시간씩 늦거나 아예 안 도는 날이 있었고(10-13 아침 요약 누락,
+19:40 슬롯이 23:04에 도착), 백업이 늦게 와도 서버가 건너뛰도록 막아둔 상태라 실익이 없음. **남은 워크플로: `score-log.yml`(점수 기록 CSV)만.**
+- 지금 알림 구조: 정시 요약 = `_summary_scheduler`(09:10/12:10/15:10/17:10/19:40), 임계값(80/20%)+5일선 = `_alert_scheduler`(09:00~20:00 30분 구간). 둘 다 부팅 직후 첫 평가는 조용히(18장).
+- `/api/telegram/send-summary`, `/api/telegram/check-alert`는 수동 호출용으로 남아 있음(키 보호). 수동 테스트 `send-summary`는 `force=1` 필수.
+- 서버가 죽어 있는 동안은 알림이 나가지 않음(백업 없음) — Render가 자동 재시작하지만 그 사이 정시를 놓치면 그 슬롯은 건너뜀. 필요하면 외부 모니터링(UptimeRobot 등)으로 `/healthz` 감시를 붙일 것.
+- 앞의 6·8장에 남은 "GitHub Actions cron이 호출" 설명은 이력이며 더 이상 현재 구조가 아님.
