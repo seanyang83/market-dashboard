@@ -1249,6 +1249,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if slot and not fresh:
                 self.send_json(200, {"ok": True, "skipped": "already_sent", "slot": slot})
                 return
+            if not slot:
+                # 어느 정시 슬롯에도 속하지 않는 시각의 자동 호출(GitHub 크론이 몇 시간씩 늦게 도는 경우,
+                # 2026-10-13 19:40 호출이 23:04에 도착)은 보내지 않는다. 수동 테스트는 force=1.
+                self.send_json(200, {"ok": True, "skipped": "outside_schedule"})
+                return
         try:
             send_telegram_message(build_dashboard_summary_text())
             self.send_json(200, {"ok": True})
