@@ -675,6 +675,79 @@ def _fetch_volume_rank():
     return result
 
 
+# --- 거래대금 TOP10 종목의 수급 체크(외국인·기관·프로그램 순매수) ---
+# "조건 충족" = 당일 상승 + 외국인 순매수 + 기관 순매수 + 프로그램 순매수가 모두 +. 값은 종목 체크리스트가
+# 쓰는 것과 같은 한투 TR(외국인/기관 = 투자자 가집계 investor-trend-estimate, 없으면 종목별 일별 수급의
+# 오늘 행 / 프로그램 = program-trade-by-stock 통합). TOP10이 종목마다 호출 2번(=20번)이라 30초 캐시.
+VOLUME_RANK_FLOWS_TTL = 30
+_volume_rank_flows_cache = {"data": None, "ts": 0, "key": None}
+_volume_rank_flows_lock = threading.Lock()
+
+
+def _stock_flow_signs(code):
+    """-> {"foreignQty","institutionQty","programNetAmount"} (없으면 None 값). 한 종목 호출 2번."""
+    out = {"foreignQty": None, "institutionQty": None, "programNetAmount": None}
+    try:
+        data = kis_get("/uapi/domestic-stock/v1/quotations/investor-trend-estimate", "HHPTJ04160200",
+                       {"MKSC_SHRN_ISCD": code})
+        rows = data.get("output2") or []
+        if rows:
+            latest = max(rows, key=lambda r: int(r.get("bsop_hour_gb", 0) or 0))
+            out["foreignQty"] = int(latest.get("frgn_fake_ntby_qty", 0))
+            out["institutionQty"] = int(latest.get("orgn_fake_ntby_qty", 0))
+    except Exception:
+        pass
+    if out["foreignQty"] is None:
+        # 가집계가 없는 시간(장 마감 후 등)에는 종목별 일별 수급의 오늘 행으로 대신한다.
+        try:
+            data = kis_get("/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily", "FHPTJ04160001",
+                           {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": "",
+                            "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": ""})
+            today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+            row = next((r for r in (data.get("output2") or []) if r.get("stck_bsop_date") == today), None)
+            if row:
+                out["foreignQty"] = int(row.get("frgn_ntby_qty", 0))
+                out["institutionQty"] = int(row.get("orgn_ntby_qty", 0))
+        except Exception:
+            pass
+    try:
+        data = kis_get("/uapi/domestic-stock/v1/quotations/program-trade-by-stock", "FHPPG04650101",
+                       {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code})
+        rows = data.get("output") or []
+        if rows:
+            out["programNetAmount"] = int(rows[0].get("whol_smtn_ntby_tr_pbmn", 0))
+    except Exception:
+        pass
+    return out
+
+
+def _fetch_volume_rank_flows():
+    rank = _fetch_volume_rank()
+    key = tuple(r["code"] for r in rank)
+    now = time.time()
+    with _volume_rank_flows_lock:
+        c = _volume_rank_flows_cache
+        if c["data"] and c["key"] == key and now - c["ts"] < VOLUME_RANK_FLOWS_TTL:
+            return c["data"]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        results = list(ex.map(lambda r: _stock_flow_signs(r["code"]), rank))
+    flows = {}
+    for r, f in zip(rank, results):
+        vals = (f["foreignQty"], f["institutionQty"], f["programNetAmount"])
+        known = all(v is not None for v in vals)
+        flows[r["code"]] = {
+            **f,
+            "up": r["changePct"] > 0,
+            "known": known,
+            "pass": bool(known and r["changePct"] > 0 and all(v > 0 for v in vals)),
+        }
+    data = {"flows": flows, "asOf": (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%H:%M:%S")}
+    with _volume_rank_flows_lock:
+        _volume_rank_flows_cache.update(data=data, ts=now, key=key)
+    return data
+
+
 # --- 대시보드 접근 비밀번호 ---
 # DASHBOARD_PASSWORD(Render 환경변수)를 설정하면 페이지와 /api/* 전부 로그인이
 # 필요해진다. 한 번 로그인하면 쿠키를 30일간 기억해서 휴대폰에서도 매번 칠
@@ -862,6 +935,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_watchlist_remove()
         elif self.path.startswith("/api/watchlist"):
             self.handle_watchlist_get()
+        elif self.path.startswith("/api/market/volume-rank-flows"):
+            self.handle_volume_rank_flows()
         elif self.path.startswith("/api/market/volume-rank"):
             self.handle_volume_rank()
         elif self.path.startswith("/api/kospi/flow-trend"):
@@ -1227,6 +1302,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         try:
             self.send_json(200, {"rows": _fetch_volume_rank()})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_volume_rank_flows(self):
+        if not KIS_APP_KEY or not KIS_APP_SECRET:
+            self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
+            return
+        try:
+            self.send_json(200, _fetch_volume_rank_flows())
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 

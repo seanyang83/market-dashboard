@@ -224,6 +224,10 @@
   .mv-band.g2 { background: color-mix(in srgb, #8b5cf6 10%, transparent); }
   .mv-table td.warncell { background: rgba(234, 179, 8, .18); border-radius: 4px; }
   .mv-table tbody tr + tr td { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
+  .vr-toggle { font-size: 12.5px; color: var(--sub); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .flow-marks { display: block; font-size: 10px; color: var(--sub); font-weight: 500; margin-top: 1px; white-space: nowrap; letter-spacing: -0.2px; }
+  .flow-marks b { color: var(--up); }
+  .rank-table tr.hit td { background: color-mix(in srgb, var(--tl-yellow) 12%, transparent); }
   .rank-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
   .rank-table th {
     text-align: right; color: var(--sub); font-weight: 600; font-size: 10.5px;
@@ -239,6 +243,14 @@
   .rank-table td:nth-child(2):hover { color: var(--accent); text-decoration: underline; }
   @media (max-width: 640px) {
     .grid { grid-template-columns: repeat(2, 1fr); }
+    .rank-table { table-layout: fixed; font-size: 11.5px; }
+    .rank-table th, .rank-table td { padding: 5px 3px; }
+    .rank-table th:nth-child(1), .rank-table td:nth-child(1) { width: 9%; text-align: left; white-space: nowrap; }
+    .rank-table th:nth-child(2) { width: 28%; }
+    .rank-table th:nth-child(3) { width: 22%; }
+    .rank-table th:nth-child(4) { width: 21%; }
+    .rank-table th:nth-child(5) { width: 20%; }
+    .rank-table td:nth-child(2) { white-space: normal; overflow-wrap: anywhere; }
     .card-compact { padding: 12px 14px; }
     .card-compact .label { font-size: 11px; }
     .card-compact .sub-label { display: none; }
@@ -598,10 +610,14 @@
 
   <div class="section-head">
     <h2 class="section-title">거래대금 순위 TOP10</h2>
-    <button class="refresh-btn" id="volumeRankRefreshBtn">새로고침</button>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <label class="vr-toggle"><input type="checkbox" id="volumeRankFilter" /> 조건 충족만 보기</label>
+      <button class="refresh-btn" id="volumeRankRefreshBtn">새로고침</button>
+    </div>
   </div>
   <div class="card">
     <div class="sub-label">코스피·코스닥 통합 · 관리종목/거래정지/ETF·ETN 제외 · 실시간 당일 누적 거래대금 · 종목명 클릭 시 아래 체크리스트에 반영</div>
+    <div class="sub-label" style="margin-top:2px;">상 = 당일 상승 · 외 = 외국인 순매수 · 기 = 기관 순매수 · 프 = 프로그램 순매수 (✔ = +). 네 가지가 모두 ✔면 "조건 충족"</div>
     <table class="rank-table">
       <thead>
         <tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr>
@@ -1087,6 +1103,55 @@ async function updateMarketTradingValue() {
   }
 }
 
+let volumeRankRows = [];
+let volumeRankFlows = null;   // {code: {up, foreignQty, institutionQty, programNetAmount, known, pass}} - 로드 전 null
+
+function flowMarks(r, f) {
+  if (!f) return '<small class="flow-marks">수급 확인 중…</small>';
+  const one = (label, ok) => (ok == null ? `${label}?` : ok ? `${label}<b>✔</b>` : `${label}✖`);
+  const up = r.changePct > 0;
+  return `<small class="flow-marks">${one("상", up)} ${one("외", f.foreignQty == null ? null : f.foreignQty > 0)} ${one("기", f.institutionQty == null ? null : f.institutionQty > 0)} ${one("프", f.programNetAmount == null ? null : f.programNetAmount > 0)}</small>`;
+}
+
+function renderVolumeRank() {
+  const bodyEl = document.getElementById("volumeRankBody");
+  const onlyHits = document.getElementById("volumeRankFilter").checked;
+  let rows = volumeRankRows;
+  if (onlyHits) {
+    if (!volumeRankFlows) {
+      bodyEl.innerHTML = '<tr><td colspan="5">수급 확인 중… (종목당 한투 호출 2번, 몇 초 걸립니다)</td></tr>';
+      return;
+    }
+    rows = rows.filter((r) => volumeRankFlows[r.code] && volumeRankFlows[r.code].pass);
+    if (!rows.length) {
+      bodyEl.innerHTML = `<tr><td colspan="5">조건을 모두 만족하는 종목이 없습니다 (TOP10 ${volumeRankRows.length}개 확인)</td></tr>`;
+      return;
+    }
+  }
+  bodyEl.innerHTML = rows.map((r) => {
+    const dir = r.dir || "flat";
+    const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
+    const pct = r.changePct;
+    const f = volumeRankFlows ? volumeRankFlows[r.code] : null;
+    return `<tr class="${f && f.pass ? "hit" : ""}">
+      <td>${r.rank}</td>
+      <td data-code="${r.code}" data-name="${r.name}">${r.name}${flowMarks(r, f)}</td>
+      <td>${Math.round(r.price).toLocaleString("ko-KR")}</td>
+      <td class="${dir}">${arrow} ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</td>
+      <td>${fmtEokAbs(r.tradingValue)}</td>
+    </tr>`;
+  }).join("");
+  bodyEl.querySelectorAll("td[data-code]").forEach((td) => {
+    td.addEventListener("click", () => {
+      currentStockCode = td.dataset.code;
+      currentStockName = td.dataset.name;
+      stockQueryInput.value = td.dataset.name;
+      runStockChecklist(currentStockCode, currentStockName);
+      document.getElementById("stockCard").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+}
+
 async function updateVolumeRank() {
   const bodyEl = document.getElementById("volumeRankBody");
   const errorEl = document.getElementById("volumeRankError");
@@ -1097,27 +1162,17 @@ async function updateVolumeRank() {
     const rows = data.rows || [];
     if (!rows.length) throw new Error("데이터 없음");
     errorEl.classList.remove("show");
-    bodyEl.innerHTML = rows.map((r) => {
-      const dir = r.dir || "flat";
-      const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
-      const pct = r.changePct;
-      return `<tr>
-        <td>${r.rank}</td>
-        <td data-code="${r.code}" data-name="${r.name}">${r.name}</td>
-        <td>${Math.round(r.price).toLocaleString("ko-KR")}</td>
-        <td class="${dir}">${arrow} ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</td>
-        <td>${fmtEokAbs(r.tradingValue)}</td>
-      </tr>`;
-    }).join("");
-    bodyEl.querySelectorAll("td[data-code]").forEach((td) => {
-      td.addEventListener("click", () => {
-        currentStockCode = td.dataset.code;
-        currentStockName = td.dataset.name;
-        stockQueryInput.value = td.dataset.name;
-        runStockChecklist(currentStockCode, currentStockName);
-        document.getElementById("stockCard").scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-    });
+    volumeRankRows = rows;
+    volumeRankFlows = null;     // 순위가 바뀌었을 수 있어 수급은 다시 받는다
+    renderVolumeRank();
+    // 수급 체크는 한투 호출이 20번이라 순위를 먼저 보여준 뒤 따로 받아서 표시를 덧붙인다 (서버 30초 캐시).
+    try {
+      const fl = await fetchJson("/api/market/volume-rank-flows");
+      volumeRankFlows = fl.flows || {};
+    } catch (e) {
+      volumeRankFlows = {};
+    }
+    renderVolumeRank();
   } catch (e) {
     bodyEl.innerHTML = '<tr><td colspan="5">거래대금 순위를 불러오지 못했습니다</td></tr>';
     errorEl.textContent = e.message;
@@ -1772,6 +1827,11 @@ refreshBtn.addEventListener("click", refreshAll);
 refreshAll();
 
 document.getElementById("volumeRankRefreshBtn").addEventListener("click", updateVolumeRank);
+try { document.getElementById("volumeRankFilter").checked = localStorage.getItem("vrFilter") === "1"; } catch (e) { /* ignore */ }
+document.getElementById("volumeRankFilter").addEventListener("change", (e) => {
+  try { localStorage.setItem("vrFilter", e.target.checked ? "1" : "0"); } catch (err) { /* ignore */ }
+  renderVolumeRank();
+});
 updateVolumeRank();
 
 document.getElementById("watchlistAddBtn").addEventListener("click", handleWatchlistAdd);
