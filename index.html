@@ -226,7 +226,10 @@
   .mv-table tbody tr + tr td { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
   .vr-toggle { font-size: 12.5px; color: var(--sub); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
   .flow-marks { display: block; font-size: 10px; color: var(--sub); font-weight: 500; margin-top: 1px; white-space: nowrap; letter-spacing: -0.2px; }
-  .flow-marks b { color: var(--up); }
+  .flow-marks b { color: var(--sub); font-weight: 700; }
+  tr.hit .flow-marks b { color: var(--up); font-weight: 900; font-size: 12.5px; }
+  tr.hit td:nth-child(2) .nm { color: var(--up); }
+  .hit-badge { display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 999px; background: var(--up); color: #fff; font-size: 9.5px; font-weight: 800; letter-spacing: 0; vertical-align: 1px; }
   .rank-table tr.hit td { background: color-mix(in srgb, var(--tl-yellow) 12%, transparent); }
   .rank-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
   .rank-table th {
@@ -1135,7 +1138,7 @@ function renderVolumeRank() {
     const f = volumeRankFlows ? volumeRankFlows[r.code] : null;
     return `<tr class="${f && f.pass ? "hit" : ""}">
       <td>${r.rank}</td>
-      <td data-code="${r.code}" data-name="${r.name}">${r.name}${flowMarks(r, f)}</td>
+      <td data-code="${r.code}" data-name="${r.name}"><span class="nm">${r.name}</span>${f && f.pass ? '<span class="hit-badge">히트</span>' : ""}${flowMarks(r, f)}</td>
       <td>${Math.round(r.price).toLocaleString("ko-KR")}</td>
       <td class="${dir}">${arrow} ${pct >= 0 ? "+" : ""}${pct.toFixed(2)}%</td>
       <td>${fmtEokAbs(r.tradingValue)}</td>

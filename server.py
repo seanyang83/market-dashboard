@@ -2459,7 +2459,20 @@ def _volume_rank_lines():
         arrow = "▲" if r.get("dir") == "up" else ("▼" if r.get("dir") == "down" else "-")
         pct = abs(r.get("changePct", 0))
         lines.append(f"{r['rank']}. {r['name']} {fmt_eok_abs(r['tradingValue'])} ({arrow}{pct:.2f}%)")
+    lines.append(_dual_buy_hit_line(rows))
     return lines
+
+
+def _dual_buy_hit_line(rank_rows):
+    """TOP10 중 당일 상승 + 외국인·기관·프로그램 순매수가 모두 +인 종목 한 줄(웹 "조건 충족만 보기"와 같은 기준)."""
+    try:
+        flows = _fetch_volume_rank_flows()["flows"]
+    except Exception:
+        return "🎯 양매수·프로그램 수급 히트: 확인 실패"
+    if not any(f.get("known") for f in flows.values()):
+        return "🎯 양매수·프로그램 수급 히트: 수급 데이터 없음"
+    hits = [f"{r['name']} +{abs(r.get('changePct', 0)):.2f}%" for r in rank_rows if flows.get(r["code"], {}).get("pass")]
+    return "🎯 양매수·프로그램 수급 히트: " + (", ".join(hits) if hits else "없음")
 
 
 _scores_cache = {"ts": 0, "val": None}
