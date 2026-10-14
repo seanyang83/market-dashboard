@@ -2162,7 +2162,7 @@ def _ma_state(closes):
     there isn't enough history for a 120-day MA."""
     if len(closes) < 120:
         return None
-    periods = [5, 10, 20, 60, 120]
+    periods = [3, 5, 10, 20, 60, 120]   # 3일선 추가(2026-10-14, 화면의 이평선 순위/신호와 같게 유지)
     arrs = {p: _rolling_ma(closes, p) for p in periods}
     last = closes[-1]
     ma_list = [(str(p), arrs[p][-1]) for p in periods]
