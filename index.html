@@ -224,15 +224,13 @@
   .mv-band.g2 { background: color-mix(in srgb, #8b5cf6 10%, transparent); }
   .mv-table td.warncell { background: rgba(234, 179, 8, .18); border-radius: 4px; }
   .mv-table tbody tr + tr td { border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
-  .vr-toggle { font-size: 12.5px; color: var(--sub); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
   .flow-marks { display: block; font-size: 10px; color: var(--sub); font-weight: 500; margin-top: 1px; white-space: nowrap; letter-spacing: -0.2px; }
   .flow-marks b { color: var(--sub); font-weight: 700; }
   tr.hit .flow-marks b { color: var(--up); font-weight: 900; font-size: 12.5px; }
   tr.hit td:nth-child(2) .nm { color: var(--up); }
   .hit-badge {
-    display: inline-block; margin-left: 4px; padding: 0 8px 1px; border-radius: 999px; background: var(--up); color: #fff;
-    font-family: "Snell Roundhand", "Apple Chancery", "Brush Script MT", "Segoe Script", "Lucida Handwriting", cursive;
-    font-style: italic; font-size: 13px; font-weight: 700; letter-spacing: 0.3px; line-height: 1.25; vertical-align: 1px;
+    display: inline-block; margin-left: 4px; padding: 1px 7px; border-radius: 999px; background: var(--up); color: #fff;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.3px; line-height: 1.2; vertical-align: 1px;
   }
   .rank-table tr.hit td { background: color-mix(in srgb, var(--tl-yellow) 12%, transparent); }
   .rank-table { width: 100%; border-collapse: collapse; margin-top: 4px; font-size: 12.5px; }
@@ -617,14 +615,11 @@
 
   <div class="section-head">
     <h2 class="section-title">거래대금 순위 TOP10</h2>
-    <div style="display:flex; align-items:center; gap:10px;">
-      <label class="vr-toggle"><input type="checkbox" id="volumeRankFilter" /> 조건 충족만 보기</label>
-      <button class="refresh-btn" id="volumeRankRefreshBtn">새로고침</button>
-    </div>
+    <button class="refresh-btn" id="volumeRankRefreshBtn">새로고침</button>
   </div>
   <div class="card">
     <div class="sub-label">코스피·코스닥 통합 · 관리종목/거래정지/ETF·ETN 제외 · 실시간 당일 누적 거래대금 · 종목명 클릭 시 아래 체크리스트에 반영</div>
-    <div class="sub-label" style="margin-top:2px;">상 = 당일 상승 · 외 = 외국인 순매수 · 기 = 기관 순매수 · 프 = 프로그램 순매수 (✔ = +). 네 가지가 모두 ✔면 "조건 충족"</div>
+    <div class="sub-label" style="margin-top:2px;">상 = 당일 상승 · 외 = 외국인 순매수 · 기 = 기관 순매수 · 프 = 프로그램 순매수 (✔ = +). 네 가지가 모두 ✔면 종목명이 빨갛게 바뀌고 Hit 표시가 붙습니다</div>
     <table class="rank-table">
       <thead>
         <tr><th>순위</th><th>종목명</th><th>현재가</th><th>등락률</th><th>거래대금</th></tr>
@@ -1122,19 +1117,7 @@ function flowMarks(r, f) {
 
 function renderVolumeRank() {
   const bodyEl = document.getElementById("volumeRankBody");
-  const onlyHits = document.getElementById("volumeRankFilter").checked;
-  let rows = volumeRankRows;
-  if (onlyHits) {
-    if (!volumeRankFlows) {
-      bodyEl.innerHTML = '<tr><td colspan="5">수급 확인 중… (종목당 한투 호출 2번, 몇 초 걸립니다)</td></tr>';
-      return;
-    }
-    rows = rows.filter((r) => volumeRankFlows[r.code] && volumeRankFlows[r.code].pass);
-    if (!rows.length) {
-      bodyEl.innerHTML = `<tr><td colspan="5">조건을 모두 만족하는 종목이 없습니다 (TOP10 ${volumeRankRows.length}개 확인)</td></tr>`;
-      return;
-    }
-  }
+  const rows = volumeRankRows;
   bodyEl.innerHTML = rows.map((r) => {
     const dir = r.dir || "flat";
     const arrow = dir === "up" ? "▲" : dir === "down" ? "▼" : "–";
@@ -1834,11 +1817,6 @@ refreshBtn.addEventListener("click", refreshAll);
 refreshAll();
 
 document.getElementById("volumeRankRefreshBtn").addEventListener("click", updateVolumeRank);
-try { document.getElementById("volumeRankFilter").checked = localStorage.getItem("vrFilter") === "1"; } catch (e) { /* ignore */ }
-document.getElementById("volumeRankFilter").addEventListener("change", (e) => {
-  try { localStorage.setItem("vrFilter", e.target.checked ? "1" : "0"); } catch (err) { /* ignore */ }
-  renderVolumeRank();
-});
 updateVolumeRank();
 
 document.getElementById("watchlistAddBtn").addEventListener("click", handleWatchlistAdd);
