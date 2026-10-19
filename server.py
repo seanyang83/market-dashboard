@@ -365,6 +365,14 @@ def _flow_trend_row_values(row):
     )
 
 
+def _flow_trend_row_complete(row):
+    """개인(8000)·외국인(9000) 항목이 모두 있는 행만 완성된 행으로 본다. 네이버가 최신 행을 채우는 중에
+    일부 투자자 항목이 빠진 채 내려오면 0으로 읽혀 차트 끝점이 튄다(2026-10-19 15:06 NXT 개인·외국인이 0으로
+    읽혀 합계가 KRX 단독 값으로 떨어짐)."""
+    gubuns = {a.get("investorGubun") for a in row.get("netAmounts", [])}
+    return "8000" in gubuns and "9000" in gubuns
+
+
 def _flow_trend_refresh(trade_type):
     store = _flow_trend["rows"][trade_type]
     if not store:
@@ -377,9 +385,20 @@ def _flow_trend_refresh(trade_type):
         rows = [r for c in contents for r in c]
     else:
         rows = _flow_trend_fetch_page(trade_type, 0, 20).get("content", [])
-    for r in rows:
-        if r.get("time"):
-            store[(r["bizdate"], r["time"])] = _flow_trend_row_values(r)
+    # 시각 오름차순으로 넣으면서 직전 값과 비교해 이상한 행(누적값이 갑자기 0으로 떨어지는 행)은 건너뛴다.
+    # 누적 순매수가 정확히 0으로 되돌아오는 일은 사실상 없으므로, 개인/외국인이 0이 됐는데 직전에는 10억원
+    # 넘게 있었다면 불완전한 행으로 보고 다음 새로고침(이미 받은 최신 20행을 다시 덮어씀)에서 바로잡는다.
+    for r in sorted((r for r in rows if r.get("time")), key=lambda r: (r["bizdate"], r["time"])):
+        if not _flow_trend_row_complete(r):
+            continue
+        key = (r["bizdate"], r["time"])
+        vals = _flow_trend_row_values(r)
+        earlier = [k for k in store if k[0] == key[0] and k[1] < key[1]]
+        if earlier:
+            prev = store[max(earlier)]
+            if any(vals[i] == 0 and abs(prev[i]) > 1_000_000_000 for i in (0, 1)):
+                continue
+        store[key] = vals
 
 
 def _build_flow_trend():
