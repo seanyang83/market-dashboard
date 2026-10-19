@@ -412,7 +412,10 @@
         <span id="kospiRange">-</span>
       </div>
       <div class="checklist-item">
-        <div class="checklist-title">당일 수급 추이 (누적 순매수, 억원 · KRX+NXT 통합)</div>
+        <div class="checklist-title-row">
+          <div class="checklist-title">당일 수급 추이 (누적 순매수, 억원 · KRX+NXT 통합)</div>
+          <span class="dot-wrap"><span class="weight" data-w="macro.kospiFlow"></span><span class="signal-dot" id="kospiFlowSignal"></span></span>
+        </div>
         <canvas id="kospiFlowTrendChart" class="chart-lg" style="height:170px;"></canvas>
         <div class="legend" id="kospiFlowTrendLegend"></div>
         <div class="meta-row"><span id="kospiFlowTrendNote">-</span></div>
@@ -666,7 +669,7 @@ const REFRESH_MS = 30000;
 // 100. 값을 바꾸면 화면의 (N%) 표시도 같이 바뀐다. 텔레그램 요약/알림은
 // server.py의 SCORE_WEIGHTS를 쓰므로 반드시 같이 고칠 것.
 const WEIGHTS = {
-  macro: { ndq: 25, kospiMa5: 20, kospiDir: 20, tnx: 15, wti: 10, btc: 10 },
+  macro: { ndq: 20, kospiMa5: 15, kospiDir: 15, kospiFlow: 15, tnx: 15, wti: 10, btc: 10 },
   stock: { program: 20, liveFlow: 20, chart: 20, candle: 15, krSector: 15, usSector: 10 },
 };
 document.querySelectorAll("[data-w]").forEach((el) => {
@@ -1284,7 +1287,8 @@ async function updateKospiFlowTrend() {
   const canvas = document.getElementById("kospiFlowTrendChart");
   const legendEl = document.getElementById("kospiFlowTrendLegend");
   const noteEl = document.getElementById("kospiFlowTrendNote");
-  if (!canvas) return;
+  const dotEl = document.getElementById("kospiFlowSignal");
+  if (!canvas) return null;
   try {
     const data = await fetchJson("/api/kospi/flow-trend");
     const points = data.points || [];
@@ -1299,9 +1303,15 @@ async function updateKospiFlowTrend() {
       item(cssVar("--ma60"), "기관", last.institution);
     const d = data.date;
     noteEl.textContent = `${d.slice(4, 6)}/${d.slice(6, 8)} ${last.t.slice(0, 2)}:${last.t.slice(2, 4)} 기준 (외국인은 외국인 기타 제외, 키움 당일추이와 동일)`;
+    // 신호등: 외국인·기관 둘 다 순매수 = 초록, 한쪽만 순매수 = 노랑, 둘 다 순매도(개인이 받아냄) = 빨강.
+    const signal = last.foreign > 0 && last.institution > 0 ? "green" : (last.foreign > 0 || last.institution > 0 ? "yellow" : "red");
+    if (dotEl) dotEl.className = "signal-dot " + signal;
+    return signal;
   } catch (e) {
     legendEl.innerHTML = "";
     noteEl.textContent = "당일 수급 추이를 불러오지 못했습니다";
+    if (dotEl) dotEl.className = "signal-dot";
+    return null;
   }
 }
 
@@ -1425,13 +1435,12 @@ async function refreshAll() {
   refreshBtn.disabled = true;
   statusText.textContent = "갱신 중...";
   const keys = Object.keys(SERIES);
-  const results = await Promise.all(keys.map(updateCard));
+  const [results, flowSignal] = await Promise.all([Promise.all(keys.map(updateCard)), updateKospiFlowTrend()]);
   updateMarketTradingValue();
   updateMarketBreadth();
-  updateKospiFlowTrend();
   const okCount = results.filter((r) => r.ok).length;
 
-  updateSignalSummary(results.flatMap((r) => r.signals));
+  updateSignalSummary([...results.flatMap((r) => r.signals), { signal: flowSignal, weight: WEIGHTS.macro.kospiFlow }]);
 
   if (okCount === results.length) {
     statusDot.className = "dot live";

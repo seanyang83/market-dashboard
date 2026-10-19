@@ -2174,7 +2174,7 @@ def check_ma_proximity_alert():
 # 신호등별 가중치(%) - 합계 각각 100. index.html의 WEIGHTS와 반드시 같은 값으로
 # 유지할 것(화면과 텔레그램의 매크로/종목 체크 %가 어긋나지 않게).
 SCORE_WEIGHTS = {
-    "macro": {"ndq": 25, "kospiMa5": 20, "kospiDir": 20, "tnx": 15, "wti": 10, "btc": 10},
+    "macro": {"ndq": 20, "kospiMa5": 15, "kospiDir": 15, "kospiFlow": 15, "tnx": 15, "wti": 10, "btc": 10},
     "stock": {"program": 20, "liveFlow": 20, "chart": 20, "candle": 15, "krSector": 15, "usSector": 10},
 }
 
@@ -2508,6 +2508,21 @@ def _compute_scores():
         return val
 
 
+def _kospi_flow_line():
+    """당일 코스피 수급(KRX+NXT 통합 누적 순매수, 키움 당일추이와 같은 값)의 신호등.
+    외국인·기관 둘 다 순매수 = 초록, 한쪽만 = 노랑, 둘 다 순매도(개인이 받아냄) = 빨강."""
+    last = _build_flow_trend()["points"][-1]
+    foreign, inst, indiv = last["foreign"], last["institution"], last["individual"]
+    if foreign > 0 and inst > 0:
+        sig = "green"
+    elif foreign > 0 or inst > 0:
+        sig = "yellow"
+    else:
+        sig = "red"
+    f = lambda v: f"{'+' if v > 0 else ''}{round(v):,}억"
+    return sig, f"{SIGNAL_EMOJI[sig]} 코스피 수급: 외국인 {f(foreign)} · 기관 {f(inst)} · 개인 {f(indiv)}"
+
+
 def _compute_scores_uncached():
     macro_signals = []
     macro_lines = []
@@ -2531,6 +2546,13 @@ def _compute_scores_uncached():
     except Exception as e:
         macro_lines.append(f"⚪ 코스피 데이터 없음 ({e})")
 
+    try:
+        flow_sig, flow_line = _kospi_flow_line()
+        macro_signals.append((flow_sig, SCORE_WEIGHTS["macro"]["kospiFlow"]))
+        macro_lines.append(flow_line)
+    except Exception:
+        macro_lines.append("⚪ 코스피 수급 데이터 없음")
+
     macro_lines.extend(_market_breadth_lines())
 
     macro_pct = _weighted_pct(macro_signals) or 0
@@ -2547,7 +2569,7 @@ _SIGNAL_LETTER = {"🟢": "G", "🟡": "Y", "🔴": "R", "⚪": "N"}
 
 
 _MACRO_KEYS = (("tnx", "미국채10Y"), ("wti", "WTI"), ("ndq", "나스닥100선물"), ("btc", "비트코인"),
-               ("kospiMa", "코스피 순위"), ("kospiDir", "코스피 "))
+               ("kospiMa", "코스피 순위"), ("kospiFlow", "코스피 수급"), ("kospiDir", "코스피 "))
 _STOCK_KEYS = (("usSector", "미국 동일"), ("krSector", "국내 동일"), ("ma", "이평선 순위"),
                ("flow", "수급:"), ("program", "프로그램매매"))
 
