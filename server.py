@@ -966,6 +966,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_breadth()
         elif self.path.startswith("/api/ops/score-snapshot"):
             self.handle_ops_score_snapshot()
+        elif self.path.startswith("/api/ops/regime"):
+            self.handle_ops_regime()
         elif self.path.startswith("/api/ops/kis-minute"):
             self.handle_ops_kis_minute()
         elif self.path.startswith("/api/ops/kis-income"):
@@ -1423,6 +1425,30 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             # (GitHub 크론이 늦게 와도 기록 시각이 어긋나지 않게).
             row = _score_snap.get((today, slot)) or build_score_snapshot(slot)
             self.send_json(200, {"ok": True, "row": row})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)})
+
+    def handle_ops_regime(self):
+        # 점검/테스트용: kind=morning|pre|change 메시지를 만들어 보여준다. send=1이면 텔레그램으로도 보낸다.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        kind = self.query_param("kind") or "morning"
+        if kind not in ("morning", "pre", "change"):
+            self.send_json(400, {"error": "kind=morning|pre|change"})
+            return
+        try:
+            if kind == "change":     # 전환이 없어도 형식 확인용으로 오늘 기준 메시지를 만든다
+                info = compute_regime(include_today=True)
+                text = build_regime_message("change", info)
+            else:
+                text = regime_message_for(kind)
+            info = compute_regime(include_today=False)
+            sent = False
+            if self.query_param("send") == "1" and text:
+                send_telegram_message("[테스트] " + text)
+                sent = True
+            self.send_json(200, {"text": text, "regime": info, "sent": sent})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
 
@@ -2033,6 +2059,195 @@ def _alert_scheduler():
                     run_alert_checks()
         except Exception as e:
             print(f"alert scheduler error: {e}")
+        time.sleep(20)
+
+
+# --- 장세(상승/횡보/하락) 규칙 복기 알림 ---
+# 사용자의 매매 규칙(매매일지로 정리한 것)을 지수 장세에 맞춰 가끔 텔레그램으로 되새겨 준다.
+# 장세는 코스피 일봉 종가로 판정한다(장중 값은 흔들려서 쓰지 않음, 확정된 날만).
+#  - 하락장: 최근 60거래일 고점 대비 -7% 이하 (사용자 지정)
+#  - 상승장: 하락장이 아니고, 지수>5일선·20일선 이고 5일선>20일선>60일선
+#  - 횡보장: 그 외
+# 하루 판정이 왔다갔다 하지 않게 **이틀 연속 같은 판정일 때만 전환**한다. 판정은 일봉 이력에서 매번 다시
+# 계산하므로(상태 저장 없음) 서버가 재시작돼도 같은 결과.
+# 알림: ① 아침 08:50 ② 종베 직전 14:00 ③ 장세 전환이 확정된 날 장 마감 후(15:45~) 한 번.
+REGIME_DROP_PCT = -7.0
+REGIME_HIGH_WINDOW = 60
+REGIME_LABEL = {"up": "상승장", "side": "횡보장", "down": "하락장"}
+REGIME_EMOJI = {"up": "📈", "side": "↔️", "down": "📉"}
+REGIME_RULES = {
+    "down": {
+        "dont": [
+            "지수가 하락하는 중에는 돌파매매 안 통한다",
+            "하락할 때 반등매매로 크게 들어가지 않는다 (욕심 = 손실)",
+            "손실 본 날 복수매매 금지, 그날은 모니터링만",
+            "반등 양봉이 크게 나와 전일 하락분 위로 올라왔다면 종베 금지(무포)",
+        ],
+        "do": [
+            "첫 반등은 철저히 계획된 매수만",
+            "눌림은 지수 고점 대비 -5%, -10%에서 주도주로",
+            "일봉 반등은 지수 3일선 위 + 종목 3·5일선 위로 올라탈 때",
+            "추세하락 반등 신호: 신용매물 감소 + 개인 매물 1조 이상 + 외국인 매수 (신용은 하루 뒤 15시 집계)",
+        ],
+    },
+    "side": {
+        "dont": [
+            "시황 확인 없이 종베하지 않는다 (시황 최우선)",
+            "큰 수익이 안 나는 작은 매매, 작은 주식",
+            "종베 후 NXT 갭하락인데 버티지 않는다 (빠르게 자르고 다시 본다)",
+        ],
+        "do": [
+            "주도주 첫 하락은 3일선(10분봉 117선)·5일선(15분봉 120선) 반등을 노린다",
+            "장중 매수는 3분봉 20선에서",
+            "주도주 15일선 되돌림은 현금 베팅",
+        ],
+    },
+    "up": {
+        "dont": [
+            "NXT 상승만 보고 비중 싣지 않는다 (본장 상승 확인 후 3분봉 20선에서)",
+            "전일 종베한 종목을 초장에 안 자르고 버티지 않는다",
+            "작은 매매, 작은 주식",
+        ],
+        "do": [
+            "올라갈 때는 돌파턴, 당일 흐름을 빠르게 파악",
+            "상승세일 때 장중 매수는 3분봉 20선에서",
+            "종목이 신고가 + 장후 NXT 상승 패턴이면 종베",
+            "일봉 조정 후 신고가 갱신 시 하락한 만큼 상승 기조로 종베/시가 강베팅",
+        ],
+    },
+}
+REGIME_SLOTS = {"morning": (8 * 60 + 50, 9 * 60 + 20), "pre": (14 * 60, 14 * 60 + 30), "change": (15 * 60 + 45, 16 * 60 + 30)}
+_regime_done = set()
+_regime_lock = threading.Lock()
+
+
+def _regime_of(closes):
+    """closes(오름차순, 마지막이 기준일)로 그날의 장세 판정. 데이터가 모자라면 None."""
+    if len(closes) < 61:
+        return None
+    last = closes[-1]
+    high = max(closes[-REGIME_HIGH_WINDOW:])
+    dd = (last / high - 1) * 100
+    if dd <= REGIME_DROP_PCT:
+        return "down"
+    ma5, ma20, ma60 = (_rolling_ma(closes, n)[-1] for n in (5, 20, 60))
+    if last > ma5 and last > ma20 and ma5 > ma20 > ma60:
+        return "up"
+    return "side"
+
+
+def compute_regime(include_today=False):
+    """확정된 일봉으로 장세를 계산. include_today=False면 오늘 봉(장중)은 뺀다."""
+    rows = naver_daily_closes("KOSPI")
+    today = _kst_now().strftime("%Y-%m-%d")
+    if not include_today:
+        rows = [r for r in rows if r["date"] != today]
+    closes = [r["close"] for r in rows]
+    dates = [r["date"] for r in rows]
+    # 최근 15거래일의 하루짜리 판정 → 이틀 연속 같은 판정일 때만 전환
+    n = min(15, len(closes) - 60)
+    if n < 2:
+        raise ValueError("일봉 이력이 모자랍니다")
+    daily = [(dates[i], _regime_of(closes[: i + 1])) for i in range(len(closes) - n, len(closes))]
+    confirmed, history = daily[0][1], []
+    for k in range(1, len(daily)):
+        prev_confirmed = confirmed
+        if daily[k][1] != confirmed and daily[k][1] == daily[k - 1][1]:
+            confirmed = daily[k][1]
+        history.append((daily[k][0], confirmed, prev_confirmed))
+    last_date, regime, prev_regime = history[-1]
+    changed = regime != prev_regime
+    last = closes[-1]
+    high = max(closes[-REGIME_HIGH_WINDOW:])
+    return {
+        "regime": regime, "changed": changed, "prev": prev_regime, "date": last_date,
+        "close": last, "high": high, "drawdown": (last / high - 1) * 100,
+        "dayRegime": daily[-1][1],
+    }
+
+
+def build_regime_message(kind, info, today_live=None):
+    """kind: morning | pre | change. 평문."""
+    now = _kst_now()
+    r = info["regime"]
+    rules = REGIME_RULES[r]
+    head = {"morning": "🧭 장세 복기 · 아침", "pre": "🧭 종베 직전 복기 · 14:00", "change": "🔔 장세 전환"}[kind]
+    lines = [f"{head} · {now.strftime('%m/%d')}"]
+    if kind == "change" or info["changed"]:
+        lines.append(f"{REGIME_EMOJI[info['prev']]} {REGIME_LABEL[info['prev']]} → {REGIME_EMOJI[r]} {REGIME_LABEL[r]} 전환 ({info['date'][5:].replace('-', '/')} 종가 기준)")
+    else:
+        lines.append(f"{REGIME_EMOJI[r]} 지금은 {REGIME_LABEL[r]}")
+    lines.append(f"코스피 {info['close']:,.0f} · 60일 고점 {info['high']:,.0f} 대비 {info['drawdown']:+.1f}%")
+    if today_live is not None and kind == "pre":
+        lines.append(f"오늘 장중 {today_live['close']:,.0f} ({today_live['pct']:+.2f}%) · 고점 대비 {today_live['drawdown']:+.1f}%")
+    lines.append("")
+    lines.append("🚫 하지 말 것")
+    lines.extend(f" · {t}" for t in (rules["dont"] if kind != "pre" else rules["dont"][:3]))
+    lines.append("✅ 할 것")
+    lines.extend(f" · {t}" for t in rules["do"][:4])
+    if kind == "pre":
+        lines.append("")
+        lines.append("종베 체크: 시황 최우선 · 전일 종베분은 정리했나 · 잃지만 말자")
+    return "\n".join(lines)
+
+
+def _regime_today_live():
+    rows = naver_daily_closes("KOSPI")
+    today = _kst_now().strftime("%Y-%m-%d")
+    if len(rows) < 2 or rows[-1]["date"] != today:
+        return None
+    closes = [r["close"] for r in rows]
+    high = max(closes[-REGIME_HIGH_WINDOW:])
+    return {"close": closes[-1], "pct": (closes[-1] / closes[-2] - 1) * 100, "drawdown": (closes[-1] / high - 1) * 100}
+
+
+def regime_message_for(kind):
+    """kind에 맞는 메시지(없으면 None). change는 오늘 마감으로 전환이 확정된 때만."""
+    if kind == "change":
+        info = compute_regime(include_today=True)
+        if not info["changed"] or info["date"] != _kst_now().strftime("%Y-%m-%d"):
+            return None
+        return build_regime_message("change", info)
+    info = compute_regime(include_today=False)
+    live = _regime_today_live() if kind == "pre" else None
+    return build_regime_message(kind, info, live)
+
+
+def _regime_slot_due(now):
+    mins = now.hour * 60 + now.minute
+    return [k for k, (a, b) in REGIME_SLOTS.items() if a <= mins <= b]
+
+
+def _regime_scheduler():
+    boot = _kst_now()
+    if boot.weekday() < 5:     # 재시작 직후에는 이미 열려 있는 구간을 처리된 것으로 본다(중복 방지)
+        with _regime_lock:
+            for k in _regime_slot_due(boot):
+                _regime_done.add((boot.strftime("%Y%m%d"), k))
+    while True:
+        try:
+            now = _kst_now()
+            if now.weekday() < 5 and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+                for kind in _regime_slot_due(now):
+                    key = (now.strftime("%Y%m%d"), kind)
+                    with _regime_lock:
+                        if key in _regime_done:
+                            continue
+                        _regime_done.add(key)
+                    if not is_krx_trading_day():
+                        continue
+                    try:
+                        text = regime_message_for(kind)
+                        if text:
+                            send_telegram_message(text)
+                            print(f"regime message sent: {kind}")
+                    except Exception as e:
+                        with _regime_lock:
+                            _regime_done.discard(key)    # 다음 루프에 다시 시도(창 안에서만)
+                        print(f"regime message failed {kind}: {e}")
+                        time.sleep(60)
+        except Exception as e:
+            print(f"regime scheduler error: {e}")
         time.sleep(20)
 
 
@@ -2659,6 +2874,7 @@ if __name__ == "__main__":
     # threading.Thread(target=_rsi_scheduler, daemon=True).start()   # ← 다시 켜려면 주석 해제
     threading.Thread(target=_summary_scheduler, daemon=True).start()
     threading.Thread(target=_alert_scheduler, daemon=True).start()
+    threading.Thread(target=_regime_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()
