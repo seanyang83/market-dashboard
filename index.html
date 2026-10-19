@@ -25,6 +25,7 @@
     --tl-green: #16a34a;
     --tl-red: #dc2626;
     --tl-yellow: #eab308;
+    --tl-orange: #f97316;
     --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   }
   @media (prefers-color-scheme: dark) {
@@ -48,6 +49,7 @@
       --tl-green: #4ade80;
       --tl-red: #f87171;
       --tl-yellow: #fbbf24;
+      --tl-orange: #fb923c;
       --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
     }
   }
@@ -141,6 +143,7 @@
   .signal-dot.green { background: var(--tl-green); color: var(--tl-green); }
   .signal-dot.red { background: var(--tl-red); color: var(--tl-red); }
   .signal-dot.yellow { background: var(--tl-yellow); color: var(--tl-yellow); }
+  .signal-dot.orange { background: var(--tl-orange); color: var(--tl-orange); }
   .candle-label { font-size: 12.5px; font-weight: 700; }
   .signal-summary {
     font-size: 12.5px; color: var(--sub); display: flex; align-items: center; gap: 6px;
@@ -151,6 +154,7 @@
   .signal-summary .dots span.green { background: var(--tl-green); }
   .signal-summary .dots span.red { background: var(--tl-red); }
   .signal-summary .dots span.yellow { background: var(--tl-yellow); }
+  .signal-summary .dots span.orange { background: var(--tl-orange); }
   .signal-summary.all-green { border-color: var(--tl-green); color: var(--tl-green); font-weight: 700; }
   .section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 0 12px; }
   .section-head:not(:first-of-type) { margin-top: 28px; }
@@ -695,6 +699,7 @@ function computeSignal(dir, sentiment) {
 function scoreFor(signal) {
   if (signal === "green") return 20;
   if (signal === "yellow") return 10;
+  if (signal === "orange") return 5;   // 기관만 순매수(코스피 수급) - 노랑(10)보다 낮고 빨강(0)보다 높음
   if (signal === "red") return 0;
   return 10;
 }
@@ -1303,8 +1308,11 @@ async function updateKospiFlowTrend() {
       item(cssVar("--ma60"), "기관", last.institution);
     const d = data.date;
     noteEl.textContent = `${d.slice(4, 6)}/${d.slice(6, 8)} ${last.t.slice(0, 2)}:${last.t.slice(2, 4)} 기준 (외국인은 외국인 기타 제외, 키움 당일추이와 동일)`;
-    // 신호등: 외국인·기관 둘 다 순매수 = 초록, 한쪽만 순매수 = 노랑, 둘 다 순매도(개인이 받아냄) = 빨강.
-    const signal = last.foreign > 0 && last.institution > 0 ? "green" : (last.foreign > 0 || last.institution > 0 ? "yellow" : "red");
+    // 신호등: 외국인·기관 둘 다 순매수 = 초록, 외국인만 = 노랑, 기관만 = 주황(노랑보다 낮게),
+    // 둘 다 순매도(개인이 받아냄) = 빨강.
+    const signal = last.foreign > 0 && last.institution > 0 ? "green"
+      : last.foreign > 0 ? "yellow"
+      : last.institution > 0 ? "orange" : "red";
     if (dotEl) dotEl.className = "signal-dot " + signal;
     return signal;
   } catch (e) {

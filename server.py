@@ -1564,7 +1564,7 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "")
 TELEGRAM_SUMMARY_KEY = os.environ.get("TELEGRAM_SUMMARY_KEY", "")
 TELEGRAM_SUMMARY_STOCK_CODE = os.environ.get("TELEGRAM_SUMMARY_STOCK_CODE", "000660")
 
-SIGNAL_EMOJI = {"green": "🟢", "yellow": "🟡", "red": "🔴", None: "⚪"}
+SIGNAL_EMOJI = {"green": "🟢", "yellow": "🟡", "orange": "🟠", "red": "🔴", None: "⚪"}
 
 # 매크로/종목 체크 % 에 따라 🔥 개수와 강조 문구를 정하는 단계.
 # - 한쪽만 기준을 넘으면: 그 줄만 80%+ 🔥1개, 100% 🔥3개.
@@ -2180,7 +2180,7 @@ SCORE_WEIGHTS = {
 
 
 def _score_for(signal):
-    return {"green": 20, "yellow": 10, "red": 0}.get(signal, 10)
+    return {"green": 20, "yellow": 10, "orange": 5, "red": 0}.get(signal, 10)
 
 
 def _weighted_pct(items):
@@ -2510,13 +2510,15 @@ def _compute_scores():
 
 def _kospi_flow_line():
     """당일 코스피 수급(KRX+NXT 통합 누적 순매수, 키움 당일추이와 같은 값)의 신호등.
-    외국인·기관 둘 다 순매수 = 초록, 한쪽만 = 노랑, 둘 다 순매도(개인이 받아냄) = 빨강."""
+    외국인·기관 둘 다 순매수 = 초록, 외국인만 = 노랑, 기관만 = 주황(노랑보다 낮게), 둘 다 순매도(개인이 받아냄) = 빨강."""
     last = _build_flow_trend()["points"][-1]
     foreign, inst, indiv = last["foreign"], last["institution"], last["individual"]
     if foreign > 0 and inst > 0:
         sig = "green"
-    elif foreign > 0 or inst > 0:
+    elif foreign > 0:
         sig = "yellow"
+    elif inst > 0:
+        sig = "orange"
     else:
         sig = "red"
     f = lambda v: f"{'+' if v > 0 else ''}{round(v):,}억"
@@ -2565,7 +2567,7 @@ def _compute_scores_uncached():
     return macro_pct, macro_lines, stock_pct, stock_name, stock_lines
 
 
-_SIGNAL_LETTER = {"🟢": "G", "🟡": "Y", "🔴": "R", "⚪": "N"}
+_SIGNAL_LETTER = {"🟢": "G", "🟡": "Y", "🟠": "O", "🔴": "R", "⚪": "N"}
 
 
 _MACRO_KEYS = (("tnx", "미국채10Y"), ("wti", "WTI"), ("ndq", "나스닥100선물"), ("btc", "비트코인"),
