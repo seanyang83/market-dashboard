@@ -1438,9 +1438,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(400, {"error": "kind=morning|pre|change"})
             return
         try:
-            if kind == "change":     # 전환이 없어도 형식 확인용으로 오늘 기준 메시지를 만든다
+            if kind == "change":     # 전환이 없어도 형식 확인용으로 예시 메시지를 만든다
                 info = compute_regime(include_today=True)
-                text = build_regime_message("change", info)
+                if not info["changed"]:
+                    info = {**info, "changed": True, "prev": "side" if info["regime"] != "side" else "up"}
+                    text = build_regime_message("change", info) + "\n(형식 확인용 예시: 실제 전환이 아닙니다)"
+                else:
+                    text = build_regime_message("change", info)
             else:
                 text = regime_message_for(kind)
             info = compute_regime(include_today=False)
@@ -2171,7 +2175,7 @@ def build_regime_message(kind, info, today_live=None):
     now = _kst_now()
     r = info["regime"]
     rules = REGIME_RULES[r]
-    head = {"morning": "🧭 장세 복기 · 아침", "pre": "🧭 종베 직전 복기 · 14:00", "change": "🔔 장세 전환"}[kind]
+    head = {"morning": "🧭 종베규칙 · 아침", "pre": "🧭 종베규칙 · 종베 직전 14:00", "change": "🔔 종베규칙 · 장세 전환"}[kind]
     lines = [f"{head} · {now.strftime('%m/%d')}"]
     if kind == "change" or info["changed"]:
         lines.append(f"{REGIME_EMOJI[info['prev']]} {REGIME_LABEL[info['prev']]} → {REGIME_EMOJI[r]} {REGIME_LABEL[r]} 전환 ({info['date'][5:].replace('-', '/')} 종가 기준)")
