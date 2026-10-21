@@ -966,6 +966,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_breadth()
         elif self.path.startswith("/api/ops/score-snapshot"):
             self.handle_ops_score_snapshot()
+        elif self.path.startswith("/api/ops/stock-flow"):
+            self.handle_ops_stock_flow()
         elif self.path.startswith("/api/ops/regime"):
             self.handle_ops_regime()
         elif self.path.startswith("/api/ops/kis-minute"):
@@ -1427,6 +1429,50 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"ok": True, "row": row})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_ops_stock_flow(self):
+        # 점검용: 종목 수급을 한투 원본 값으로 그대로 보여준다(키움 화면과 대조할 때 쓴다).
+        # daily = 종목별 일별 투자자(통합, 백만원 단위 원본 포함), estimate = 장중 가집계(수량), program = 프로그램매매.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        code = self.require_stock_code()
+        if not code:
+            return
+        out = {"code": code}
+        try:
+            data = kis_get("/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily", "FHPTJ04160001",
+                           {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": "",
+                            "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": ""})
+            rows = (data.get("output2") or [])[:6]
+            out["daily"] = [{"date": r.get("stck_bsop_date"), "close": r.get("stck_clpr"),
+                             "indiv_amt_m": r.get("prsn_ntby_tr_pbmn"), "foreign_amt_m": r.get("frgn_ntby_tr_pbmn"),
+                             "inst_amt_m": r.get("orgn_ntby_tr_pbmn"), "indiv_qty": r.get("prsn_ntby_qty"),
+                             "foreign_qty": r.get("frgn_ntby_qty"), "inst_qty": r.get("orgn_ntby_qty")} for r in rows]
+        except Exception as e:
+            out["daily"] = {"error": str(e)}
+        try:
+            data = kis_get("/uapi/domestic-stock/v1/quotations/investor-trend-estimate", "HHPTJ04160200",
+                           {"MKSC_SHRN_ISCD": code})
+            out["estimate"] = [{"hour": r.get("bsop_hour_gb"), "foreign_qty": r.get("frgn_fake_ntby_qty"),
+                                "inst_qty": r.get("orgn_fake_ntby_qty"), "sum_qty": r.get("sum_fake_ntby_qty")}
+                               for r in (data.get("output2") or [])]
+        except Exception as e:
+            out["estimate"] = {"error": str(e)}
+        try:
+            data = kis_get("/uapi/domestic-stock/v1/quotations/inquire-price", "FHKST01010100",
+                           {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code})
+            out["price"] = data["output"].get("stck_prpr")
+        except Exception as e:
+            out["price"] = {"error": str(e)}
+        try:
+            data = kis_get("/uapi/domestic-stock/v1/quotations/program-trade-by-stock", "FHPPG04650101",
+                           {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code})
+            r = (data.get("output") or [{}])[0]
+            out["program"] = {"time": r.get("bsop_hour"), "net_qty": r.get("whol_smtn_ntby_qty"), "net_amt": r.get("whol_smtn_ntby_tr_pbmn")}
+        except Exception as e:
+            out["program"] = {"error": str(e)}
+        self.send_json(200, out)
 
     def handle_ops_regime(self):
         # 점검/테스트용: kind=morning|pre|change 메시지를 만들어 보여준다. send=1이면 텔레그램으로도 보낸다.
