@@ -970,6 +970,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_stock_flow()
         elif self.path.startswith("/api/ops/regime"):
             self.handle_ops_regime()
+        elif self.path.startswith("/api/ops/timing"):
+            self.handle_ops_timing()
         elif self.path.startswith("/api/ops/kis-minute"):
             self.handle_ops_kis_minute()
         elif self.path.startswith("/api/ops/kis-income"):
@@ -1429,6 +1431,40 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"ok": True, "row": row})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_ops_timing(self):
+        # 점검용: 종베가 새로고침 때 부르는 종목 API들의 서버 응답시간(ms). 각 API를 1회 순차 호출(콜드),
+        # 다시 1회(캐시), 마지막으로 브라우저처럼 6개를 동시에 호출한 총 시간을 돌려준다.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        code = self.require_stock_code()
+        if not code:
+            return
+        names = ["quote", "history", "investors", "theme", "investor-live", "program-trade"]
+        out = {"code": code, "cold_ms": {}, "warm_ms": {}}
+
+        def timed(n):
+            t = time.time()
+            try:
+                _local_get(f"/api/stock/{n}?code={code}")
+                err = None
+            except Exception as e:
+                err = str(e)[:80]
+            return round((time.time() - t) * 1000), err
+
+        for n in names:
+            ms, err = timed(n)
+            out["cold_ms"][n] = ms if not err else f"{ms} ERR {err}"
+        for n in names:
+            ms, err = timed(n)
+            out["warm_ms"][n] = ms if not err else f"{ms} ERR {err}"
+        t0 = time.time()
+        threads = [threading.Thread(target=timed, args=(n,)) for n in names]
+        [t.start() for t in threads]
+        [t.join() for t in threads]
+        out["parallel_total_ms"] = round((time.time() - t0) * 1000)
+        self.send_json(200, out)
 
     def handle_ops_stock_flow(self):
         # 점검용: 종목 수급을 한투 원본 값으로 그대로 보여준다(키움 화면과 대조할 때 쓴다).
