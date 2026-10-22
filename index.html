@@ -115,6 +115,8 @@
   .rank-compare { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
   .rank-compare-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .rank-compare-label { font-size: 11px; color: var(--sub); width: 28px; flex-shrink: 0; }
+  .align-text { font-size: 11.5px; font-weight: 600; line-height: 1.5; margin: -2px 0 2px 36px; }
+  .align-text .up { color: var(--up); } .align-text .down { color: var(--down); } .align-text .flat { color: var(--sub); }
   .badge {
     display: inline-flex; align-items: center; white-space: nowrap;
     font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px;
@@ -394,9 +396,15 @@
             <span class="rank-compare-label">오늘</span>
             <span class="badge flat" id="kospiAlignBadge">순위 확인 중</span>
           </div>
+          <div class="align-text" id="kospiAlignText"></div>
           <div class="rank-compare-row">
             <span class="rank-compare-label">어제</span>
             <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
+          </div>
+          <div class="align-text" id="kospiPrevAlignText"></div>
+          <div class="rank-compare-row">
+            <span class="rank-compare-label">변화</span>
+            <span class="align-text" id="kospiAlignChange" style="margin:0;flex:1;min-width:0;"></span>
           </div>
         </div>
         <span class="dot-wrap"><span class="weight" data-w="macro.kospiMa5"></span><span class="signal-dot" id="kospiMa5Signal"></span></span>
@@ -866,6 +874,37 @@ function rankIndexOf(price, mas) {
   return items.findIndex((it) => it.isPrice);
 }
 
+// 이웃한 이평선끼리(3-5, 5-10, 10-20, 20-60, 60-120) 정배열(단기선이 위)/역배열(장기선이 위)을 문장으로 풀어 쓴다.
+const MA_ORDER = ["3", "5", "10", "20", "60", "120"];
+function maPairStates(list) {
+  const v = Object.fromEntries(list.map((m) => [m.label, m.value]));
+  return MA_ORDER.slice(0, -1).map((a, i) => ({ a, b: MA_ORDER[i + 1], up: v[a] > v[MA_ORDER[i + 1]] }));
+}
+const alignSpan = (txt, up) => `<span class="${up ? "up" : "down"}">${txt}</span>`;
+function alignSummaryHtml(states) {
+  if (states.every((s) => !s.up)) return alignSpan(`전부 역배열 (${MA_ORDER.join("<")})`, false);
+  if (states.every((s) => s.up)) return alignSpan(`전부 정배열 (${MA_ORDER.join(">")})`, true);
+  const parts = [];
+  for (let i = 0; i < states.length; ) {
+    let j = i;
+    while (j + 1 < states.length && states[j + 1].up === states[i].up) j++;
+    const names = [states[i].a, ...states.slice(i, j + 1).map((s) => s.b)];
+    parts.push(alignSpan(`${names.join(states[i].up ? ">" : "<")} ${states[i].up ? "정배열" : "역배열"}`, states[i].up));
+    i = j + 1;
+  }
+  return parts.join(" · ");
+}
+function alignChangeHtml(now, prev) {
+  const ch = [];
+  now.forEach((s, i) => {
+    if (s.up === prev[i].up) return;
+    ch.push(s.up
+      ? alignSpan(`${s.a}<${s.b} 역배열 → ${s.a}>${s.b} 정배열 (${s.a}일선이 ${s.b}일선 위, 골든크로스)`, true)
+      : alignSpan(`${s.a}>${s.b} 정배열 → ${s.a}<${s.b} 역배열 (${s.a}일선이 ${s.b}일선 아래, 데드크로스)`, false));
+  });
+  return ch.length ? ch.join(" · ") : '<span class="flat">어제와 동일</span>';
+}
+
 async function updateIndexPanel(key, dayLow) {
   const ma5BadgeEl = document.getElementById(key + "Ma5Badge");
   const alignBadgeEl = document.getElementById(key + "AlignBadge");
@@ -913,6 +952,8 @@ async function updateIndexPanel(key, dayLow) {
 
     alignBadgeEl.className = "badge flat";
     alignBadgeEl.innerHTML = buildRankChain(last, maList);
+    const alignTextEl = document.getElementById(key + "AlignText");
+    if (alignTextEl) alignTextEl.innerHTML = alignSummaryHtml(maPairStates(maList));
 
     const prevIdx = closes.length - 2;
     const prevLast = closes[prevIdx];
@@ -925,6 +966,16 @@ async function updateIndexPanel(key, dayLow) {
       { label: "120", value: ma120Arr[prevIdx] },
     ];
     const havePrev = prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null);
+
+    const prevTextEl = document.getElementById(key + "PrevAlignText");
+    const changeTextEl = document.getElementById(key + "AlignChange");
+    if (havePrev) {
+      if (prevTextEl) prevTextEl.innerHTML = alignSummaryHtml(maPairStates(prevMaList));
+      if (changeTextEl) changeTextEl.innerHTML = alignChangeHtml(maPairStates(maList), maPairStates(prevMaList));
+    } else {
+      if (prevTextEl) prevTextEl.textContent = "";
+      if (changeTextEl) changeTextEl.textContent = "데이터 부족";
+    }
 
     if (prevAlignBadgeEl) {
       if (havePrev) {
