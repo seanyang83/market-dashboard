@@ -856,6 +856,56 @@ def _investors_kis_cached(code, fetch):
     return data
 
 
+# 장 마감 후(15:40~) 종목 "오늘 수급": 장중 가집계(investor-trend-estimate)는 KRX 정규장 기준이라 NXT 체결이 빠지고
+# 외국인 부호가 키움(통합 일별)과 반대로 나오기도 한다. 그래서 15:40 이후에는 일별 투자자(통합 UN)의 오늘 행을 쓴다.
+# 이 값은 NXT가 끝나는 20:00까지 조금씩 바뀌는 잠정치다. 한투 호출이 1.3초라 30초 캐시 + 오래된 값 먼저 응답(백그라운드 갱신).
+INVESTOR_TODAY_FRESH = 30
+INVESTOR_TODAY_STALE_OK = 600
+_investor_today_cache = {}   # code -> {"ts", "date", "row"}
+_investor_today_lock = threading.Lock()
+_investor_today_refreshing = set()
+
+
+def _investor_today_fetch(code):
+    data = kis_get("/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily", "FHPTJ04160001",
+                   {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": "",
+                    "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": ""})
+    rows = data.get("output2") or []
+    today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    row = next((r for r in rows[:2] if r.get("stck_bsop_date") == today), None)
+    entry = {"ts": time.time(), "date": today, "row": row}
+    with _investor_today_lock:
+        _investor_today_cache[code] = entry
+        _investor_today_refreshing.discard(code)
+    return entry
+
+
+def investor_today_row(code):
+    """오늘 일별 수급 행(없으면 None). 오래된 캐시가 있으면 먼저 돌려주고 뒤에서 갱신한다."""
+    today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    now = time.time()
+    with _investor_today_lock:
+        hit = _investor_today_cache.get(code)
+        if hit and hit["date"] == today:
+            age = now - hit["ts"]
+            if age < INVESTOR_TODAY_FRESH:
+                return hit["row"]
+            if age < INVESTOR_TODAY_STALE_OK:
+                if code not in _investor_today_refreshing:
+                    _investor_today_refreshing.add(code)
+                    threading.Thread(target=lambda: _safe(_investor_today_fetch, code), daemon=True).start()
+                return hit["row"]
+    return _investor_today_fetch(code)["row"]
+
+
+def _safe(fn, *a):
+    try:
+        fn(*a)
+    except Exception:
+        with _investor_today_lock:
+            _investor_today_refreshing.clear()
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def _has_valid_cookie(self):
         for part in self.headers.get("Cookie", "").split(";"):
@@ -1265,6 +1315,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not KIS_APP_KEY or not KIS_APP_SECRET:
             self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
             return
+        now_kst = datetime.now(timezone.utc) + timedelta(hours=9)
+        if now_kst.weekday() < 5 and now_kst.hour * 60 + now_kst.minute >= 15 * 60 + 40:
+            try:
+                row = investor_today_row(code)
+            except Exception:
+                row = None
+            if row:
+                self.send_json(200, {
+                    "source": "daily",
+                    "checkpoint": "daily",
+                    "foreignQty": int(row.get("frgn_ntby_qty", 0)),
+                    "institutionQty": int(row.get("orgn_ntby_qty", 0)),
+                    "sumQty": int(row.get("frgn_ntby_qty", 0)) + int(row.get("orgn_ntby_qty", 0)),
+                    "individualQtyEstimated": int(row.get("prsn_ntby_qty", 0)),   # 일별은 개인 실제값이 있다
+                    "amountsM": {"individual": row.get("prsn_ntby_tr_pbmn"), "foreign": row.get("frgn_ntby_tr_pbmn"),
+                                 "institution": row.get("orgn_ntby_tr_pbmn")},
+                })
+                return
         try:
             data = kis_get(
                 "/uapi/domestic-stock/v1/quotations/investor-trend-estimate",
@@ -1488,6 +1556,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         [t.start() for t in threads]
         [t.join() for t in threads]
         out["parallel_total_ms"] = round((time.time() - t0) * 1000)
+        try:
+            out["investor_live"] = _local_get(f"/api/stock/investor-live?code={code}")
+        except Exception as e:
+            out["investor_live"] = {"error": str(e)[:100]}
         self.send_json(200, out)
 
     def handle_ops_stock_flow(self):
