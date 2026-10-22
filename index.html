@@ -543,16 +543,19 @@
         <div class="ma-badges">
           <span class="badge flat" id="stockVerdict">확인 중</span>
           <span class="badge up" id="stockReboundBadge" hidden>이평선 반등</span>
+          <span id="stockAlignChange" style="display:contents;"></span>
         </div>
         <div class="rank-compare">
           <div class="rank-compare-row">
             <span class="rank-compare-label">오늘</span>
             <span class="badge flat" id="stockRank">확인 중</span>
           </div>
+          <div class="align-text" id="stockAlignText"></div>
           <div class="rank-compare-row">
             <span class="rank-compare-label">어제</span>
             <span class="badge flat" id="stockPrevRank">확인 중</span>
           </div>
+          <div class="align-text" id="stockPrevAlignText"></div>
         </div>
         <canvas id="stockChart" class="chart-lg"></canvas>
         <div class="legend">
@@ -1648,6 +1651,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       ];
       rankEl.className = "badge flat";
       rankEl.innerHTML = buildRankChain(last, maList, displayName || code);
+      document.getElementById("stockAlignText").innerHTML = alignSummaryHtml(maPairStates(maList));
 
       const prevIdx = closes.length - 2;
       const prevLast = closes[prevIdx];
@@ -1660,6 +1664,9 @@ async function runStockChecklist(code, displayName, forceShow = true) {
         { label: "120", value: ma120Arr[prevIdx] },
       ];
       const havePrev = prevIdx >= 0 && prevLast != null && prevMaList.every((m) => m.value != null);
+
+      document.getElementById("stockPrevAlignText").innerHTML = havePrev ? alignSummaryHtml(maPairStates(prevMaList)) : "";
+      document.getElementById("stockAlignChange").innerHTML = havePrev ? alignChangeHtml(maPairStates(maList), maPairStates(prevMaList)) : "";
 
       if (havePrev) {
         const verdict = describeRankChange(last, maList, prevLast, prevMaList);
@@ -1719,6 +1726,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
       verdictEl.className = "badge flat";
       rankEl.textContent = "-";
       rankEl.className = "badge flat";
+      ["stockAlignText", "stockPrevAlignText", "stockAlignChange"].forEach((id) => (document.getElementById(id).innerHTML = ""));
       const prevRankEl = document.getElementById("stockPrevRank");
       if (prevRankEl) {
         prevRankEl.textContent = "-";
