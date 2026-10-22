@@ -389,8 +389,9 @@
       </div>
       <div class="ma-badges">
         <span class="badge flat" id="kospiRankChange">확인 중</span>
+        <span id="kospiAlignChange" style="display:contents;"></span>
       </div>
-      <div class="checklist-title-row">
+      <div class="checklist-title-row" style="align-items:flex-start;">
         <div class="rank-compare">
           <div class="rank-compare-row">
             <span class="rank-compare-label">오늘</span>
@@ -402,12 +403,8 @@
             <span class="badge flat" id="kospiPrevAlignBadge">확인 중</span>
           </div>
           <div class="align-text" id="kospiPrevAlignText"></div>
-          <div class="rank-compare-row">
-            <span class="rank-compare-label">변화</span>
-            <span class="align-text" id="kospiAlignChange" style="margin:0;flex:1;min-width:0;"></span>
-          </div>
         </div>
-        <span class="dot-wrap"><span class="weight" data-w="macro.kospiMa5"></span><span class="signal-dot" id="kospiMa5Signal"></span></span>
+        <span class="dot-wrap" style="margin-top:10px;"><span class="weight" data-w="macro.kospiMa5"></span><span class="signal-dot" id="kospiMa5Signal"></span></span>
       </div>
       <canvas id="kospiChart" class="chart-lg"></canvas>
       <div class="legend">
@@ -895,14 +892,10 @@ function alignSummaryHtml(states) {
   return parts.join(" · ");
 }
 function alignChangeHtml(now, prev) {
-  const ch = [];
-  now.forEach((s, i) => {
-    if (s.up === prev[i].up) return;
-    ch.push(s.up
-      ? alignSpan(`${s.a}<${s.b} 역배열 → ${s.a}>${s.b} 정배열 (${s.a}일선이 ${s.b}일선 위, 골든크로스)`, true)
-      : alignSpan(`${s.a}>${s.b} 정배열 → ${s.a}<${s.b} 역배열 (${s.a}일선이 ${s.b}일선 아래, 데드크로스)`, false));
-  });
-  return ch.length ? ch.join(" · ") : '<span class="flat">어제와 동일</span>';
+  return now
+    .filter((s, i) => s.up !== prev[i].up)
+    .map((s) => `<span class="badge ${s.up ? "up" : "down"}">${s.a}${s.up ? ">" : "<"}${s.b} ${s.up ? "정배열" : "역배열"} 전환</span>`)
+    .join("");
 }
 
 async function updateIndexPanel(key, dayLow) {
@@ -974,7 +967,7 @@ async function updateIndexPanel(key, dayLow) {
       if (changeTextEl) changeTextEl.innerHTML = alignChangeHtml(maPairStates(maList), maPairStates(prevMaList));
     } else {
       if (prevTextEl) prevTextEl.textContent = "";
-      if (changeTextEl) changeTextEl.textContent = "데이터 부족";
+      if (changeTextEl) changeTextEl.innerHTML = "";
     }
 
     if (prevAlignBadgeEl) {
