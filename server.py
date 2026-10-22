@@ -2770,20 +2770,11 @@ def _market_breadth_lines():
     except Exception:
         return ["등락 종목수 데이터 없음"]
 
-    def fmt(b):
-        up, flat, down = b["up"], b["flat"], b["down"]
-        # 부등호가 많은 쪽을 가리키게: 하락이 많으면 "상승, 보합 < 하락", 상승이 많으면 "상승 > 보합, 하락".
-        # 많은 쪽 표시: 하락 우세 ⬇️(파랑), 상승 우세 🔺(빨강) — 한국 관례 색.
-        if up > down:
-            return f"🔺상승({up}) > 보합({flat}), 하락({down})"
-        if up < down:
-            return f"상승({up}), 보합({flat}) < ⬇️하락({down})"
-        return f"상승({up}), 보합({flat}) = 하락({down})"
+    def fmt(name, b):
+        # 폰 한 줄(한글 22자 안팎)에 들어가게: 상승 🔺 / 하락 ⬇️ (한국 관례 색: 빨강 상승, 파랑 하락)
+        return f"{name} 🔺{b['up']} ⬇️{b['down']} (보합{b['flat']})"
 
-    return [
-        f"코스피 등락: {fmt(k)}",
-        f"코스닥 등락: {fmt(q)}",
-    ]
+    return [fmt("코스피", k), fmt("코스닥", q)]
 
 
 def _volume_rank_lines():
@@ -2943,6 +2934,16 @@ def _compact_summary_lines(macro_lines, stock_lines):
             a, b = a.replace(old, new), b.replace(old, new)
         return lines[:i] + [f"{a} · {b}"] + lines[j + 1:]
 
+    def trim(line):
+        # 순위 체인의 "일선"을 뺀다: 120일선>60일선>…>지수 → 120>60>…>지수 (괄호 안 설명은 그대로)
+        line = re.sub(r"(순위: )([^(]+)", lambda m: m.group(1) + re.sub(r"(\d+)일선", r"\1", m.group(2)), line)
+        # 코스피 수급: "코스피 수급: 외국인 -4,432억 · …" → "수급(억) 외국인 -4,432 · …"
+        if "코스피 수급:" in line:
+            line = re.sub(r"(\d)억", r"\1", line.replace("코스피 수급: ", "수급(억) "))
+        return line
+
+    macro_lines = [trim(l) for l in macro_lines]
+    stock_lines = [trim(l) for l in stock_lines]
     macro = merge(list(macro_lines), "미국채10Y", "WTI", (("미국채10Y", "미국채"),))
     macro = merge(macro, "나스닥100선물", "비트코인", (("나스닥100선물", "나스닥"),))
     stock = list(stock_lines)
