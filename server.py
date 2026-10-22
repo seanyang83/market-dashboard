@@ -1761,6 +1761,9 @@ def check_threshold_alert():
     lines.append(f"매크로 체크 {macro_pct}%" + (" " + "🔥" * macro_fire if macro_fire else ""))
     if stock_pct is not None:
         lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" " + "🔥" * stock_fire if stock_fire else ""))
+    change_line = _kospi_change_headline()
+    if change_line:
+        lines.append(change_line)
     if fire_banner:
         lines.append(fire_banner)
 
@@ -2541,6 +2544,64 @@ def _ma_state(closes):
     return last, ma_list, prev_last, prev_ma_list, have_prev
 
 
+_MA_ORDER = ("3", "5", "10", "20", "60", "120")
+
+
+def _ma_pair_states(ma_list):
+    """이웃한 이평선끼리(3-5, 5-10, ...) 정배열(단기선이 위)이면 True. 화면(index.html maPairStates)과 같은 규칙."""
+    v = dict(ma_list)
+    return [(a, b, v[a] > v[b]) for a, b in zip(_MA_ORDER, _MA_ORDER[1:])]
+
+
+def _align_summary(states):
+    """'전부 역배열 (3<5<...)' 또는 '🔺3>5 정배열 · 🔽5<10<20<60<120 역배열' (정배열 🔺빨강, 역배열 🔽파랑)."""
+    if all(not up for _, _, up in states):
+        return f"🔽전부 역배열 ({'<'.join(_MA_ORDER)})"
+    if all(up for _, _, up in states):
+        return f"🔺전부 정배열 ({'>'.join(_MA_ORDER)})"
+    parts, i = [], 0
+    while i < len(states):
+        j = i
+        while j + 1 < len(states) and states[j + 1][2] == states[i][2]:
+            j += 1
+        up = states[i][2]
+        names = [states[i][0]] + [s[1] for s in states[i:j + 1]]
+        parts.append(f"{'🔺' if up else '🔽'}{('>' if up else '<').join(names)} {'정배열' if up else '역배열'}")
+        i = j + 1
+    return " · ".join(parts)
+
+
+def _align_changes(states, prev_states):
+    """어제와 달라진 이웃 관계만: '3<5 역배열 전환' / '3>5 정배열 전환'."""
+    return [f"{a}{'>' if up else '<'}{b} {'정배열' if up else '역배열'} 전환"
+            for (a, b, up), (_, _, pup) in zip(states, prev_states) if up != pup]
+
+
+def _align_lines(ma_list, prev_ma_list, have_prev):
+    lines = [f"   오늘: {_align_summary(_ma_pair_states(ma_list))}"]
+    if have_prev:
+        lines.append(f"   어제: {_align_summary(_ma_pair_states(prev_ma_list))}")
+    return lines
+
+
+def _kospi_change_headline():
+    """상단 강조용 한 줄: 종베 코스피 카드의 변화 뱃지(예: 3일선·5일선 하향 돌파, 3<5 역배열 전환). 없으면 ''."""
+    try:
+        hist = _local_get("/api/kospi/history")
+        closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
+        state = _ma_state(closes)
+        if not state:
+            return ""
+        last, ma_list, prev_last, prev_ma_list, have_prev = state
+        if not have_prev:
+            return ""
+        items = [_describe_rank_change(last, ma_list, prev_last, prev_ma_list)]
+        items += _align_changes(_ma_pair_states(ma_list), _ma_pair_states(prev_ma_list))
+        return "📢 코스피 변화: " + " / ".join(items)
+    except Exception:
+        return ""
+
+
 def _macro_instrument_line(label, symbol, sentiment, prefix, decimals):
     data = _local_get(f"/api/quote?symbol={urllib.parse.quote(symbol, safe='')}&range=1d&interval=2m")
     meta = data["chart"]["result"][0]["meta"]
@@ -2591,6 +2652,7 @@ def _kospi_section():
     lines = [
         f"{SIGNAL_EMOJI[dir_signal]} 코스피 {price:,.2f} ({arrow}{abs(pct):.2f}%) · {zone}",
         f"{SIGNAL_EMOJI[ma5_signal]} 코스피 순위: {rank_chain} ({rank_text})",
+        *_align_lines(ma_list, prev_ma_list, have_prev),
     ]
     return dir_signal, ma5_signal, lines
 
@@ -2655,7 +2717,7 @@ def _stock_section(code):
 
     closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
     state = _ma_state(closes)
-    chart_signal, rank_text = None, "데이터 부족"
+    chart_signal, rank_text, align_lines = None, "데이터 부족", []
     if state:
         last, ma_list, prev_last, prev_ma_list, have_prev = state
         ma5 = dict(ma_list)["5"]
@@ -2669,6 +2731,7 @@ def _stock_section(code):
         if have_prev:
             rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list)
         rank_chain = _format_rank_chain(last, ma_list, name)
+        align_lines = _align_lines(ma_list, prev_ma_list, have_prev)
         signals.append((chart_signal, SCORE_WEIGHTS["stock"]["chart"]))
 
     pct = diff / prev_close * 100 if prev_close else 0
@@ -2680,6 +2743,7 @@ def _stock_section(code):
         lines.append(kr_line)
     if chart_signal:
         lines.append(f"{SIGNAL_EMOJI[chart_signal]} 이평선 순위: {rank_chain} ({rank_text})")
+        lines.extend(align_lines)
 
     if live and not live.get("error"):
         fb, ib = live.get("foreignQty", 0) > 0, live.get("institutionQty", 0) > 0
@@ -2885,6 +2949,9 @@ def build_dashboard_summary_text():
         summary_lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" " + "🔥" * stock_fire if stock_fire else ""))
     else:
         summary_lines.append("종목 체크 데이터 없음")
+    change_line = _kospi_change_headline()
+    if change_line:
+        summary_lines.append(change_line)
     if fire_banner:
         summary_lines.append(fire_banner)
 
