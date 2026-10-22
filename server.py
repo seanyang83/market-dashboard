@@ -2575,14 +2575,6 @@ def _align_changes(states, prev_states):
             for (a, b, up), (_, _, pup) in zip(states, prev_states) if up != pup]
 
 
-def _align_lines(ma_list, prev_ma_list, have_prev):
-    """순위 줄 아래에는 어제와 달라진 관계만(메시지를 짧게). 바뀐 게 없으면 줄 없음."""
-    if not have_prev:
-        return []
-    ch = _align_changes(_ma_pair_states(ma_list), _ma_pair_states(prev_ma_list))
-    return [f"   {' / '.join(ch)}"] if ch else []
-
-
 def _kospi_change_headline():
     """상단 강조 줄들: 종베 코스피 카드의 변화 뱃지(예: 3일선·5일선 하향 돌파, 3<5 역배열 전환)와
     오늘 이평선 배열 요약(오늘: 🔽전부 역배열 ...). 줄 리스트, 못 만들면 []."""
@@ -2654,7 +2646,6 @@ def _kospi_section():
     lines = [
         f"{SIGNAL_EMOJI[dir_signal]} 코스피 {price:,.2f} ({arrow}{abs(pct):.2f}%) · {zone}",
         f"{SIGNAL_EMOJI[ma5_signal]} 코스피 순위: {rank_chain} ({rank_text})",
-        *_align_lines(ma_list, prev_ma_list, have_prev),
     ]
     return dir_signal, ma5_signal, lines
 
@@ -2719,7 +2710,7 @@ def _stock_section(code):
 
     closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
     state = _ma_state(closes)
-    chart_signal, rank_text, align_lines = None, "데이터 부족", []
+    chart_signal, rank_text = None, "데이터 부족"
     if state:
         last, ma_list, prev_last, prev_ma_list, have_prev = state
         ma5 = dict(ma_list)["5"]
@@ -2733,7 +2724,6 @@ def _stock_section(code):
         if have_prev:
             rank_text = _describe_rank_change(last, ma_list, prev_last, prev_ma_list)
         rank_chain = _format_rank_chain(last, ma_list, name)
-        align_lines = _align_lines(ma_list, prev_ma_list, have_prev)
         signals.append((chart_signal, SCORE_WEIGHTS["stock"]["chart"]))
 
     pct = diff / prev_close * 100 if prev_close else 0
@@ -2745,7 +2735,6 @@ def _stock_section(code):
         lines.append(kr_line)
     if chart_signal:
         lines.append(f"{SIGNAL_EMOJI[chart_signal]} 이평선 순위: {rank_chain} ({rank_text})")
-        lines.extend(align_lines)
 
     if live and not live.get("error"):
         fb, ib = live.get("foreignQty", 0) > 0, live.get("institutionQty", 0) > 0
