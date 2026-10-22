@@ -1761,9 +1761,7 @@ def check_threshold_alert():
     lines.append(f"매크로 체크 {macro_pct}%" + (" " + "🔥" * macro_fire if macro_fire else ""))
     if stock_pct is not None:
         lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" " + "🔥" * stock_fire if stock_fire else ""))
-    change_line = _kospi_change_headline()
-    if change_line:
-        lines.append(change_line)
+    lines.extend(_kospi_change_headline())
     if fire_banner:
         lines.append(fire_banner)
 
@@ -2578,28 +2576,32 @@ def _align_changes(states, prev_states):
 
 
 def _align_lines(ma_list, prev_ma_list, have_prev):
-    lines = [f"   오늘: {_align_summary(_ma_pair_states(ma_list))}"]
-    if have_prev:
-        lines.append(f"   어제: {_align_summary(_ma_pair_states(prev_ma_list))}")
-    return lines
+    """순위 줄 아래에는 어제와 달라진 관계만(메시지를 짧게). 바뀐 게 없으면 줄 없음."""
+    if not have_prev:
+        return []
+    ch = _align_changes(_ma_pair_states(ma_list), _ma_pair_states(prev_ma_list))
+    return [f"   {' / '.join(ch)}"] if ch else []
 
 
 def _kospi_change_headline():
-    """상단 강조용 한 줄: 종베 코스피 카드의 변화 뱃지(예: 3일선·5일선 하향 돌파, 3<5 역배열 전환). 없으면 ''."""
+    """상단 강조 줄들: 종베 코스피 카드의 변화 뱃지(예: 3일선·5일선 하향 돌파, 3<5 역배열 전환)와
+    오늘 이평선 배열 요약(오늘: 🔽전부 역배열 ...). 줄 리스트, 못 만들면 []."""
     try:
         hist = _local_get("/api/kospi/history")
         closes = [c["close"] for c in hist.get("closes", []) if c.get("close") is not None]
         state = _ma_state(closes)
         if not state:
-            return ""
+            return []
         last, ma_list, prev_last, prev_ma_list, have_prev = state
-        if not have_prev:
-            return ""
-        items = [_describe_rank_change(last, ma_list, prev_last, prev_ma_list)]
-        items += _align_changes(_ma_pair_states(ma_list), _ma_pair_states(prev_ma_list))
-        return "📢 코스피 변화: " + " / ".join(items)
+        out = []
+        if have_prev:
+            items = [_describe_rank_change(last, ma_list, prev_last, prev_ma_list)]
+            items += _align_changes(_ma_pair_states(ma_list), _ma_pair_states(prev_ma_list))
+            out.append("📢 코스피 변화: " + " / ".join(items))
+        out.append(f"오늘: {_align_summary(_ma_pair_states(ma_list))}")
+        return out
     except Exception:
-        return ""
+        return []
 
 
 def _macro_instrument_line(label, symbol, sentiment, prefix, decimals):
@@ -2949,9 +2951,7 @@ def build_dashboard_summary_text():
         summary_lines.append(f"종목체크({stock_name}) {stock_pct}%" + (" " + "🔥" * stock_fire if stock_fire else ""))
     else:
         summary_lines.append("종목 체크 데이터 없음")
-    change_line = _kospi_change_headline()
-    if change_line:
-        summary_lines.append(change_line)
+    summary_lines.extend(_kospi_change_headline())
     if fire_banner:
         summary_lines.append(fire_banner)
 
