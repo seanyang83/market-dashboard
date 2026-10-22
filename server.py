@@ -1442,21 +1442,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not code:
             return
         names = ["quote", "history", "investors", "theme", "investor-live", "program-trade"]
+        # 종목 패널이 그 뒤에 순서대로 부르는 동일 산업군 조회(미국 ETF 시세, 국내 ETF 시세)도 같이 잰다.
+        extra = {"us-proxy": "/api/quote?symbol=SOXX&range=1d&interval=2m",
+                 "kr-proxy": "/api/stock/quote?code=091160"}
         out = {"code": code, "cold_ms": {}, "warm_ms": {}}
 
         def timed(n):
             t = time.time()
             try:
-                _local_get(f"/api/stock/{n}?code={code}")
+                _local_get(extra[n] if n in extra else f"/api/stock/{n}?code={code}")
                 err = None
             except Exception as e:
                 err = str(e)[:80]
             return round((time.time() - t) * 1000), err
 
-        for n in names:
+        for n in names + list(extra):
             ms, err = timed(n)
             out["cold_ms"][n] = ms if not err else f"{ms} ERR {err}"
-        for n in names:
+        for n in names + list(extra):
             ms, err = timed(n)
             out["warm_ms"][n] = ms if not err else f"{ms} ERR {err}"
         t0 = time.time()
