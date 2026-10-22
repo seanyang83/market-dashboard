@@ -2927,6 +2927,34 @@ def build_score_snapshot(slot):
     }
 
 
+def _compact_summary_lines(macro_lines, stock_lines):
+    """정시 요약만 짧게(1단계): 같은 성격의 줄을 한 줄로 합친다. 점수 기록(_signal_map)은 원본 줄을 쓰므로 영향 없음.
+    - 미국채·WTI / 나스닥·비트코인 → 2줄,  - 미국/국내 동일 산업군 → 1줄(ETF 이름 생략)."""
+    def short(line):
+        return re.sub(r"\s*\((▲|▼|-)([\d.,]+%)\)", r" \1\2", line)
+
+    def merge(lines, first, second, rename=()):
+        i = next((k for k, l in enumerate(lines) if first in l), None)
+        j = next((k for k, l in enumerate(lines) if second in l), None)
+        if i is None or j is None or j != i + 1:
+            return lines
+        a, b = short(lines[i]), short(lines[j])
+        for old, new in rename:
+            a, b = a.replace(old, new), b.replace(old, new)
+        return lines[:i] + [f"{a} · {b}"] + lines[j + 1:]
+
+    macro = merge(list(macro_lines), "미국채10Y", "WTI", (("미국채10Y", "미국채"),))
+    macro = merge(macro, "나스닥100선물", "비트코인", (("나스닥100선물", "나스닥"),))
+    stock = list(stock_lines)
+    i = next((k for k, l in enumerate(stock) if "미국 동일 산업군" in l), None)
+    j = next((k for k, l in enumerate(stock) if "국내 동일 산업군" in l), None)
+    if i is not None and j == i + 1:
+        us = re.sub(r"전일 미국 동일 산업군\(.*?\)", "동일산업군 미국(전일)", stock[i])
+        kr = re.sub(r"국내 동일 산업군\(.*?\) ", "국내 ", stock[j])
+        stock = stock[:i] + [f"{us} · {kr}"] + stock[j + 1:]
+    return macro, stock
+
+
 def build_dashboard_summary_text():
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     macro_pct, macro_lines, stock_pct, stock_name, stock_lines = _compute_scores()
@@ -2946,6 +2974,7 @@ def build_dashboard_summary_text():
 
     # 거래대금 순위는 KIS 호출이 두 번(KRX+NXT) 더 들어가는 무거운 섹션이라,
     # 하루 중 장 시작(09:10)과 마감 전(15:10) 체크포인트에만 같이 보낸다.
+    macro_lines, stock_lines = _compact_summary_lines(macro_lines, stock_lines)
     blocks = [macro_lines, stock_lines]
     if now.hour in (9, 15):
         blocks.append(_volume_rank_lines())

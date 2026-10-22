@@ -631,3 +631,7 @@ Render 유료 인스턴스(항상 켜짐) + 서버 안 스케줄러로 모든 �
 - 요소 id: `kospiAlignText` / `kospiPrevAlignText` / `kospiAlignChange`(뱃지 컨테이너). 종목 패널("3. 차트 5일선 위")에도 동일 적용(`stockAlignText` / `stockPrevAlignText` / `stockAlignChange`, 신호등 위치는 그대로). **텔레그램에도 적용**(`server.py`: `_ma_pair_states`, `_align_summary`, `_align_changes`, `_kospi_change_headline`):
   - 코스피 순위 줄·종목 이평선 순위 줄 아래에는 아무것도 붙이지 않음(상단 `📢 코스피 변화`와 중복이라 사용자 요청으로 뺌, 메시지 길이 절약).
   - 정시 요약과 실시간(80%/20%) 알림 모두 맨 위 `매크로 체크 %` / `종목체크 %` 아래에 `📢 코스피 변화: 3일선·5일선 하향 돌파 / 3<5 역배열 전환` + `오늘: 🔽전부 역배열 (3<5<10<20<60<120)`(정배열 🔺, 역배열 🔽) 두 줄 강조.
+
+### 25-1. 텔레 정시 요약 줄이기 1단계 (2026-10-22)
+`_compact_summary_lines`(server.py)가 정시 요약(`build_dashboard_summary_text`)에서만 같은 성격의 줄을 합친다: 미국채·WTI / 나스닥·비트코인 각 한 줄, 미국·국내 동일 산업군 한 줄(ETF 이름 생략). 점수 기록과 실시간 알림은 원본 줄을 쓰므로 영향 없음.
+남은 후보(사용자가 1단계 결과를 본 뒤 결정): 코스피/종목 순위 체인(`120일선>60일선>…`) 제거, 거래대금 TOP10→TOP5+히트, 신호등 요약형.
