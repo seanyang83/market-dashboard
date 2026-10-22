@@ -2593,7 +2593,7 @@ def _kospi_change_headline():
         if not state:
             return []
         last, ma_list, prev_last, prev_ma_list, have_prev = state
-        out = []
+        out = [""]   # 매크로/종목 % 줄과 한 줄 띄움
         if have_prev:
             items = [_describe_rank_change(last, ma_list, prev_last, prev_ma_list)]
             items += _align_changes(_ma_pair_states(ma_list), _ma_pair_states(prev_ma_list))
