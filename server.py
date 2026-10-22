@@ -2937,6 +2937,9 @@ def _compact_summary_lines(macro_lines, stock_lines):
     def trim(line):
         # 순위 체인의 "일선"을 뺀다: 120일선>60일선>…>지수 → 120>60>…>지수 (괄호 안 설명은 그대로)
         line = re.sub(r"(순위: )([^(]+)", lambda m: m.group(1) + re.sub(r"(\d+)일선", r"\1", m.group(2)), line)
+        # 코스피 순위 줄의 괄호 설명은 상단 "📢 코스피 변화"와 겹쳐서 뺀다(종목 줄은 유지).
+        if "코스피 순위:" in line:
+            line = re.sub(r"\s*\(.*\)\s*$", "", line)
         # 코스피 수급: "코스피 수급: 외국인 -4,432억 · …" → "수급(억) 외국인 -4,432 · …"
         if "코스피 수급:" in line:
             line = re.sub(r"(\d)억", r"\1", line.replace("코스피 수급: ", "수급(억) "))
