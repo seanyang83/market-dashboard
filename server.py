@@ -2919,44 +2919,23 @@ def build_score_snapshot(slot):
 
 
 def _compact_summary_lines(macro_lines, stock_lines):
-    """정시 요약만 짧게(1단계): 같은 성격의 줄을 한 줄로 합친다. 점수 기록(_signal_map)은 원본 줄을 쓰므로 영향 없음.
-    - 미국채·WTI / 나스닥·비트코인 → 2줄,  - 미국/국내 동일 산업군 → 1줄(ETF 이름 생략)."""
-    def short(line):
-        return re.sub(r"\s*\((▲|▼|-)([\d.,]+%)\)", r" \1\2", line)
-
-    def merge(lines, first, second, rename=()):
-        i = next((k for k, l in enumerate(lines) if first in l), None)
-        j = next((k for k, l in enumerate(lines) if second in l), None)
-        if i is None or j is None or j != i + 1:
-            return lines
-        a, b = short(lines[i]), short(lines[j])
-        for old, new in rename:
-            a, b = a.replace(old, new), b.replace(old, new)
-        return lines[:i] + [f"{a} · {b}"] + lines[j + 1:]
-
+    """정시 요약만 폰 화면(한 줄≈한글 22자)에 맞게 다듬는다. 점수 기록(_signal_map)은 원본 줄을 쓰므로 영향 없음.
+    - 순위 체인의 "일선" 생략, 코스피 순위 줄의 괄호 설명 생략(상단 "📢 코스피 변화"와 중복)
+    - 코스피 지수 줄의 구간 문구(20일선 아래=저점 현금베팅 등) 생략
+    - 코스피 수급은 "수급(억) 외국인 -4,628 · …", 동일 산업군은 미국/국내 각각 한 줄(ETF 이름 생략)"""
     def trim(line):
-        # 순위 체인의 "일선"을 뺀다: 120일선>60일선>…>지수 → 120>60>…>지수 (괄호 안 설명은 그대로)
         line = re.sub(r"(순위: )([^(]+)", lambda m: m.group(1) + re.sub(r"(\d+)일선", r"\1", m.group(2)), line)
-        # 코스피 순위 줄의 괄호 설명은 상단 "📢 코스피 변화"와 겹쳐서 뺀다(종목 줄은 유지).
         if "코스피 순위:" in line:
             line = re.sub(r"\s*\(.*\)\s*$", "", line)
-        # 코스피 수급: "코스피 수급: 외국인 -4,432억 · …" → "수급(억) 외국인 -4,432 · …"
-        if "코스피 수급:" in line:
+        elif "코스피 수급:" in line:
             line = re.sub(r"(\d)억", r"\1", line.replace("코스피 수급: ", "수급(억) "))
+        elif " · " in line and "코스피 " in line:
+            line = re.sub(r" · \d+일선 (위|아래)=.*$", "", line)
+        line = re.sub(r"전일 미국 동일 산업군\(.*?\)", "미국 동일산업군(전일)", line)
+        line = re.sub(r"국내 동일 산업군\(.*?\)", "국내 동일산업군", line)
         return line
 
-    macro_lines = [trim(l) for l in macro_lines]
-    stock_lines = [trim(l) for l in stock_lines]
-    macro = merge(list(macro_lines), "미국채10Y", "WTI", (("미국채10Y", "미국채"),))
-    macro = merge(macro, "나스닥100선물", "비트코인", (("나스닥100선물", "나스닥"),))
-    stock = list(stock_lines)
-    i = next((k for k, l in enumerate(stock) if "미국 동일 산업군" in l), None)
-    j = next((k for k, l in enumerate(stock) if "국내 동일 산업군" in l), None)
-    if i is not None and j == i + 1:
-        us = re.sub(r"전일 미국 동일 산업군\(.*?\)", "동일산업군 미국(전일)", stock[i])
-        kr = re.sub(r"국내 동일 산업군\(.*?\) ", "국내 ", stock[j])
-        stock = stock[:i] + [f"{us} · {kr}"] + stock[j + 1:]
-    return macro, stock
+    return [trim(l) for l in macro_lines], [trim(l) for l in stock_lines]
 
 
 def build_dashboard_summary_text():
