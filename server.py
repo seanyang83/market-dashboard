@@ -835,6 +835,27 @@ def _check_password(candidate):
     return ok
 
 
+# 종목 일별 수급(최근 7거래일 표)은 "오늘을 뺀 지난 거래일"만 담기 때문에 하루 안에는 값이 변하지 않는다
+# (어제 값은 어제 20시 NXT 마감 뒤 확정). 그래서 KST 날짜가 바뀔 때까지 종목별로 메모리에 보관하고,
+# 한투 호출(1.3초)은 종목당 하루 한 번만 한다. 한투 성공 응답만 저장(네이버 대체 응답은 저장 안 함).
+# 서버가 재시작되면 비워지고 첫 요청 때 다시 채운다(Render 디스크는 재배포 때 지워져 파일 저장은 안 함).
+_investors_day_cache = {}   # code -> {"date": "YYYYMMDD(KST)", "data": {...}}
+_investors_day_lock = threading.Lock()
+
+
+def _investors_kis_cached(code, fetch):
+    today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    with _investors_day_lock:
+        hit = _investors_day_cache.get(code)
+        if hit and hit["date"] == today:
+            return hit["data"]
+    data = fetch(code)
+    if data.get("source") == "kis":
+        with _investors_day_lock:
+            _investors_day_cache[code] = {"date": today, "data": data}
+    return data
+
+
 class Handler(http.server.SimpleHTTPRequestHandler):
     def _has_valid_cookie(self):
         for part in self.headers.get("Cookie", "").split(";"):
@@ -1137,7 +1158,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         if KIS_APP_KEY and KIS_APP_SECRET:
             try:
-                self.send_json(200, self._fetch_investors_kis(code))
+                self.send_json(200, _investors_kis_cached(code, self._fetch_investors_kis))
                 return
             except Exception:
                 pass  # fall through to the Naver-based approximation below
