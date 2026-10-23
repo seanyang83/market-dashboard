@@ -2380,21 +2380,22 @@ def jongbae_light(state=None):
             f"   코스피 {s['price']:,.0f} ({s['basis']}) · 5일선 {s['ma5']:,.0f} · 20일선 {s['ma20']:,.0f}"]
 
 
-# 14:00 알림의 "하지 말 것": 공통 + 신호등 단계별 + 장세별 고유 1줄을 하나로 합친다(겹치는 문구는 한 번만).
+# 14:00 알림: 하지 말 것(공통 + 신호등 단계별 + 장세별 고유 1줄)과 할 것(장세별)을 "OO장에서 지켜야 할 규칙" 한 목록으로 합친다.
+# 겹치는 문구는 한 번만. 폰 한 줄에 들어가도록 짧게 쓴다.
 JONGBAE_DONT_COMMON = [
-    "정한 손절액 이하일 경우 버티지 않고 바로 정리한다 (종베한 건 초장에 자른다)",
-    "물타기로 끌고 가지 않는다",
-    "큰 비중은 갭하락 때 어디서 정리할지 정해 놓고 들어간다",
+    "정한 손절액 이하면 바로 정리 (종베는 초장에 자른다)",
+    "물타기 금지",
+    "큰 비중은 갭하락 정리 계획부터",
 ]
 JONGBAE_DONT_BY_LIGHT = {
-    "red": ["5일선 아래에서는 종베하지 않는다 (무포)", "하락 중 반등 노린 장중 신규 매매를 크게 하지 않는다"],
-    "yellow": ["큰 비중으로 가지 않는다 (소액만)", "아니다 싶으면 바로 장초 정리한다"],
-    "green": ["NXT 상승만 보고 비중을 싣지 않는다 (본장 상승 확인)", "큰 수익이 안 나는 작은 종목·작은 매매에 기웃거리지 않는다"],
+    "red": ["5일선 아래 종베 금지 (무포)", "하락 중 반등 노린 장중 매매 금지"],
+    "yellow": ["큰 비중 금지 (소액만)", "아니다 싶으면 바로 장초 정리한다"],
+    "green": ["NXT 상승만 보고 비중 싣지 않는다 (본장 상승 확인)", "큰 수익 안 나는 작은 종목·작은 매매 금지"],
 }
 JONGBAE_DONT_BY_REGIME = {
-    "down": "손실 본 날 복수매매 금지 (그날은 모니터링만)",
-    "side": "시황 확인 없이 종베하지 않는다 (시황 최우선)",
-    "up": "NXT 상승만 보고 비중을 싣지 않는다 (본장 상승 확인)",
+    "down": "손실 본 날 복수매매 금지",
+    "side": "시황 확인 없이 종베 금지 (시황 최우선)",
+    "up": "NXT 상승만 보고 비중 싣지 않는다 (본장 상승 확인)",
 }
 
 
@@ -2406,13 +2407,30 @@ def jongbae_dont_lines(level, regime):
     return out
 
 
+def build_jongbae_pre_message(info, state, today_live=None):
+    """14:00 종베 직전 알림(짧은 형태): 신호등 + 장세 한 줄 + 'OO장에서 지켜야 할 규칙' 한 목록."""
+    r = info["regime"]
+    dd = today_live["drawdown"] if today_live else info["drawdown"]
+    lines = [f"🧭 종베 직전 14:00 · {_kst_now().strftime('%m/%d')}",
+             f"🚦 {state['emoji']} {state['label']}"]
+    if info["changed"]:
+        lines.append(f"🔔 장세 전환: {REGIME_LABEL[info['prev']]} → {REGIME_LABEL[r]}")
+    lines.append(f"{REGIME_EMOJI[r]} {REGIME_LABEL[r]} · 코스피 {state['price']:,.0f} · 고점 대비 {dd:+.1f}%")
+    lines.append("")
+    lines.append(f"📌 {REGIME_LABEL[r]}에서 지켜야 할 규칙")
+    do = REGIME_RULES[r]["do"]
+    do = do[:3] if r == "down" else do[:5]
+    lines.extend(f"🚫 {t}" for t in jongbae_dont_lines(state["level"], r))
+    lines.extend(f"✅ {t}" for t in do)
+    return "\n".join(lines)
+
+
 def build_regime_message(kind, info, today_live=None):
     """kind: morning | pre | change. 평문."""
     now = _kst_now()
     r = info["regime"]
     rules = REGIME_RULES[r]
     head = {"morning": "🧭 종베규칙 · 아침", "pre": "🧭 종베규칙 · 종베 직전 14:00", "change": "🔔 종베규칙 · 장세 전환"}[kind]
-    lines = [f"{head} · {now.strftime('%m/%d')}"]
     state = None
     if kind == "pre":
         try:
@@ -2420,8 +2438,8 @@ def build_regime_message(kind, info, today_live=None):
         except Exception:
             state = None
         if state:
-            lines.extend(jongbae_light(state))
-            lines.append("")
+            return build_jongbae_pre_message(info, state, today_live)
+    lines = [f"{head} · {now.strftime('%m/%d')}"]
     if kind == "change" or info["changed"]:
         lines.append(f"{REGIME_EMOJI[info['prev']]} {REGIME_LABEL[info['prev']]} → {REGIME_EMOJI[r]} {REGIME_LABEL[r]} 전환 ({info['date'][5:].replace('-', '/')} 종가 기준)")
     else:
@@ -2431,10 +2449,7 @@ def build_regime_message(kind, info, today_live=None):
         lines.append(f"오늘 장중 {today_live['close']:,.0f} ({today_live['pct']:+.2f}%) · 고점 대비 {today_live['drawdown']:+.1f}%")
     lines.append("")
     lines.append("🚫 하지 말 것")
-    if state:
-        dont = jongbae_dont_lines(state["level"], r)
-    else:
-        dont = rules["dont"] if kind != "pre" else rules["dont"][:3]
+    dont = rules["dont"] if kind != "pre" else rules["dont"][:3]
     lines.extend(f" · {t}" for t in dont)
     lines.append("✅ 할 것")
     lines.extend(f" · {t}" for t in rules["do"][:5])
