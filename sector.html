@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>업종 월별 수익률</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card-bg: #ffffff; --text: #14161a; --sub: #6b7280; --border: #e5e7eb;
+    --up: #d92d20; --down: #2563eb; --accent: #2563eb;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10; --card-bg: #15181d; --text: #f2f3f5; --sub: #9aa1ac; --border: #262a31;
+      --up: #f87171; --down: #60a5fa; --accent: #60a5fa;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; padding: 24px 16px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Apple SD Gothic Neo", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  .nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  a.btn, button.btn {
+    border: 1px solid var(--border); background: var(--card-bg); color: var(--text); text-decoration: none;
+    font-size: 12.5px; padding: 6px 12px; border-radius: 999px; cursor: pointer; font-family: inherit;
+  }
+  a.btn:hover, button.btn:hover { border-color: var(--accent); color: var(--accent); }
+  button.btn.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 16px 16px; box-shadow: var(--shadow); margin-top: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 8px; }
+  .sub { font-size: 12px; color: var(--sub); line-height: 1.5; }
+  .controls { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .controls .sep { width: 8px; }
+  .sumrow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+  .sumrow .lab { font-weight: 700; min-width: 96px; }
+  .chip {
+    font-size: 12px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--text);
+    cursor: pointer; background: var(--bg); font-family: inherit;
+  }
+  .chip.sel { outline: 2px solid var(--accent); }
+  .chip .dlt { color: var(--sub); margin-left: 4px; font-size: 11px; }
+  .scroller { overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--border); border-radius: 10px; }
+  .inner { position: relative; display: inline-block; min-width: 100%; }
+  table { border-collapse: separate; border-spacing: 0; font-size: 11px; }
+  th, td { padding: 0; }
+  thead th {
+    position: sticky; top: 0; background: var(--card-bg); font-weight: 600; font-size: 11px; color: var(--sub);
+    padding: 6px 2px; text-align: center; border-bottom: 1px solid var(--border); z-index: 2; white-space: nowrap;
+  }
+  thead th.partial { color: var(--accent); }
+  th.rk, td.rk {
+    position: sticky; left: 0; z-index: 3; background: var(--card-bg); color: var(--sub); font-weight: 600;
+    min-width: 30px; text-align: center; border-right: 1px solid var(--border); font-size: 11px;
+  }
+  td.c { min-width: 74px; max-width: 74px; padding: 2px; }
+  .cell {
+    border-radius: 6px; padding: 4px 3px; line-height: 1.2; text-align: center; cursor: pointer;
+    transition: opacity .15s; overflow: hidden;
+  }
+  .cell .nm { display: block; font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cell .pc { display: block; font-size: 10.5px; font-variant-numeric: tabular-nums; }
+  .pc.up { color: var(--up); } .pc.down { color: var(--down); }
+  .dim .cell { opacity: .22; }
+  .dim .cell.sel { opacity: 1; box-shadow: 0 0 0 2px var(--text) inset; }
+  svg.trace { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; }
+  .loading { font-size: 13px; color: var(--sub); padding: 24px 4px; text-align: center; }
+  .error { color: var(--up); font-size: 13px; padding: 12px 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>업종 월별 수익률 순위</h1>
+    <div class="nav">
+      <a class="btn" href="/">← 종가베팅</a>
+      <a class="btn" href="/leader">주도주 분석</a>
+    </div>
+  </header>
+
+  <div class="card">
+    <div class="controls">
+      <button class="btn active" data-market="KOSPI">코스피 업종</button>
+      <button class="btn" data-market="KOSDAQ">코스닥 업종</button>
+      <span class="sep"></span>
+      <button class="btn" data-range="12">12개월</button>
+      <button class="btn" data-range="24">24개월</button>
+      <button class="btn active" data-range="36">36개월</button>
+    </div>
+    <div class="sub" style="margin-top:8px;" id="asOf">불러오는 중...</div>
+  </div>
+
+  <div class="card" id="summaryCard" hidden>
+    <h2>지금 어떤 업종이 뜨고 지나</h2>
+    <div class="sub">진행 중인 달은 빼고, 최근 3개월 평균 순위를 그 이전 3개월과 비교했습니다. 업종 이름을 누르면 아래 표에서 따라가 볼 수 있습니다.</div>
+    <div id="summary"></div>
+  </div>
+
+  <div class="card">
+    <h2>월별 수익률 순위 <span class="sub">(위로 갈수록 그 달 수익률이 높음 · 업종을 누르면 월별 순위 이동을 선으로 이어 줍니다)</span></h2>
+    <div id="msg" class="loading">업종 데이터를 불러오는 중...</div>
+    <div class="scroller" id="scroller" hidden>
+      <div class="inner" id="inner"><table id="tbl"></table><svg class="trace" id="trace"></svg></div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="sub" style="margin-top:10px;">
+      한국투자증권 KRX 업종지수 월봉 기준 · 수익률 = 그 달 종가 ÷ 전달 종가 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달 ·
+      상승은 빨강, 하락은 파랑
+    </div>
+  </div>
+</div>
+
+<script>
+let DATA = null;
+let market = "KOSPI", range = 36, selected = null;
+
+const fmt = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
+const hueOf = (i, n) => Math.round((i * 360) / n + 8) % 360;
+
+async function load() {
+  const msg = document.getElementById("msg");
+  try {
+    const res = await fetch("/api/sectors/monthly", { cache: "no-store" });
+    if (res.status === 401) { location.href = "/login"; return; }
+    const body = await res.json();
+    if (!res.ok) {
+      msg.textContent = body.error || "불러오지 못했습니다";
+      setTimeout(load, 4000);       // 서버가 처음 모으는 중이면 곧 준비된다
+      return;
+    }
+    DATA = body;
+    document.getElementById("asOf").textContent = `기준 ${body.asOf} · 최근 ${body.months.length}개월`;
+    render();
+  } catch (e) {
+    msg.textContent = "불러오지 못했습니다: " + e.message;
+    setTimeout(load, 6000);
+  }
+}
+
+function sectorsOf() {
+  const list = DATA.markets[market] || [];
+  const n = list.length;
+  return list.map((s, i) => ({ ...s, hue: hueOf(i, n) }));
+}
+
+function render() {
+  if (!DATA) return;
+  const all = sectorsOf();
+  const total = DATA.months.length;
+  const from = total - range;
+  const months = DATA.months.slice(from);
+  const sectors = all.map((s) => ({ ...s, r: s.rets.slice(from) }));
+  const N = sectors.length;
+  if (!N) { document.getElementById("msg").textContent = "이 시장의 업종 데이터가 없습니다"; return; }
+
+  // 월별 순위(0부터): 수익률 높은 순
+  const rankOf = {};      // code -> [rank per month]
+  const byRank = [];      // month -> [sector sorted desc]
+  months.forEach((_, m) => {
+    const order = sectors.slice().sort((a, b) => b.r[m] - a.r[m]);
+    byRank.push(order);
+    order.forEach((s, i) => { (rankOf[s.code] = rankOf[s.code] || [])[m] = i; });
+  });
+
+  // 표
+  const partial = DATA.partialMonth;
+  let html = "<thead><tr><th class='rk'>순위</th>";
+  months.forEach((mm) => {
+    const isP = mm === partial;
+    html += `<th class="${isP ? "partial" : ""}">${mm.slice(2, 4)}.${mm.slice(4)}${isP ? "*" : ""}</th>`;
+  });
+  html += "</tr></thead><tbody>";
+  for (let i = 0; i < N; i++) {
+    html += `<tr><td class="rk">${i + 1}</td>`;
+    months.forEach((_, m) => {
+      const s = byRank[m][i];
+      const v = s.r[m];
+      const sel = s.code === selected;
+      html += `<td class="c"><div class="cell${sel ? " sel" : ""}" data-code="${s.code}" style="background:hsla(${s.hue},62%,52%,${sel ? 0.5 : 0.22})" title="${s.name} ${fmt(v)}%">` +
+              `<span class="nm">${s.name}</span><span class="pc ${v >= 0 ? "up" : "down"}">${fmt(v)}%</span></div></td>`;
+    });
+    html += "</tr>";
+  }
+  html += "</tbody>";
+  const tbl = document.getElementById("tbl");
+  tbl.innerHTML = html;
+  const inner = document.getElementById("inner");
+  inner.classList.toggle("dim", !!selected);
+  document.getElementById("msg").hidden = true;
+  const scroller = document.getElementById("scroller");
+  const firstShow = scroller.hidden;
+  scroller.hidden = false;
+  if (firstShow) scroller.scrollLeft = scroller.scrollWidth;      // 처음엔 최근 달이 보이게
+
+  // 선택 업종의 순위 이동선
+  drawTrace(months);
+
+  // 범례(칩)
+  document.getElementById("legend").innerHTML = sectors.map((s) =>
+    `<button class="chip${s.code === selected ? " sel" : ""}" data-code="${s.code}" style="background:hsla(${s.hue},62%,52%,.22)">${s.name}</button>`).join("");
+
+  renderSummary(sectors, rankOf, months);
+}
+
+function drawTrace(months) {
+  const svg = document.getElementById("trace");
+  svg.innerHTML = "";
+  const inner = document.getElementById("inner");
+  svg.setAttribute("width", inner.scrollWidth);
+  svg.setAttribute("height", inner.scrollHeight);
+  if (!selected) return;
+  const base = inner.getBoundingClientRect();
+  const cells = [...inner.querySelectorAll(`.cell[data-code="${selected}"]`)];
+  const pts = cells.map((c) => {
+    const r = c.getBoundingClientRect();
+    return [r.left - base.left + r.width / 2, r.top - base.top + r.height / 2];
+  });
+  if (pts.length < 2) return;
+  const hue = (sectorsOf().find((s) => s.code === selected) || {}).hue || 0;
+  const color = `hsl(${hue},70%,45%)`;
+  const NS = "http://www.w3.org/2000/svg";
+  const line = document.createElementNS(NS, "polyline");
+  line.setAttribute("points", pts.map((p) => p.join(",")).join(" "));
+  line.setAttribute("fill", "none"); line.setAttribute("stroke", color);
+  line.setAttribute("stroke-width", "3"); line.setAttribute("stroke-linejoin", "round"); line.setAttribute("opacity", "0.9");
+  svg.appendChild(line);
+  pts.forEach((p) => {
+    const c = document.createElementNS(NS, "circle");
+    c.setAttribute("cx", p[0]); c.setAttribute("cy", p[1]); c.setAttribute("r", "4"); c.setAttribute("fill", color);
+    svg.appendChild(c);
+  });
+}
+
+function renderSummary(sectors, rankOf, months) {
+  const card = document.getElementById("summaryCard");
+  const done = months.map((m) => m !== DATA.partialMonth);      // 완료된 달만
+  const idx = done.map((d, i) => (d ? i : -1)).filter((i) => i >= 0);
+  if (idx.length < 6) { card.hidden = true; return; }
+  const N = sectors.length;
+  const recent = idx.slice(-3), prev = idx.slice(-6, -3);
+  const avg = (arr, code) => arr.reduce((a, m) => a + rankOf[code][m] + 1, 0) / arr.length;
+  const rows = sectors.map((s) => ({ s, rec: avg(recent, s.code), prv: avg(prev, s.code) }))
+                      .map((x) => ({ ...x, imp: x.prv - x.rec }));
+  const chip = (x, withDelta) =>
+    `<button class="chip${x.s.code === selected ? " sel" : ""}" data-code="${x.s.code}" style="background:hsla(${x.s.hue},62%,52%,.22)">${x.s.name}` +
+    (withDelta ? `<span class="dlt">${x.prv.toFixed(0)}위→${x.rec.toFixed(0)}위</span>` : `<span class="dlt">평균 ${x.rec.toFixed(1)}위</span>`) + `</button>`;
+  const leaders = rows.slice().sort((a, b) => a.rec - b.rec).slice(0, 3);
+  const risers = rows.filter((x) => x.rec <= N / 2 && x.imp >= N * 0.25).sort((a, b) => b.imp - a.imp).slice(0, 3);
+  const fallers = rows.filter((x) => x.prv <= N / 2 && x.rec >= N / 2 && -x.imp >= N * 0.25).sort((a, b) => a.imp - b.imp).slice(0, 3);
+  const line = (lab, arr, withDelta, none) =>
+    `<div class="sumrow"><span class="lab">${lab}</span>${arr.length ? arr.map((x) => chip(x, withDelta)).join("") : `<span class="sub">${none}</span>`}</div>`;
+  const lastMonth = months[recent[recent.length - 1]];
+  document.getElementById("summary").innerHTML =
+    line("🏆 최근 3개월 주도", leaders, false, "") +
+    line("🔼 신규 부상", risers, true, "뚜렷한 부상 업종 없음") +
+    line("🔽 주도 이탈", fallers, true, "뚜렷한 이탈 업종 없음") +
+    `<div class="sub" style="margin-top:8px;">비교 기간: 최근 3개월(~${lastMonth.slice(0, 4)}.${lastMonth.slice(4)}) 평균 순위 vs 그 앞 3개월 평균 순위 · 업종 ${N}개 중</div>`;
+  card.hidden = false;
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-market],button[data-range]");
+  if (b) {
+    if (b.dataset.market) { market = b.dataset.market; selected = null; }
+    if (b.dataset.range) range = +b.dataset.range;
+    document.querySelectorAll("button[data-market]").forEach((x) => x.classList.toggle("active", x.dataset.market === market));
+    document.querySelectorAll("button[data-range]").forEach((x) => x.classList.toggle("active", +x.dataset.range === range));
+    render();
+    return;
+  }
+  const c = e.target.closest("[data-code]");
+  if (c) {
+    selected = selected === c.dataset.code ? null : c.dataset.code;
+    render();
+  }
+});
+window.addEventListener("resize", () => drawTrace());
+load();
+</script>
+</body>
+</html>

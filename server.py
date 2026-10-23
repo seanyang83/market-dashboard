@@ -835,6 +835,109 @@ def _check_password(candidate):
     return ok
 
 
+# --- 업종 월별 수익률 순위 (/sector 페이지) ---
+# 한투 "국내업종 일자별지수"(FHPUP02120000, 월봉 100개)로 업종지수 월 종가를 모아 최근 SECTOR_MONTHS개월 수익률을 만든다.
+# 업종 구분은 KRX 업종지수(코스피 23개, 코스닥 19개). 종합/대형주 같은 규모 지수와 "제조"(여러 업종의 합) 같은 합계 지수는 뺐다.
+# 한투 코스닥 업종 코드는 코스피와 앞 자리만 다른 별칭이 섞여 있어서(예: 1005는 코스피 음식료와 같은 값), 한투 업종 목록에
+# 실제로 나오는 코드만 쓴다.
+SECTOR_MONTHS = 36
+SECTOR_DEFS = {
+    "KOSPI": [("0005", "음식료·담배"), ("0006", "섬유·의류"), ("0007", "종이·목재"), ("0008", "화학"), ("0009", "제약"),
+              ("0010", "비금속"), ("0011", "금속"), ("0012", "기계·장비"), ("0013", "전기·전자"), ("0014", "의료·정밀기기"),
+              ("0015", "운송장비·부품"), ("0016", "유통"), ("0017", "전기·가스"), ("0018", "건설"), ("0019", "운송·창고"),
+              ("0020", "통신"), ("0021", "금융"), ("0024", "증권"), ("0025", "보험"), ("0026", "일반서비스"),
+              ("0028", "부동산"), ("0029", "IT 서비스"), ("0030", "오락·문화")],
+    "KOSDAQ": [("1006", "일반서비스"), ("1010", "건설"), ("1011", "유통"), ("1013", "운송·창고"), ("1014", "금융"),
+               ("1015", "오락·문화"), ("1019", "음식료·담배"), ("1020", "섬유·의류"), ("1021", "종이·목재"),
+               ("1022", "출판·매체복제"), ("1023", "화학"), ("1024", "제약"), ("1025", "비금속"), ("1026", "금속"),
+               ("1027", "기계·장비"), ("1028", "전기·전자"), ("1029", "의료·정밀기기"), ("1030", "운송장비·부품"),
+               ("1031", "기타제조")],
+}
+SECTOR_CACHE_TTL = 6 * 3600
+_sector_cache = {"data": None, "ts": 0.0, "building": False, "error": None}
+_sector_lock = threading.Lock()
+
+
+def _fetch_sector_month_closes(code):
+    """{'YYYYMM': 월 종가(이번 달은 최신가)} - 한투 월봉(최신순 100개)."""
+    today = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    data = kis_get("/uapi/domestic-stock/v1/quotations/inquire-index-daily-price", "FHPUP02120000",
+                   {"FID_PERIOD_DIV_CODE": "M", "FID_COND_MRKT_DIV_CODE": "U", "FID_INPUT_ISCD": code,
+                    "FID_INPUT_DATE_1": today})
+    out = {}
+    for r in data.get("output2") or []:
+        d, c = r.get("stck_bsop_date"), r.get("bstp_nmix_prpr")
+        if d and c and d[:6] not in out:
+            out[d[:6]] = float(c)
+    return out
+
+
+def _build_sector_data():
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    markets, months = {}, None
+    for market, defs in SECTOR_DEFS.items():
+        rows = []
+        for code, name in defs:
+            try:
+                closes = _fetch_sector_month_closes(code)
+            except Exception as e:
+                print(f"sector {market} {code} failed: {e}")
+                continue
+            keys = sorted(closes)
+            if len(keys) < SECTOR_MONTHS + 1:
+                print(f"sector {market} {code} {name}: 월봉 {len(keys)}개뿐이라 제외")
+                continue
+            keys = keys[-(SECTOR_MONTHS + 1):]
+            if months is None:
+                months = keys[1:]
+            elif keys[1:] != months:
+                print(f"sector {market} {code} {name}: 월 구간이 달라 제외")
+                continue
+            rets = [round((closes[keys[i]] / closes[keys[i - 1]] - 1) * 100, 2) for i in range(1, len(keys))]
+            rows.append({"code": code, "name": name, "rets": rets, "close": closes[keys[-1]]})
+            time.sleep(0.12)
+        markets[market] = rows
+    if not months or not any(markets.values()):
+        raise ValueError("업종 데이터를 만들지 못했습니다")
+    return {"asOf": now.strftime("%Y-%m-%d %H:%M"), "months": months, "partialMonth": now.strftime("%Y%m"),
+            "markets": markets}
+
+
+def _sector_refresh_async():
+    with _sector_lock:
+        if _sector_cache["building"]:
+            return
+        _sector_cache["building"] = True
+
+    def work():
+        try:
+            data = _build_sector_data()
+            with _sector_lock:
+                _sector_cache.update(data=data, ts=time.time(), error=None)
+        except Exception as e:
+            with _sector_lock:
+                _sector_cache["error"] = str(e)[:200]
+            print(f"sector build failed: {e}")
+        finally:
+            with _sector_lock:
+                _sector_cache["building"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def sector_monthly_data():
+    """(data, 상태메시지). 캐시가 있으면 바로 주고, 오래됐으면 뒤에서 갱신한다."""
+    with _sector_lock:
+        data, ts, building, err = (_sector_cache[k] for k in ("data", "ts", "building", "error"))
+    if data is not None:
+        if time.time() - ts > SECTOR_CACHE_TTL and not building:
+            _sector_refresh_async()
+        return data, ""
+    if not building:
+        _sector_refresh_async()
+    return None, err or "업종 데이터를 모으는 중입니다 (처음 한 번은 30초쯤 걸립니다)"
+
+
 # 종목 일별 수급(최근 7거래일 표)은 "오늘을 뺀 지난 거래일"만 담기 때문에 하루 안에는 값이 변하지 않는다
 # (어제 값은 어제 20시 NXT 마감 뒤 확정). 그래서 KST 날짜가 바뀔 때까지 종목별로 메모리에 보관하고,
 # 한투 호출(1.3초)은 종목당 하루 한 번만 한다. 한투 성공 응답만 저장(네이버 대체 응답은 저장 안 함).
@@ -1049,8 +1152,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_kis_income()
         elif self.path.startswith("/api/ops/kis-raw"):
             self.handle_ops_kis_raw()
+        elif self.path.startswith("/api/ops/sectors"):
+            # 점검용: /sector 페이지가 쓰는 업종 월별 수익률을 로그인 없이 키로 확인
+            if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+                self.send_json(403, {"error": "forbidden"})
+            else:
+                self.handle_sectors_monthly()
+        elif self.path.startswith("/api/sectors/monthly"):
+            self.handle_sectors_monthly()
         elif self.path.startswith("/api/leader"):
             self.handle_leader()
+        elif urllib.parse.urlparse(self.path).path in ("/sector", "/sector.html"):
+            self.path = "/sector.html"
+            super().do_GET()
         elif urllib.parse.urlparse(self.path).path in ("/leader", "/leader.html"):
             self.path = "/leader.html"
             super().do_GET()
@@ -1653,6 +1767,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"code": code, "date": date, "mkt": mkt, "bars": _fetch_day_minutes(code, date, mkt)})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_sectors_monthly(self):
+        data, status = sector_monthly_data()
+        if data is None:
+            self.send_json(503, {"error": status})
+            return
+        self.send_json(200, data)
 
     def handle_ops_kis_raw(self):
         # 운영/탐색용: 한투 시세 조회 API(읽기 전용 GET)를 그대로 호출해 원본 응답 앞부분을 돌려준다.
@@ -3214,6 +3335,8 @@ if __name__ == "__main__":
     _rsi_cache_load()
     # 120분봉 RSI 규칙 알림은 사용자 요청으로 중단(2026-10-13): 키움 차트와 신호가 안 맞는다고 판단.
     # threading.Thread(target=_rsi_scheduler, daemon=True).start()   # ← 다시 켜려면 주석 해제
+    if KIS_APP_KEY and KIS_APP_SECRET:
+        _sector_refresh_async()      # 업종 페이지 첫 방문이 느리지 않게 부팅 때 미리 모아 둔다
     threading.Thread(target=_summary_scheduler, daemon=True).start()
     threading.Thread(target=_alert_scheduler, daemon=True).start()
     threading.Thread(target=_regime_scheduler, daemon=True).start()
