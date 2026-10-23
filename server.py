@@ -2258,47 +2258,44 @@ REGIME_DROP_PCT = -7.0
 REGIME_HIGH_WINDOW = 60
 REGIME_LABEL = {"up": "상승장", "side": "횡보장", "down": "하락장"}
 REGIME_EMOJI = {"up": "📈", "side": "↔️", "down": "📉"}
+# 장세별 규칙 문구(사용자 확정, 2026-10-23). 각 장세는 (제목, [규칙...]) 묶음의 목록이다. 아침/14:00/장세 전환 알림이 같은 문구를 쓴다.
 REGIME_RULES = {
-    "down": {
-        "dont": [
-            "지수가 하락하는 중에는 돌파매매 안 통한다",
-            "하락할 때 반등매매로 크게 들어가지 않는다 (욕심 = 손실)",
-            "손실 본 날 복수매매 금지, 그날은 모니터링만",
-            "반등 양봉이 크게 나와 전일 하락분 위로 올라왔다면 종베 금지(무포)",
-        ],
-        "do": [
-            "첫 반등은 철저히 계획된 매수만",
-            "눌림은 지수 고점 대비 -5%, -10%에서 주도주로",
+    "down": [
+        ("하락장 규칙", [
+            "하락할 때 반등매매를 노리고 들어가지 않는다. 수익본적이 거의 없다. (욕심 = 손실)",
+            "하락장에는 돌파매매 안 통한다.",
+        ]),
+        ("하락장 반등을 노려본다면!", [
+            "추세하락 반등 신호: 신용매물 감소(신용은 하루 뒤 15시 집계) + 개인 매물 1조 이상 + 외국인 매수",
             "일봉 반등은 지수 3일선 위 + 종목 3·5일선 위로 올라탈 때",
-            "추세하락 반등 신호: 신용매물 감소 + 개인 매물 1조 이상 + 외국인 매수 (신용은 하루 뒤 15시 집계)",
-        ],
-    },
-    "side": {
-        "dont": [
-            "시황 확인 없이 종베하지 않는다 (시황 최우선)",
-            "큰 수익이 안 나는 작은 매매, 작은 주식",
-            "종베 후 NXT 갭하락인데 버티지 않는다 (빠르게 자르고 다시 본다)",
-        ],
-        "do": [
-            "주도주 첫 하락은 3일선(10분봉 117선)·5일선(15분봉 120선) 반등을 노린다",
-            "장중 매수는 3분봉 20선에서",
+            "하락 후 반등 양봉이 크게 나와 전일 하락분 위로 올라왔다면 종베 금지",
+            "하락 후 반등 양봉이 나와도 퐁당퐁당확률 높음.",
+            "퐁당퐁당일경우, 저점에서 분할매수로 노릴것(비중 약하게)",
+        ]),
+    ],
+    "side": [
+        ("횡보장 규칙", [
             "주도주 - 15분봉 60,120선 골든크로스 되돌림시 현금 베팅",
-        ],
-    },
-    "up": {
-        "dont": [
-            "NXT 상승만 보고 비중 싣지 않는다 (본장 상승 확인 후 3분봉 20선에서)",
-            "전일 종베한 종목을 초장에 안 자르고 버티지 않는다",
-            "작은 매매, 작은 주식",
-        ],
-        "do": [
-            "올라갈 때는 돌파턴, 당일 흐름을 빠르게 파악",
-            "상승세일 때 장중 매수는 3분봉 20선에서",
+            "지수 반등후 추세를 보고 상승, 하락 채널 확인 후 진입한다",
+            "채널 상단에서는 비중 축소, 채널 하단에서는 현금비중.",
+            "하단 지지를 못할경우 칼손절",
+            "전고 갱신후 3·5일선 지지 일봉이 나온 뒤, 종베 -> 상승 확률이 높다",
+            "손실 본 날 복수매매 금지",
+        ]),
+    ],
+    "up": [
+        ("상승장 규칙", [
+            "이평선이 정배열이고 지수가 5일선 위일때 -> 주도주에 비중베팅",
+            "고가 형성 후 3·5일선 지지 일봉이 나오면 비중베팅, 또 신고가 상승 확률이 높다",
             "종목이 신고가 + 장후 NXT 상승 패턴이면 종베",
-            "일봉 조정 후 신고가 갱신 시 하락한 만큼 상승 기조로 종베/시가 강베팅",
-            "고가 형성 후 3·5일선 지지 일봉이 나온 뒤에는 또 신고가 상승 확률이 높다",
-        ],
-    },
+            "장중 매수는 3분봉 20선에서",
+            "올라갈 때는 돌파턴, 당일 흐름을 빠르게 파악",
+        ]),
+        ("주도주 첫하락", [
+            "주도주 첫 하락은 3일선(10분봉 117선)·5일선(15분봉 120선) 반등을 노린다",
+            "주도주 - 15분봉 60,120선 골든크로스 되돌림시 베팅",
+        ]),
+    ],
 }
 REGIME_SLOTS = {"morning": (8 * 60 + 50, 9 * 60 + 20), "pre": (14 * 60, 14 * 60 + 30), "change": (15 * 60 + 45, 16 * 60 + 30)}
 _regime_done = set()
@@ -2380,35 +2377,18 @@ def jongbae_light(state=None):
             f"   코스피 {s['price']:,.0f} ({s['basis']}) · 5일선 {s['ma5']:,.0f} · 20일선 {s['ma20']:,.0f}"]
 
 
-# 14:00 알림: 하지 말 것(공통 + 신호등 단계별 + 장세별 고유 1줄)과 할 것(장세별)을 "OO장에서 지켜야 할 규칙" 한 목록으로 합친다.
-# 겹치는 문구는 한 번만. 폰 한 줄에 들어가도록 짧게 쓴다.
-JONGBAE_DONT_COMMON = [
-    "정한 손절액 이하면 바로 정리 (종베는 초장에 자른다)",
-    "물타기 금지",
-    "큰 비중은 갭하락 정리 계획부터",
-]
-JONGBAE_DONT_BY_LIGHT = {
-    "red": ["5일선 아래 종베 금지 (무포)", "하락 중 반등 노린 장중 매매 금지"],
-    "yellow": ["큰 비중 금지 (소액만)", "아니다 싶으면 바로 장초 정리한다"],
-    "green": ["NXT 상승만 보고 비중 싣지 않는다 (본장 상승 확인)", "큰 수익 안 나는 작은 종목·작은 매매 금지"],
-}
-JONGBAE_DONT_BY_REGIME = {
-    "down": "손실 본 날 복수매매 금지",
-    "side": "시황 확인 없이 종베 금지 (시황 최우선)",
-    "up": "NXT 상승만 보고 비중 싣지 않는다 (본장 상승 확인)",
-}
-
-
-def jongbae_dont_lines(level, regime):
+def _rules_lines(regime):
     out = []
-    for t in JONGBAE_DONT_COMMON + JONGBAE_DONT_BY_LIGHT[level] + [JONGBAE_DONT_BY_REGIME[regime]]:
-        if t not in out:
-            out.append(t)
+    for title, items in REGIME_RULES[regime]:
+        if out:
+            out.append("")
+        out.append(f"📌 {title}")
+        out.extend(f" · {t}" for t in items)
     return out
 
 
 def build_jongbae_pre_message(info, state, today_live=None):
-    """14:00 종베 직전 알림(짧은 형태): 신호등 + 장세 한 줄 + 'OO장에서 지켜야 할 규칙' 한 목록."""
+    """14:00 종베 직전 알림(짧은 형태): 신호등 + 장세 한 줄 + 장세별 규칙."""
     r = info["regime"]
     dd = today_live["drawdown"] if today_live else info["drawdown"]
     lines = [f"🧭 종베 직전 14:00 · {_kst_now().strftime('%m/%d')}",
@@ -2417,11 +2397,7 @@ def build_jongbae_pre_message(info, state, today_live=None):
         lines.append(f"🔔 장세 전환: {REGIME_LABEL[info['prev']]} → {REGIME_LABEL[r]}")
     lines.append(f"{REGIME_EMOJI[r]} {REGIME_LABEL[r]} · 코스피 {state['price']:,.0f} · 고점 대비 {dd:+.1f}%")
     lines.append("")
-    lines.append(f"📌 {REGIME_LABEL[r]}에서 지켜야 할 규칙")
-    do = REGIME_RULES[r]["do"]
-    do = do[:3] if r == "down" else do[:5]
-    lines.extend(f"🚫 {t}" for t in jongbae_dont_lines(state["level"], r))
-    lines.extend(f"✅ {t}" for t in do)
+    lines.extend(_rules_lines(r))
     return "\n".join(lines)
 
 
@@ -2429,9 +2405,7 @@ def build_regime_message(kind, info, today_live=None):
     """kind: morning | pre | change. 평문."""
     now = _kst_now()
     r = info["regime"]
-    rules = REGIME_RULES[r]
     head = {"morning": "🧭 종베규칙 · 아침", "pre": "🧭 종베규칙 · 종베 직전 14:00", "change": "🔔 종베규칙 · 장세 전환"}[kind]
-    state = None
     if kind == "pre":
         try:
             state = jongbae_state()
@@ -2448,14 +2422,7 @@ def build_regime_message(kind, info, today_live=None):
     if today_live is not None and kind == "pre":
         lines.append(f"오늘 장중 {today_live['close']:,.0f} ({today_live['pct']:+.2f}%) · 고점 대비 {today_live['drawdown']:+.1f}%")
     lines.append("")
-    lines.append("🚫 하지 말 것")
-    dont = rules["dont"] if kind != "pre" else rules["dont"][:3]
-    lines.extend(f" · {t}" for t in dont)
-    lines.append("✅ 할 것")
-    lines.extend(f" · {t}" for t in rules["do"][:5])
-    if kind == "pre":
-        lines.append("")
-        lines.append("종베 체크: 시황 최우선 · 전일 종베분은 정리했나 · 잃지만 말자")
+    lines.extend(_rules_lines(r))
     return "\n".join(lines)
 
 
