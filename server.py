@@ -1047,6 +1047,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_kis_minute()
         elif self.path.startswith("/api/ops/kis-income"):
             self.handle_ops_kis_income()
+        elif self.path.startswith("/api/ops/kis-raw"):
+            self.handle_ops_kis_raw()
         elif self.path.startswith("/api/leader"):
             self.handle_leader()
         elif urllib.parse.urlparse(self.path).path in ("/leader", "/leader.html"):
@@ -1651,6 +1653,32 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"code": code, "date": date, "mkt": mkt, "bars": _fetch_day_minutes(code, date, mkt)})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_ops_kis_raw(self):
+        # 운영/탐색용: 한투 시세 조회 API(읽기 전용 GET)를 그대로 호출해 원본 응답 앞부분을 돌려준다.
+        # 예) /api/ops/kis-raw?key=..&path=/uapi/domestic-stock/v1/quotations/inquire-index-daily-price&tr=FHPUP02120000&p.FID_INPUT_ISCD=0013...
+        # path는 quotations 아래만 허용. TELEGRAM_SUMMARY_KEY로 보호.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        path, tr = self.query_param("path"), self.query_param("tr")
+        if not path.startswith("/uapi/domestic-stock/v1/quotations/") or not re.fullmatch(r"[A-Za-z0-9]{6,20}", tr or ""):
+            self.send_json(400, {"error": "path(quotations 아래)와 tr 필요"})
+            return
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        params = {k[2:]: v[0] for k, v in q.items() if k.startswith("p.")}
+        limit = int(self.query_param("limit") or 5)
+        try:
+            data = kis_get(path, tr, params)
+            out = {"rt_cd": data.get("rt_cd"), "msg1": data.get("msg1")}
+            for k, v in data.items():
+                if isinstance(v, list):
+                    out[k] = {"count": len(v), "first": v[:limit], "last": v[-1:] if len(v) > limit else []}
+                elif k not in out:
+                    out[k] = v
+            self.send_json(200, out)
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:300]})
 
     def handle_ops_kis_income(self):
         # 운영 확인용: 한투 손익계산서 원본 응답. TELEGRAM_SUMMARY_KEY로 보호.
