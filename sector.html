@@ -72,6 +72,14 @@
   .loading { font-size: 13px; color: var(--sub); padding: 24px 4px; text-align: center; }
   .error { color: var(--up); font-size: 13px; padding: 12px 4px; }
   .legend { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+  select.pick { font-size: 12.5px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font-family: inherit; max-width: 100%; }
+  .dtbl { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  .dtbl th { text-align: left; font-weight: 600; color: var(--sub); padding: 5px 6px; border-bottom: 1px solid var(--border); position: static; background: transparent; font-size: 12px; }
+  .dtbl td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .dtbl td:nth-child(-n+3) { white-space: nowrap; }
+  .dtbl tr.hl td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .dtbl .lead { display: inline-block; margin: 0 8px 2px 0; white-space: nowrap; }
+  .tag-sub { font-size: 12px; color: var(--sub); }
 </style>
 </head>
 <body>
@@ -88,10 +96,19 @@
     <div class="controls">
       <button class="btn active" data-market="KOSPI">코스피 업종</button>
       <button class="btn" data-market="KOSDAQ">코스닥 업종</button>
+      <button class="btn" data-market="FINE">세분 업종</button>
       <span class="sep"></span>
       <button class="btn" data-range="12">12개월</button>
       <button class="btn" data-range="24">24개월</button>
       <button class="btn active" data-range="36">36개월</button>
+    </div>
+    <div class="controls" style="margin-top:8px;">
+      <select class="pick" id="pick"><option value="">업종 골라서 따라가기…</option></select>
+      <span id="topCtl" hidden>
+        <button class="btn" data-top="20">상위 20</button>
+        <button class="btn active" data-top="30">상위 30</button>
+        <button class="btn" data-top="999">전체</button>
+      </span>
     </div>
     <div class="sub" style="margin-top:8px;" id="asOf">불러오는 중...</div>
   </div>
@@ -109,19 +126,30 @@
       <div class="inner" id="inner"><table id="tbl"></table><svg class="trace" id="trace"></svg></div>
     </div>
     <div class="legend" id="legend"></div>
-    <div class="sub" style="margin-top:10px;">
+    <div class="sub" style="margin-top:10px;" id="noteKrx">
       한국투자증권 KRX 업종지수 월봉 기준 · 수익률 = 그 달 종가 ÷ 전달 종가 · 코스피 부동산·IT 서비스·오락문화는 2024-08 업종 개편 때 생겨 그 이전 달은 비어 있음 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달 ·
       상승은 빨강, 하락은 파랑
     </div>
+    <div class="sub" style="margin-top:10px;" id="noteFine" hidden>
+      네이버 금융 79개 업종 기준 · 업종 수익률 = 업종 시가총액 상위 10종목(우선주·스팩 제외)의 그 달 수익률을 같은 비중으로 평균(종목 하나가 -50%~+150%를 넘는 값은 잘라서 계산) ·
+      현재 구성 종목 기준이라 과거에 상장폐지된 종목은 빠져 있음 · 종목이 3개 미만인 업종과 '기타'는 제외 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달
+    </div>
+  </div>
+
+  <div class="card" id="detailCard" hidden>
+    <h2 id="detailTitle"></h2>
+    <div class="sub" id="detailSub"></div>
+    <div style="overflow-x:auto;"><table class="dtbl" id="detailTbl"></table></div>
   </div>
 </div>
 
 <script>
-let DATA = null;
-let market = "KOSPI", range = 36, selected = null;
+let DATA = null, FINE = null, fineLoading = false;
+let market = "KOSPI", range = 36, topN = 30, selected = null, selMonth = null;
 
 const fmt = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
 const hueOf = (i, n) => Math.round((i * 360) / n + 8) % 360;
+const cur = () => (market === "FINE" ? FINE : DATA);
 
 async function load() {
   const msg = document.getElementById("msg");
@@ -130,34 +158,77 @@ async function load() {
     if (res.status === 401) { location.href = "/login"; return; }
     const body = await res.json();
     if (!res.ok) {
-      msg.textContent = body.error || "불러오지 못했습니다";
+      if (market !== "FINE") msg.textContent = body.error || "불러오지 못했습니다";
       setTimeout(load, 4000);       // 서버가 처음 모으는 중이면 곧 준비된다
       return;
     }
     DATA = body;
-    document.getElementById("asOf").textContent = `기준 ${body.asOf} · 최근 ${body.months.length}개월`;
     render();
   } catch (e) {
-    msg.textContent = "불러오지 못했습니다: " + e.message;
+    if (market !== "FINE") msg.textContent = "불러오지 못했습니다: " + e.message;
     setTimeout(load, 6000);
   }
 }
 
+async function loadFine() {
+  if (fineLoading || FINE) return;
+  fineLoading = true;
+  const msg = document.getElementById("msg");
+  try {
+    const res = await fetch("/api/sectors/fine", { cache: "no-store" });
+    if (res.status === 401) { location.href = "/login"; return; }
+    const body = await res.json();
+    if (!res.ok) {
+      if (market === "FINE") msg.textContent = body.error || "세분 업종을 모으는 중입니다";
+      fineLoading = false;
+      setTimeout(loadFine, 5000);
+      return;
+    }
+    FINE = body;
+    fineLoading = false;
+    if (market === "FINE") render();
+  } catch (e) {
+    fineLoading = false;
+    if (market === "FINE") msg.textContent = "불러오지 못했습니다: " + e.message;
+    setTimeout(loadFine, 7000);
+  }
+}
+
 function sectorsOf() {
-  const list = DATA.markets[market] || [];
+  const d = cur();
+  if (!d) return [];
+  if (market === "FINE") {
+    const list = d.industries.slice().sort((a, b) => a.name.localeCompare(b.name, "ko"));
+    return list.map((s, i) => ({ ...s, code: "n" + s.no, hue: Math.round((i * 137.508) % 360) }));
+  }
+  const list = d.markets[market] || [];
   const n = list.length;
   return list.map((s, i) => ({ ...s, hue: hueOf(i, n) }));
 }
 
 function render() {
-  if (!DATA) return;
+  const d = cur();
+  const msg = document.getElementById("msg"), scroller = document.getElementById("scroller");
+  document.getElementById("topCtl").hidden = market !== "FINE";
+  document.getElementById("noteKrx").hidden = market === "FINE";
+  document.getElementById("noteFine").hidden = market !== "FINE";
+  if (!d) {
+    scroller.hidden = true; msg.hidden = false;
+    document.getElementById("summaryCard").hidden = true;
+    document.getElementById("detailCard").hidden = true;
+    document.getElementById("legend").innerHTML = "";
+    if (market === "FINE") { msg.textContent = "세분 업종을 모으는 중입니다 (처음 한 번은 2~3분 걸립니다)"; loadFine(); }
+    else msg.textContent = "업종 데이터를 불러오는 중...";
+    return;
+  }
+  document.getElementById("asOf").textContent = `기준 ${d.asOf} · 최근 ${d.months.length}개월` + (market === "FINE" ? ` · 업종마다 시총 상위 ${d.topN}종목 평균` : "");
   const all = sectorsOf();
-  const total = DATA.months.length;
+  const total = d.months.length;
   const from = total - range;
-  const months = DATA.months.slice(from);
+  const months = d.months.slice(from);
   const sectors = all.map((s) => ({ ...s, r: s.rets.slice(from) }));
   const N = sectors.length;
-  if (!N) { document.getElementById("msg").textContent = "이 시장의 업종 데이터가 없습니다"; return; }
+  if (!N) { msg.hidden = false; msg.textContent = "이 시장의 업종 데이터가 없습니다"; return; }
 
   // 월별 순위(0부터): 수익률 높은 순
   const rankOf = {};      // code -> [rank per month]
@@ -168,15 +239,21 @@ function render() {
     order.forEach((s, i) => { (rankOf[s.code] = rankOf[s.code] || [])[m] = i; });
   });
 
+  // 업종 고르기 드롭다운
+  const pick = document.getElementById("pick");
+  pick.innerHTML = '<option value="">업종 골라서 따라가기…</option>' +
+    sectors.slice().sort((a, b) => a.name.localeCompare(b.name, "ko")).map((s) => `<option value="${s.code}"${s.code === selected ? " selected" : ""}>${s.name}</option>`).join("");
+
   // 표
-  const partial = DATA.partialMonth;
+  const rows = market === "FINE" ? Math.min(topN, N) : N;
+  const partial = d.partialMonth;
   let html = "<thead><tr><th class='rk'>순위</th>";
   months.forEach((mm) => {
     const isP = mm === partial;
     html += `<th class="${isP ? "partial" : ""}">${mm.slice(2, 4)}.${mm.slice(4)}${isP ? "*" : ""}</th>`;
   });
   html += "</tr></thead><tbody>";
-  for (let i = 0; i < N; i++) {
+  for (let i = 0; i < rows; i++) {
     html += `<tr><td class="rk">${i + 1}</td>`;
     months.forEach((_, m) => {
       const s = byRank[m][i];
@@ -189,27 +266,25 @@ function render() {
     html += "</tr>";
   }
   html += "</tbody>";
-  const tbl = document.getElementById("tbl");
-  tbl.innerHTML = html;
+  document.getElementById("tbl").innerHTML = html;
   const inner = document.getElementById("inner");
   inner.classList.toggle("dim", !!selected);
-  document.getElementById("msg").hidden = true;
-  const scroller = document.getElementById("scroller");
+  msg.hidden = true;
   const firstShow = scroller.hidden;
   scroller.hidden = false;
   if (firstShow) scroller.scrollLeft = scroller.scrollWidth;      // 처음엔 최근 달이 보이게
 
-  // 선택 업종의 순위 이동선
-  drawTrace(months);
+  drawTrace();
 
-  // 범례(칩)
-  document.getElementById("legend").innerHTML = sectors.map((s) =>
+  // 범례(칩): 세분 업종은 너무 많아서 생략(드롭다운으로 고른다)
+  document.getElementById("legend").innerHTML = market === "FINE" ? "" : sectors.map((s) =>
     `<button class="chip${s.code === selected ? " sel" : ""}" data-code="${s.code}" style="background:hsla(${s.hue},62%,52%,.22)">${s.name}</button>`).join("");
 
-  renderSummary(sectors, rankOf, months);
+  renderSummary(sectors, rankOf, months, d);
+  renderDetail(sectors, rankOf, months, N);
 }
 
-function drawTrace(months) {
+function drawTrace() {
   const svg = document.getElementById("trace");
   svg.innerHTML = "";
   const inner = document.getElementById("inner");
@@ -217,7 +292,7 @@ function drawTrace(months) {
   svg.setAttribute("height", inner.scrollHeight);
   if (!selected) return;
   const base = inner.getBoundingClientRect();
-  // 칸은 표의 줄(순위) 순서로 잡히므로 월(data-m) 순서로 정렬해서 시간순으로 이어야 한다. 값이 없는 달은 칸이 없어 건너뛴다.
+  // 칸은 표의 줄(순위) 순서로 잡히므로 월(data-m) 순서로 정렬해서 시간순으로 이어야 한다. 값이 없거나 표시 순위 밖인 달은 건너뛴다.
   const cells = [...inner.querySelectorAll(`.cell[data-code="${selected}"]`)].sort((a, b) => +a.dataset.m - +b.dataset.m);
   const pts = cells.map((c) => {
     const r = c.getBoundingClientRect();
@@ -239,49 +314,102 @@ function drawTrace(months) {
   });
 }
 
-function renderSummary(sectors, rankOf, months) {
+// 그 달 구성 종목 중 가장 많이 오른 종목 k개
+function leadersOf(s, absM, k) {
+  if (!s.stocks) return [];
+  return s.stocks.filter((t) => t.rets[absM] != null).sort((a, b) => b.rets[absM] - a.rets[absM]).slice(0, k);
+}
+
+function renderSummary(sectors, rankOf, months, d) {
   const card = document.getElementById("summaryCard");
-  const done = months.map((m) => m !== DATA.partialMonth);      // 완료된 달만
-  const idx = done.map((d, i) => (d ? i : -1)).filter((i) => i >= 0);
+  const done = months.map((m) => m !== d.partialMonth);      // 완료된 달만
+  const idx = done.map((x, i) => (x ? i : -1)).filter((i) => i >= 0);
   if (idx.length < 6) { card.hidden = true; return; }
   const N = sectors.filter((s) => s.rets[s.rets.length - 1] != null).length;
   const recent = idx.slice(-3), prev = idx.slice(-6, -3);
+  const off = d.months.length - months.length;
   const avg = (arr, code) => arr.reduce((a, m) => a + rankOf[code][m] + 1, 0) / arr.length;
   const hasAll = (s) => idx.slice(-6).every((m) => rankOf[s.code] && rankOf[s.code][m] != null);   // 최근 6개월 모두 순위가 있는 업종만
   const rows = sectors.filter(hasAll).map((s) => ({ s, rec: avg(recent, s.code), prv: avg(prev, s.code) }))
                       .map((x) => ({ ...x, imp: x.prv - x.rec }));
-  const chip = (x, withDelta) =>
-    `<button class="chip${x.s.code === selected ? " sel" : ""}" data-code="${x.s.code}" style="background:hsla(${x.s.hue},62%,52%,.22)">${x.s.name}` +
-    (withDelta ? `<span class="dlt">${x.prv.toFixed(0)}위→${x.rec.toFixed(0)}위</span>` : `<span class="dlt">평균 ${x.rec.toFixed(1)}위</span>`) + `</button>`;
-  const leaders = rows.slice().sort((a, b) => a.rec - b.rec).slice(0, 3);
+  const lastAbs = off + recent[recent.length - 1];
+  const chip = (x, withDelta) => {
+    const lead = leadersOf(x.s, lastAbs, 2).map((t) => t.name).join(", ");
+    return `<button class="chip${x.s.code === selected ? " sel" : ""}" data-code="${x.s.code}" style="background:hsla(${x.s.hue},62%,52%,.22)">${x.s.name}` +
+      (withDelta ? `<span class="dlt">${x.prv.toFixed(0)}위→${x.rec.toFixed(0)}위</span>` : `<span class="dlt">3개월 ${fmt(x.cum)}%</span>`) +
+      (lead ? `<span class="dlt">· ${lead}</span>` : "") + `</button>`;
+  };
+  // 최근 3개월 주도 = 최근 완료 3개월 누적 수익률 상위(평균 순위는 꾸준히 중상위인 업종이 앞에 서서 주도 여부를 가리기 어려움)
+  rows.forEach((x) => { x.cum = (recent.reduce((a, m) => a * (1 + x.s.r[m] / 100), 1) - 1) * 100; });
+  const leaders = rows.slice().sort((a, b) => b.cum - a.cum).slice(0, 3);
   const risers = rows.filter((x) => x.rec <= N / 2 && x.imp >= N * 0.25).sort((a, b) => b.imp - a.imp).slice(0, 3);
   const fallers = rows.filter((x) => x.prv <= N / 2 && x.rec >= N / 2 && -x.imp >= N * 0.25).sort((a, b) => a.imp - b.imp).slice(0, 3);
   const line = (lab, arr, withDelta, none) =>
     `<div class="sumrow"><span class="lab">${lab}</span>${arr.length ? arr.map((x) => chip(x, withDelta)).join("") : `<span class="sub">${none}</span>`}</div>`;
   const lastMonth = months[recent[recent.length - 1]];
   document.getElementById("summary").innerHTML =
-    line("🏆 최근 3개월 주도", leaders, false, "") +
+    line("🏆 3개월 누적 상위", leaders, false, "") +
     line("🔼 신규 부상", risers, true, "뚜렷한 부상 업종 없음") +
     line("🔽 주도 이탈", fallers, true, "뚜렷한 이탈 업종 없음") +
-    `<div class="sub" style="margin-top:8px;">비교 기간: 최근 3개월(~${lastMonth.slice(0, 4)}.${lastMonth.slice(4)}) 평균 순위 vs 그 앞 3개월 평균 순위 · 업종 ${N}개 중</div>`;
+    `<div class="sub" style="margin-top:8px;">비교 기간: 최근 3개월(~${lastMonth.slice(0, 4)}.${lastMonth.slice(4)}) 평균 순위 vs 그 앞 3개월 평균 순위(부상·이탈) · 누적 상위는 최근 완료 3개월 수익률을 이어서 곱한 값 · 업종 ${N}개 중` +
+    (market === "FINE" ? " · 이름 뒤는 최근 완료 달에 가장 많이 오른 대표 종목" : "") + `</div>`;
+  card.hidden = false;
+}
+
+// 선택한 업종의 월별 순위·수익률과 그 달 대표 상승 종목(세분 업종만)
+function renderDetail(sectors, rankOf, months, N) {
+  const card = document.getElementById("detailCard");
+  const s = sectors.find((x) => x.code === selected);
+  if (!s) { card.hidden = true; return; }
+  const d = cur();
+  const off = d.months.length - months.length;
+  document.getElementById("detailTitle").textContent = s.name;
+  document.getElementById("detailSub").textContent = market === "FINE"
+    ? `시총 상위 ${s.n}종목 평균 (전체 ${s.total}종목) · 구성: ${s.stocks.map((t) => t.name).join(", ")}`
+    : "KRX 업종지수 · 표를 누를 때마다 같은 업종이 선택/해제됩니다";
+  const fine = market === "FINE";
+  let html = `<thead><tr><th>월</th><th>순위</th><th>수익률</th>${fine ? "<th>그 달 많이 오른 종목</th>" : ""}</tr></thead><tbody>`;
+  const recentIdx = months.map((_, i) => i).slice(-12).reverse();
+  recentIdx.forEach((m) => {
+    const mm = months[m], v = s.r[m];
+    const rk = rankOf[s.code] && rankOf[s.code][m] != null ? `${rankOf[s.code][m] + 1}위/${N}` : "-";
+    const lead = fine && v != null ? leadersOf(s, off + m, 3).map((t) => `<span class="lead">${t.name} <b class="${t.rets[off + m] >= 0 ? "up" : "down"}">${fmt(t.rets[off + m])}%</b></span>`).join("") : "";
+    html += `<tr class="${mm === selMonth ? "hl" : ""}"><td>${mm.slice(0, 4)}.${mm.slice(4)}${mm === d.partialMonth ? "*" : ""}</td><td>${rk}</td>` +
+            `<td>${v == null ? "-" : `<b class="${v >= 0 ? "up" : "down"}">${fmt(v)}%</b>`}</td>${fine ? `<td>${lead}</td>` : ""}</tr>`;
+  });
+  html += "</tbody>";
+  document.getElementById("detailTbl").innerHTML = html;
   card.hidden = false;
 }
 
 document.addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-market],button[data-range]");
+  const b = e.target.closest("button[data-market],button[data-range],button[data-top]");
   if (b) {
-    if (b.dataset.market) { market = b.dataset.market; selected = null; }
+    if (b.dataset.market) { market = b.dataset.market; selected = null; selMonth = null; }
     if (b.dataset.range) range = +b.dataset.range;
+    if (b.dataset.top) topN = +b.dataset.top;
     document.querySelectorAll("button[data-market]").forEach((x) => x.classList.toggle("active", x.dataset.market === market));
     document.querySelectorAll("button[data-range]").forEach((x) => x.classList.toggle("active", +x.dataset.range === range));
+    document.querySelectorAll("button[data-top]").forEach((x) => x.classList.toggle("active", +x.dataset.top === topN));
     render();
     return;
   }
   const c = e.target.closest("[data-code]");
   if (c) {
+    if (c.dataset.m != null && cur()) {
+      const d = cur(); const months = d.months.slice(d.months.length - range);
+      selMonth = months[+c.dataset.m];
+    }
     selected = selected === c.dataset.code ? null : c.dataset.code;
+    if (!selected) selMonth = null;
     render();
+    if (selected) setTimeout(() => document.getElementById("detailCard").scrollIntoView({ block: "nearest", behavior: "smooth" }), 50);
   }
+});
+document.getElementById("pick").addEventListener("change", (e) => {
+  selected = e.target.value || null;
+  selMonth = null;
+  render();
 });
 window.addEventListener("resize", () => drawTrace());
 load();

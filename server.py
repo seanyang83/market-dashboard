@@ -945,6 +945,163 @@ def sector_monthly_data():
     return None, err or "업종 데이터를 모으는 중입니다 (처음 한 번은 30초쯤 걸립니다)"
 
 
+# --- 세분 업종(네이버 79개 업종) 월별 수익률 ---
+# KRX 업종지수는 큰 단위(전기·전자 안에 반도체와 가전이 같이 있음)라서, 책처럼 "반도체/화장품/조선" 단위로 보려고
+# 네이버 금융의 79개 업종(WICS 분류와 같은 이름)을 쓴다. 네이버는 업종지수의 과거 수익률을 주지 않으므로
+# 업종별 시가총액 상위 FINE_TOP_N개 종목(우선주·스팩 제외)의 월 수익률을 동일가중으로 평균해 업종 수익률을 만든다.
+# 각 종목의 월 수익률도 같이 보내서 화면에서 "그 달 대표 상승 종목"을 보여 준다. 현재 구성 종목 기준이라 생존 편향이 조금 있다.
+FINE_TOP_N = 10
+FINE_MIN_STOCKS = 3
+FINE_RET_CLIP = (-50.0, 150.0)      # 종목 한 개의 극단값이 업종 평균을 흔들지 않게 자른다(%)
+FINE_SKIP_GROUPS = {25}              # '기타'(1,500여 종목 잡다한 묶음)
+FINE_CACHE_TTL = 12 * 3600
+NAVER_M_INDUSTRY_URL = "https://m.stock.naver.com/api/stocks/industry"
+_fine_cache = {"data": None, "ts": 0.0, "building": False, "error": None, "progress": ""}
+_fine_lock = threading.Lock()
+
+
+def _naver_get_json(url, retries=2):
+    for attempt in range(retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return json.loads(resp.read())
+        except Exception:
+            if attempt == retries:
+                raise
+            time.sleep(0.5 * (attempt + 1))
+
+
+def _fine_top_stocks(group_no, total):
+    """업종 구성 종목 중 시가총액 상위 FINE_TOP_N개(보통주만)."""
+    stocks, page = [], 1
+    while len(stocks) < total and page <= 5:
+        data = _naver_get_json(f"{NAVER_M_INDUSTRY_URL}/{group_no}?page={page}&pageSize=100")
+        got = data.get("stocks") or []
+        stocks.extend(got)
+        if len(got) < 100:
+            break
+        page += 1
+    out = []
+    for s in stocks:
+        code, name = str(s.get("itemCode") or ""), str(s.get("stockName") or "")
+        if s.get("stockEndType") != "stock" or not re.fullmatch(r"\d{5}0", code) or "스팩" in name:
+            continue                # 우선주(코드 끝자리가 0이 아님)·코넥스·스팩 제외
+        try:
+            mv = float(str(s.get("marketValue") or "0").replace(",", ""))
+        except ValueError:
+            mv = 0.0
+        out.append((mv, code, name))
+    out.sort(reverse=True)
+    return [(code, name) for _, code, name in out[:FINE_TOP_N]]
+
+
+def _fine_month_closes(code, start_ym):
+    start = start_ym + "01"
+    end = (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y%m%d")
+    url = f"{NAVER_SISEJSON_URL}?symbol={code}&requestType=1&startTime={start}&endTime={end}&timeframe=month"
+    req = urllib.request.Request(url, headers=NAVER_HEADERS)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+    out = {}
+    for r in ast.literal_eval(body.strip())[1:]:
+        out[str(r[0])[:6]] = float(r[4])
+    return out
+
+
+def _calendar_months(n):
+    """오늘이 속한 달부터 거꾸로 n개월(오름차순 'YYYYMM')."""
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    y, m, out = now.year, now.month, []
+    for _ in range(n):
+        out.append(f"{y}{m:02d}")
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    return out[::-1]
+
+
+def _build_fine_data():
+    ext = _calendar_months(SECTOR_MONTHS + 1)      # 첫 달 수익률을 구하려면 그 직전 달 종가가 필요해서 한 달 더 앞까지
+    months = ext[1:]
+    prev_of = {ext[i]: ext[i - 1] for i in range(1, len(ext))}
+    groups = _naver_get_json(f"{NAVER_M_INDUSTRY_URL}?page=1&pageSize=100").get("groups") or []
+    industries, done = [], 0
+    for g in groups:
+        no, name, total = g.get("no"), g.get("name"), int(g.get("totalCount") or 0)
+        done += 1
+        if no in FINE_SKIP_GROUPS or total < FINE_MIN_STOCKS:
+            continue
+        with _fine_lock:
+            _fine_cache["progress"] = f"{done}/{len(groups)} {name}"
+        try:
+            top = _fine_top_stocks(no, total)
+        except Exception as e:
+            print(f"fine group {no} {name} failed: {e}")
+            continue
+        stock_rows = []
+        for code, sname in top:
+            try:
+                closes = _fine_month_closes(code, ext[0])
+            except Exception as e:
+                print(f"fine stock {code} failed: {e}")
+                continue
+            time.sleep(0.03)
+            rets = []
+            for mth in months:
+                c1, c0 = closes.get(mth), closes.get(prev_of[mth])
+                rets.append(round((c1 / c0 - 1) * 100, 2) if c1 and c0 else None)
+            if sum(1 for r in rets if r is not None) >= 6:
+                stock_rows.append({"code": code, "name": sname, "rets": rets})
+        if len(stock_rows) < FINE_MIN_STOCKS:
+            continue
+        lo, hi = FINE_RET_CLIP
+        ind_rets = []
+        for i in range(len(months)):
+            vals = [min(hi, max(lo, s["rets"][i])) for s in stock_rows if s["rets"][i] is not None]
+            ind_rets.append(round(sum(vals) / len(vals), 2) if len(vals) >= FINE_MIN_STOCKS else None)
+        industries.append({"no": no, "name": name, "total": total, "n": len(stock_rows), "rets": ind_rets, "stocks": stock_rows})
+    if not industries:
+        raise ValueError("세분 업종 데이터를 만들지 못했습니다")
+    now = datetime.now(timezone.utc) + timedelta(hours=9)
+    return {"asOf": now.strftime("%Y-%m-%d %H:%M"), "months": months, "partialMonth": now.strftime("%Y%m"),
+            "topN": FINE_TOP_N, "industries": industries}
+
+
+def _fine_refresh_async():
+    with _fine_lock:
+        if _fine_cache["building"]:
+            return
+        _fine_cache["building"] = True
+
+    def work():
+        try:
+            data = _build_fine_data()
+            with _fine_lock:
+                _fine_cache.update(data=data, ts=time.time(), error=None, progress="")
+        except Exception as e:
+            with _fine_lock:
+                _fine_cache["error"] = str(e)[:200]
+            print(f"fine sector build failed: {e}")
+        finally:
+            with _fine_lock:
+                _fine_cache["building"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def fine_sector_data():
+    with _fine_lock:
+        data, ts, building, err, prog = (_fine_cache[k] for k in ("data", "ts", "building", "error", "progress"))
+    if data is not None:
+        if time.time() - ts > FINE_CACHE_TTL and not building:
+            _fine_refresh_async()
+        return data, ""
+    if not building:
+        _fine_refresh_async()
+    return None, err or ("세분 업종을 모으는 중입니다" + (f" ({prog})" if prog else "") + " — 처음 한 번은 2~3분 걸립니다")
+
+
 # 종목 일별 수급(최근 7거래일 표)은 "오늘을 뺀 지난 거래일"만 담기 때문에 하루 안에는 값이 변하지 않는다
 # (어제 값은 어제 20시 NXT 마감 뒤 확정). 그래서 KST 날짜가 바뀔 때까지 종목별로 메모리에 보관하고,
 # 한투 호출(1.3초)은 종목당 하루 한 번만 한다. 한투 성공 응답만 저장(네이버 대체 응답은 저장 안 함).
@@ -1159,6 +1316,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_kis_income()
         elif self.path.startswith("/api/ops/kis-raw"):
             self.handle_ops_kis_raw()
+        elif self.path.startswith("/api/ops/sectors-fine"):
+            if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+                self.send_json(403, {"error": "forbidden"})
+            else:
+                self.handle_sectors_fine()
         elif self.path.startswith("/api/ops/sectors"):
             # 점검용: /sector 페이지가 쓰는 업종 월별 수익률을 로그인 없이 키로 확인
             if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
@@ -1167,6 +1329,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.handle_sectors_monthly()
         elif self.path.startswith("/api/sectors/monthly"):
             self.handle_sectors_monthly()
+        elif self.path.startswith("/api/sectors/fine"):
+            self.handle_sectors_fine()
         elif self.path.startswith("/api/leader"):
             self.handle_leader()
         elif urllib.parse.urlparse(self.path).path in ("/sector", "/sector.html"):
@@ -1774,6 +1938,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"code": code, "date": date, "mkt": mkt, "bars": _fetch_day_minutes(code, date, mkt)})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_sectors_fine(self):
+        data, status = fine_sector_data()
+        if data is None:
+            self.send_json(503, {"error": status})
+            return
+        self.send_json(200, data)
 
     def handle_sectors_monthly(self):
         data, status = sector_monthly_data()
@@ -3344,6 +3515,7 @@ if __name__ == "__main__":
     # threading.Thread(target=_rsi_scheduler, daemon=True).start()   # ← 다시 켜려면 주석 해제
     if KIS_APP_KEY and KIS_APP_SECRET:
         _sector_refresh_async()      # 업종 페이지 첫 방문이 느리지 않게 부팅 때 미리 모아 둔다
+    _fine_refresh_async()
     threading.Thread(target=_summary_scheduler, daemon=True).start()
     threading.Thread(target=_alert_scheduler, daemon=True).start()
     threading.Thread(target=_regime_scheduler, daemon=True).start()
