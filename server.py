@@ -2349,15 +2349,18 @@ def compute_regime(include_today=False):
     }
 
 
-def jongbae_state():
+def jongbae_state(include_today=True):
     """종베 직전 신호등(코스피 5일선·20일선 기준). 매매일지 분석 결과: 5일선이 종베 가부를 가르고 20일선은 그 안에서 기대의 크기를 가른다.
     level: green(베팅가능 = 5일선 위 & 20일선 위) / yellow(소액 = 5일선 위 & 20일선 아래) / red(쉼 = 5일선 아래).
     마지막 값이 오늘이면 장중가로 판정(종가 확정 전 근사), 아니면 전일 종가 기준. 못 만들면 None."""
     rows = naver_daily_closes("KOSPI")
+    today = _kst_now().strftime("%Y-%m-%d")
+    if not include_today:       # 아침 알림: 오늘 행을 빼고 전일 종가까지 확정된 값으로 판정
+        rows = [r for r in rows if r["date"] != today]
     closes = [r["close"] for r in rows if r.get("close") is not None]
     if len(closes) < 20:
         return None
-    live = rows[-1]["date"] == _kst_now().strftime("%Y-%m-%d")
+    live = include_today and rows[-1]["date"] == today
     price = closes[-1]
     ma5 = sum(closes[-5:]) / 5
     ma20 = sum(closes[-20:]) / 20
@@ -2416,6 +2419,13 @@ def build_regime_message(kind, info, today_live=None):
         if state:
             return build_jongbae_pre_message(info, state, today_live)
     lines = [f"{head} · {now.strftime('%m/%d')}"]
+    if kind == "morning":
+        try:
+            ms = jongbae_state(include_today=False)
+        except Exception:
+            ms = None
+        if ms:
+            lines.append(f"🚦 {ms['emoji']} {ms['label']} (전일 종가 기준)")
     if kind == "change" or info["changed"]:
         lines.append(f"{REGIME_EMOJI[info['prev']]} {REGIME_LABEL[info['prev']]} → {REGIME_EMOJI[r]} {REGIME_LABEL[r]} 전환 ({info['date'][5:].replace('-', '/')} 종가 기준)")
     else:
