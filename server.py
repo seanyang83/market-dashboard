@@ -874,30 +874,37 @@ def _fetch_sector_month_closes(code):
 
 def _build_sector_data():
     now = datetime.now(timezone.utc) + timedelta(hours=9)
-    markets, months = {}, None
+    fetched = {}
+    for market, defs in SECTOR_DEFS.items():
+        for code, name in defs:
+            try:
+                fetched[(market, code)] = _fetch_sector_month_closes(code)
+            except Exception as e:
+                print(f"sector {market} {code} failed: {e}")
+            time.sleep(0.12)
+    # 기준 월 목록: 월봉이 가장 길게 있는 업종의 최근 SECTOR_MONTHS개월
+    longest = max((sorted(c) for c in fetched.values()), key=len, default=[])
+    if len(longest) < SECTOR_MONTHS + 1:
+        raise ValueError("업종 데이터를 만들지 못했습니다")
+    months = longest[-(SECTOR_MONTHS + 1):][1:]
+    markets = {}
     for market, defs in SECTOR_DEFS.items():
         rows = []
         for code, name in defs:
-            try:
-                closes = _fetch_sector_month_closes(code)
-            except Exception as e:
-                print(f"sector {market} {code} failed: {e}")
+            closes = fetched.get((market, code))
+            if not closes:
                 continue
-            keys = sorted(closes)
-            if len(keys) < SECTOR_MONTHS + 1:
-                print(f"sector {market} {code} {name}: 월봉 {len(keys)}개뿐이라 제외")
+            keys = sorted(closes)[-(SECTOR_MONTHS + 1):]
+            real = len(keys) - 1
+            # 2024-08 KRX 업종 개편으로 새로 생긴 업종(부동산·IT 서비스·오락문화)은 월봉이 28개뿐이라 앞쪽 달은 비워 둔다.
+            if real < 12 or keys[1:] != months[-real:]:
+                print(f"sector {market} {code} {name}: 월봉 {real}개/월 구간 불일치로 제외")
                 continue
-            keys = keys[-(SECTOR_MONTHS + 1):]
-            if months is None:
-                months = keys[1:]
-            elif keys[1:] != months:
-                print(f"sector {market} {code} {name}: 월 구간이 달라 제외")
-                continue
-            rets = [round((closes[keys[i]] / closes[keys[i - 1]] - 1) * 100, 2) for i in range(1, len(keys))]
+            rets = [None] * (SECTOR_MONTHS - real) + [
+                round((closes[keys[i]] / closes[keys[i - 1]] - 1) * 100, 2) for i in range(1, len(keys))]
             rows.append({"code": code, "name": name, "rets": rets, "close": closes[keys[-1]]})
-            time.sleep(0.12)
         markets[market] = rows
-    if not months or not any(markets.values()):
+    if not any(markets.values()):
         raise ValueError("업종 데이터를 만들지 못했습니다")
     return {"asOf": now.strftime("%Y-%m-%d %H:%M"), "months": months, "partialMonth": now.strftime("%Y%m"),
             "markets": markets}

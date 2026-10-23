@@ -110,7 +110,7 @@
     </div>
     <div class="legend" id="legend"></div>
     <div class="sub" style="margin-top:10px;">
-      한국투자증권 KRX 업종지수 월봉 기준 · 수익률 = 그 달 종가 ÷ 전달 종가 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달 ·
+      한국투자증권 KRX 업종지수 월봉 기준 · 수익률 = 그 달 종가 ÷ 전달 종가 · 코스피 부동산·IT 서비스·오락문화는 2024-08 업종 개편 때 생겨 그 이전 달은 비어 있음 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달 ·
       상승은 빨강, 하락은 파랑
     </div>
   </div>
@@ -163,7 +163,7 @@ function render() {
   const rankOf = {};      // code -> [rank per month]
   const byRank = [];      // month -> [sector sorted desc]
   months.forEach((_, m) => {
-    const order = sectors.slice().sort((a, b) => b.r[m] - a.r[m]);
+    const order = sectors.filter((s) => s.r[m] != null).sort((a, b) => b.r[m] - a.r[m]);   // 아직 없던 업종은 그 달에서 뺀다
     byRank.push(order);
     order.forEach((s, i) => { (rankOf[s.code] = rankOf[s.code] || [])[m] = i; });
   });
@@ -180,6 +180,7 @@ function render() {
     html += `<tr><td class="rk">${i + 1}</td>`;
     months.forEach((_, m) => {
       const s = byRank[m][i];
+      if (!s) { html += "<td class='c'></td>"; return; }
       const v = s.r[m];
       const sel = s.code === selected;
       html += `<td class="c"><div class="cell${sel ? " sel" : ""}" data-code="${s.code}" style="background:hsla(${s.hue},62%,52%,${sel ? 0.5 : 0.22})" title="${s.name} ${fmt(v)}%">` +
@@ -216,7 +217,7 @@ function drawTrace(months) {
   svg.setAttribute("height", inner.scrollHeight);
   if (!selected) return;
   const base = inner.getBoundingClientRect();
-  const cells = [...inner.querySelectorAll(`.cell[data-code="${selected}"]`)];
+  const cells = [...inner.querySelectorAll(`.cell[data-code="${selected}"]`)];   // 값이 없는 달은 칸이 없어 선이 건너뜀
   const pts = cells.map((c) => {
     const r = c.getBoundingClientRect();
     return [r.left - base.left + r.width / 2, r.top - base.top + r.height / 2];
@@ -242,10 +243,11 @@ function renderSummary(sectors, rankOf, months) {
   const done = months.map((m) => m !== DATA.partialMonth);      // 완료된 달만
   const idx = done.map((d, i) => (d ? i : -1)).filter((i) => i >= 0);
   if (idx.length < 6) { card.hidden = true; return; }
-  const N = sectors.length;
+  const N = sectors.filter((s) => s.rets[s.rets.length - 1] != null).length;
   const recent = idx.slice(-3), prev = idx.slice(-6, -3);
   const avg = (arr, code) => arr.reduce((a, m) => a + rankOf[code][m] + 1, 0) / arr.length;
-  const rows = sectors.map((s) => ({ s, rec: avg(recent, s.code), prv: avg(prev, s.code) }))
+  const hasAll = (s) => idx.slice(-6).every((m) => rankOf[s.code] && rankOf[s.code][m] != null);   // 최근 6개월 모두 순위가 있는 업종만
+  const rows = sectors.filter(hasAll).map((s) => ({ s, rec: avg(recent, s.code), prv: avg(prev, s.code) }))
                       .map((x) => ({ ...x, imp: x.prv - x.rec }));
   const chip = (x, withDelta) =>
     `<button class="chip${x.s.code === selected ? " sel" : ""}" data-code="${x.s.code}" style="background:hsla(${x.s.hue},62%,52%,.22)">${x.s.name}` +
