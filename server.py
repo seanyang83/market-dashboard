@@ -2253,7 +2253,7 @@ def _alert_scheduler():
 #  - 횡보장: 그 외
 # 하루 판정이 왔다갔다 하지 않게 **이틀 연속 같은 판정일 때만 전환**한다. 판정은 일봉 이력에서 매번 다시
 # 계산하므로(상태 저장 없음) 서버가 재시작돼도 같은 결과.
-# 알림: ① (아침 08:50 — 2026-10-23 중단) ② 종베 직전 15:00 ③ 장세 전환이 확정된 날 장 마감 후(15:45~) 한 번.
+# 알림: ① 아침 08:40(전일 종가 기준) ② 오후 15:00(오늘 장중가 기준, 신호등 포함). 장세 전환 단독 알림은 없음.
 REGIME_DROP_PCT = -7.0
 REGIME_HIGH_WINDOW = 60
 REGIME_LABEL = {"up": "상승장", "side": "횡보장", "down": "하락장"}
@@ -2297,10 +2297,9 @@ REGIME_RULES = {
         ]),
     ],
 }
-# 아침(morning, 08:50~09:20) 알림은 사용자 요청으로 자동 발송 중단(2026-10-23). 다시 켜려면 아래에 "morning": (8 * 60 + 50, 9 * 60 + 20) 추가.
-# ops 테스트(kind=morning)로 문구 확인은 계속 가능하다.
-# 장세 전환 알림(change, 15:45~16:30)도 사용자 요청으로 중단(2026-10-23): 15:00 알림에 "🔔 장세 전환: A → B"가 붙으므로 따로 안 보냄.
-REGIME_SLOTS = {"pre": (15 * 60, 15 * 60 + 30)}
+# 장세 알림은 하루 두 번(2026-10-23 확정): 아침 08:40(전일 종가 기준 장세) + 오후 15:00(오늘 장중 코스피 기준 장세·신호등).
+# 장세 전환만 따로 보내던 알림은 없앴다(전환이 있으면 두 알림에 "🔔 장세 전환" 줄이 붙는다).
+REGIME_SLOTS = {"morning": (8 * 60 + 40, 9 * 60 + 10), "pre": (15 * 60, 15 * 60 + 30)}
 _regime_done = set()
 _regime_lock = threading.Lock()
 
@@ -2408,7 +2407,7 @@ def build_regime_message(kind, info, today_live=None):
     """kind: morning | pre | change. 평문."""
     now = _kst_now()
     r = info["regime"]
-    head = {"morning": "🧭 종베규칙 · 아침", "pre": "🧭 종베규칙 · 종베 직전 15:00", "change": "🔔 종베규칙 · 장세 전환"}[kind]
+    head = {"morning": "🧭 종베규칙 · 아침 08:40", "pre": "🧭 종베규칙 · 종베 직전 15:00", "change": "🔔 종베규칙 · 장세 전환"}[kind]
     if kind == "pre":
         try:
             state = jongbae_state()
@@ -2446,9 +2445,10 @@ def regime_message_for(kind):
         if not info["changed"] or info["date"] != _kst_now().strftime("%Y-%m-%d"):
             return None
         return build_regime_message("change", info)
-    info = compute_regime(include_today=False)
-    live = _regime_today_live() if kind == "pre" else None
-    return build_regime_message(kind, info, live)
+    if kind == "pre":
+        # 15:00: 오늘 장중 코스피를 오늘 종가 자리에 넣고 판정(네이버 일봉의 마지막 행이 장중가)
+        return build_regime_message(kind, compute_regime(include_today=True), None)
+    return build_regime_message(kind, compute_regime(include_today=False), None)   # 아침: 전일 종가까지 확정된 일봉
 
 
 def _regime_slot_due(now):
