@@ -2352,7 +2352,7 @@ def compute_regime(include_today=False):
 
 def jongbae_light():
     """종베 직전 신호등(코스피 5일선·20일선 기준). 매매일지 분석 결과: 5일선이 종베 가부를 가르고 20일선은 그 안에서 기대의 크기를 가른다.
-    🟢 가능 = 5일선 위 & 20일선 위 / 🟡 소액 = 5일선 위 & 20일선 아래 / 🔴 쉼 = 5일선 아래.
+    🟢 베팅가능 = 5일선 위 & 20일선 위 / 🟡 소액 = 5일선 위 & 20일선 아래 / 🔴 쉼 = 5일선 아래.
     마지막 값이 오늘이면 장중가로 판정(종가 확정 전 근사), 아니면 전일 종가 기준. 못 만들면 None."""
     rows = naver_daily_closes("KOSPI")
     closes = [r["close"] for r in rows if r.get("close") is not None]
@@ -2367,7 +2367,7 @@ def jongbae_light():
     elif price < ma20:
         emoji, label = "🟡", "소액 (5일선 위, 20일선 아래)"
     else:
-        emoji, label = "🟢", "가능 (5일선·20일선 위)"
+        emoji, label = "🟢", "베팅가능 (5일선·20일선 위)"
     basis = "장중가" if live else "전일 종가"
     return [f"🚦 종베 신호등: {emoji} {label}",
             f"   코스피 {price:,.0f} ({basis}) · 5일선 {ma5:,.0f} · 20일선 {ma20:,.0f}"]
