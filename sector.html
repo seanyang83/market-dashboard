@@ -183,7 +183,7 @@ function render() {
       if (!s) { html += "<td class='c'></td>"; return; }
       const v = s.r[m];
       const sel = s.code === selected;
-      html += `<td class="c"><div class="cell${sel ? " sel" : ""}" data-code="${s.code}" style="background:hsla(${s.hue},62%,52%,${sel ? 0.5 : 0.22})" title="${s.name} ${fmt(v)}%">` +
+      html += `<td class="c"><div class="cell${sel ? " sel" : ""}" data-code="${s.code}" data-m="${m}" style="background:hsla(${s.hue},62%,52%,${sel ? 0.5 : 0.22})" title="${s.name} ${fmt(v)}%">` +
               `<span class="nm">${s.name}</span><span class="pc ${v >= 0 ? "up" : "down"}">${fmt(v)}%</span></div></td>`;
     });
     html += "</tr>";
@@ -217,7 +217,8 @@ function drawTrace(months) {
   svg.setAttribute("height", inner.scrollHeight);
   if (!selected) return;
   const base = inner.getBoundingClientRect();
-  const cells = [...inner.querySelectorAll(`.cell[data-code="${selected}"]`)];   // 값이 없는 달은 칸이 없어 선이 건너뜀
+  // 칸은 표의 줄(순위) 순서로 잡히므로 월(data-m) 순서로 정렬해서 시간순으로 이어야 한다. 값이 없는 달은 칸이 없어 건너뛴다.
+  const cells = [...inner.querySelectorAll(`.cell[data-code="${selected}"]`)].sort((a, b) => +a.dataset.m - +b.dataset.m);
   const pts = cells.map((c) => {
     const r = c.getBoundingClientRect();
     return [r.left - base.left + r.width / 2, r.top - base.top + r.height / 2];
