@@ -2282,7 +2282,7 @@ REGIME_RULES = {
         "do": [
             "주도주 첫 하락은 3일선(10분봉 117선)·5일선(15분봉 120선) 반등을 노린다",
             "장중 매수는 3분봉 20선에서",
-            "주도주 15일선 되돌림은 현금 베팅",
+            "주도주 - 15분봉 60,120선 골든크로스 되돌림시 현금 베팅",
         ],
     },
     "up": {
@@ -2296,6 +2296,7 @@ REGIME_RULES = {
             "상승세일 때 장중 매수는 3분봉 20선에서",
             "종목이 신고가 + 장후 NXT 상승 패턴이면 종베",
             "일봉 조정 후 신고가 갱신 시 하락한 만큼 상승 기조로 종베/시가 강베팅",
+            "고가 형성 후 3·5일선 지지 일봉이 나온 뒤에는 또 신고가 상승 확률이 높다",
         ],
     },
 }
@@ -2398,7 +2399,7 @@ def build_regime_message(kind, info, today_live=None):
     lines.append("🚫 하지 말 것")
     lines.extend(f" · {t}" for t in (rules["dont"] if kind != "pre" else rules["dont"][:3]))
     lines.append("✅ 할 것")
-    lines.extend(f" · {t}" for t in rules["do"][:4])
+    lines.extend(f" · {t}" for t in rules["do"][:5])
     if kind == "pre":
         lines.append("")
         lines.append("종베 체크: 시황 최우선 · 전일 종베분은 정리했나 · 잃지만 말자")
