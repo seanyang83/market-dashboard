@@ -2297,7 +2297,9 @@ REGIME_RULES = {
         ]),
     ],
 }
-REGIME_SLOTS = {"morning": (8 * 60 + 50, 9 * 60 + 20), "pre": (14 * 60, 14 * 60 + 30), "change": (15 * 60 + 45, 16 * 60 + 30)}
+# 아침(morning, 08:50~09:20) 알림은 사용자 요청으로 자동 발송 중단(2026-10-23). 다시 켜려면 아래에 "morning": (8 * 60 + 50, 9 * 60 + 20) 추가.
+# ops 테스트(kind=morning)로 문구 확인은 계속 가능하다.
+REGIME_SLOTS = {"pre": (14 * 60, 14 * 60 + 30), "change": (15 * 60 + 45, 16 * 60 + 30)}
 _regime_done = set()
 _regime_lock = threading.Lock()
 
