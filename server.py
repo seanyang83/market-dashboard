@@ -2253,12 +2253,12 @@ def _alert_scheduler():
 #  - 횡보장: 그 외
 # 하루 판정이 왔다갔다 하지 않게 **이틀 연속 같은 판정일 때만 전환**한다. 판정은 일봉 이력에서 매번 다시
 # 계산하므로(상태 저장 없음) 서버가 재시작돼도 같은 결과.
-# 알림: ① 아침 08:50 ② 종베 직전 14:00 ③ 장세 전환이 확정된 날 장 마감 후(15:45~) 한 번.
+# 알림: ① (아침 08:50 — 2026-10-23 중단) ② 종베 직전 15:00 ③ 장세 전환이 확정된 날 장 마감 후(15:45~) 한 번.
 REGIME_DROP_PCT = -7.0
 REGIME_HIGH_WINDOW = 60
 REGIME_LABEL = {"up": "상승장", "side": "횡보장", "down": "하락장"}
 REGIME_EMOJI = {"up": "📈", "side": "↔️", "down": "📉"}
-# 장세별 규칙 문구(사용자 확정, 2026-10-23). 각 장세는 (제목, [규칙...]) 묶음의 목록이다. 아침/14:00/장세 전환 알림이 같은 문구를 쓴다.
+# 장세별 규칙 문구(사용자 확정, 2026-10-23). 각 장세는 (제목, [규칙...]) 묶음의 목록이다. 아침(중단)/15:00/장세 전환 알림이 같은 문구를 쓴다.
 REGIME_RULES = {
     "down": [
         ("하락장 규칙", [
@@ -2299,7 +2299,7 @@ REGIME_RULES = {
 }
 # 아침(morning, 08:50~09:20) 알림은 사용자 요청으로 자동 발송 중단(2026-10-23). 다시 켜려면 아래에 "morning": (8 * 60 + 50, 9 * 60 + 20) 추가.
 # ops 테스트(kind=morning)로 문구 확인은 계속 가능하다.
-REGIME_SLOTS = {"pre": (14 * 60, 14 * 60 + 30), "change": (15 * 60 + 45, 16 * 60 + 30)}
+REGIME_SLOTS = {"pre": (15 * 60, 15 * 60 + 30), "change": (15 * 60 + 45, 16 * 60 + 30)}
 _regime_done = set()
 _regime_lock = threading.Lock()
 
@@ -2390,10 +2390,10 @@ def _rules_lines(regime):
 
 
 def build_jongbae_pre_message(info, state, today_live=None):
-    """14:00 종베 직전 알림(짧은 형태): 신호등 + 장세 한 줄 + 장세별 규칙."""
+    """15:00 종베 직전 알림(짧은 형태): 신호등 + 장세 한 줄 + 장세별 규칙."""
     r = info["regime"]
     dd = today_live["drawdown"] if today_live else info["drawdown"]
-    lines = [f"🧭 종베 직전 14:00 · {_kst_now().strftime('%m/%d')}",
+    lines = [f"🧭 종베 직전 15:00 · {_kst_now().strftime('%m/%d')}",
              f"🚦 {state['emoji']} {state['label']}"]
     if info["changed"]:
         lines.append(f"🔔 장세 전환: {REGIME_LABEL[info['prev']]} → {REGIME_LABEL[r]}")
@@ -2407,7 +2407,7 @@ def build_regime_message(kind, info, today_live=None):
     """kind: morning | pre | change. 평문."""
     now = _kst_now()
     r = info["regime"]
-    head = {"morning": "🧭 종베규칙 · 아침", "pre": "🧭 종베규칙 · 종베 직전 14:00", "change": "🔔 종베규칙 · 장세 전환"}[kind]
+    head = {"morning": "🧭 종베규칙 · 아침", "pre": "🧭 종베규칙 · 종베 직전 15:00", "change": "🔔 종베규칙 · 장세 전환"}[kind]
     if kind == "pre":
         try:
             state = jongbae_state()
