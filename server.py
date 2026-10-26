@@ -887,6 +887,17 @@ def _build_sector_data():
     if len(longest) < SECTOR_MONTHS + 1:
         raise ValueError("업종 데이터를 만들지 못했습니다")
     months = longest[-(SECTOR_MONTHS + 1):][1:]
+    # 시장 전체(종합) 지수 월 수익률: 상대강도 그래프의 기준선
+    bench = {}
+    for bname, bcode in (("KOSPI", "0001"), ("KOSDAQ", "1001")):
+        try:
+            bc = _fetch_sector_month_closes(bcode)
+            bkeys = sorted(bc)[-(SECTOR_MONTHS + 1):]
+            if len(bkeys) == SECTOR_MONTHS + 1 and bkeys[1:] == months:
+                bench[bname] = [round((bc[bkeys[i]] / bc[bkeys[i - 1]] - 1) * 100, 2) for i in range(1, len(bkeys))]
+        except Exception as e:
+            print(f"sector bench {bname} failed: {e}")
+        time.sleep(0.12)
     markets = {}
     for market, defs in SECTOR_DEFS.items():
         rows = []
@@ -907,7 +918,7 @@ def _build_sector_data():
     if not any(markets.values()):
         raise ValueError("업종 데이터를 만들지 못했습니다")
     return {"asOf": now.strftime("%Y-%m-%d %H:%M"), "months": months, "partialMonth": now.strftime("%Y%m"),
-            "markets": markets}
+            "markets": markets, "bench": bench}
 
 
 def _sector_refresh_async():

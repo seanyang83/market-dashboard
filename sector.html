@@ -65,21 +65,35 @@
   }
   .cell .nm { display: block; font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cell .pc { display: block; font-size: 10.5px; font-variant-numeric: tabular-nums; }
-  .pc.up { color: var(--up); } .pc.down { color: var(--down); }
+  .pc.up, b.up { color: var(--up); } .pc.down, b.down { color: var(--down); }
   .dim .cell { opacity: .22; }
   .dim .cell.sel { opacity: 1; box-shadow: 0 0 0 2px var(--text) inset; }
   svg.trace { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; }
   .loading { font-size: 13px; color: var(--sub); padding: 24px 4px; text-align: center; }
-  .error { color: var(--up); font-size: 13px; padding: 12px 4px; }
   .legend { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
   select.pick { font-size: 12.5px; padding: 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font-family: inherit; max-width: 100%; }
   .dtbl { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
-  .dtbl th { text-align: left; font-weight: 600; color: var(--sub); padding: 5px 6px; border-bottom: 1px solid var(--border); position: static; background: transparent; font-size: 12px; }
+  .dtbl th { text-align: left; font-weight: 600; color: var(--sub); padding: 5px 6px; border-bottom: 1px solid var(--border); position: static; background: transparent; font-size: 12px; white-space: nowrap; }
   .dtbl td { padding: 6px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  .dtbl td:nth-child(-n+3) { white-space: nowrap; }
+  .dtbl td:nth-child(-n+4) { white-space: nowrap; }
   .dtbl tr.hl td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
   .dtbl .lead { display: block; white-space: nowrap; }
   .tag-sub { font-size: 12px; color: var(--sub); }
+  .lb { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-top: 8px; }
+  .lb th { text-align: right; font-weight: 600; color: var(--sub); padding: 5px 6px; border-bottom: 1px solid var(--border); font-size: 11.5px; position: static; background: transparent; white-space: nowrap; }
+  .lb th:first-child, .lb td:first-child { text-align: left; }
+  .lb td { padding: 6px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .lb tr.row { cursor: pointer; }
+  .lb tr.row.sel td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .st { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid currentColor; }
+  .st.keep { color: var(--up); } .st.rise { color: #d97706; } .st.fall { color: var(--down); } .st.none { color: var(--sub); border-color: var(--border); font-weight: 500; }
+  .charts { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }
+  .chartbox { border: 1px solid var(--border); border-radius: 10px; padding: 8px 8px 4px; }
+  .chartbox .ct { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+  .chartbox svg { width: 100%; height: auto; display: block; }
+  .lgd { font-size: 11px; color: var(--sub); display: flex; gap: 12px; flex-wrap: wrap; margin: 2px 0 4px; }
+  .lgd i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 4px; border-radius: 2px; }
+  @media (min-width: 760px) { .charts { grid-template-columns: 1fr 1fr; } }
 </style>
 </head>
 <body>
@@ -94,27 +108,39 @@
 
   <div class="card">
     <div class="controls">
-      <button class="btn active" data-market="KOSPI">코스피 업종</button>
+      <button class="btn active" data-market="FINE">세분 업종(코스피)</button>
       <button class="btn" data-market="KOSDAQ">코스닥 업종</button>
-      <button class="btn" data-market="FINE">세분 업종</button>
+      <button class="btn" data-market="KOSPI">코스피 업종(KRX)</button>
       <span class="sep"></span>
       <button class="btn" data-range="12">12개월</button>
       <button class="btn" data-range="24">24개월</button>
       <button class="btn active" data-range="36">36개월</button>
     </div>
     <div class="controls" style="margin-top:8px;">
+      <span class="sub">순위 기준</span>
+      <button class="btn" data-basis="1" title="그 달 한 달 수익률로 순위">단월</button>
+      <button class="btn active" data-basis="3" title="그 달까지 최근 3개월 누적 수익률로 순위">3개월 누적</button>
+      <button class="btn" data-basis="6" title="그 달까지 최근 6개월 누적 수익률로 순위">6개월 누적</button>
+    </div>
+    <div class="controls" style="margin-top:8px;">
       <select class="pick" id="pick"><option value="">업종 골라서 따라가기…</option></select>
-      <span id="wtCtl" hidden>
+      <span id="wtCtl">
         <button class="btn active" data-weight="cap" title="삼성전자·SK하이닉스 같은 대형주가 업종 수익률을 더 크게 좌우">시총 가중</button>
         <button class="btn" data-weight="eq" title="구성 종목을 같은 비중으로 평균">동일 가중</button>
       </span>
-      <span id="topCtl" hidden>
+      <span id="topCtl">
         <button class="btn" data-top="20">상위 20</button>
         <button class="btn active" data-top="30">상위 30</button>
         <button class="btn" data-top="999">전체</button>
       </span>
     </div>
     <div class="sub" style="margin-top:8px;" id="asOf">불러오는 중...</div>
+  </div>
+
+  <div class="card" id="boardCard" hidden>
+    <h2>주도 업종 지속성 <span class="sub">(최근 완료 달 기준 · 줄을 누르면 아래 표와 그래프에서 따라갑니다)</span></h2>
+    <div style="overflow-x:auto;"><table class="lb" id="board"></table></div>
+    <div class="sub" style="margin-top:8px;" id="boardNote"></div>
   </div>
 
   <div class="card" id="summaryCard" hidden>
@@ -124,17 +150,17 @@
   </div>
 
   <div class="card">
-    <h2>월별 수익률 순위 <span class="sub">(위로 갈수록 그 달 수익률이 높음 · 업종을 누르면 월별 순위 이동을 선으로 이어 줍니다)</span></h2>
+    <h2>월별 순위 <span class="sub" id="tblSub">(위로 갈수록 수익률이 높음 · 업종을 누르면 월별 순위 이동을 선으로 이어 줍니다)</span></h2>
     <div id="msg" class="loading">업종 데이터를 불러오는 중...</div>
     <div class="scroller" id="scroller" hidden>
       <div class="inner" id="inner"><table id="tbl"></table><svg class="trace" id="trace"></svg></div>
     </div>
     <div class="legend" id="legend"></div>
-    <div class="sub" style="margin-top:10px;" id="noteKrx">
+    <div class="sub" style="margin-top:10px;" id="noteKrx" hidden>
       한국투자증권 KRX 업종지수 월봉 기준 · 수익률 = 그 달 종가 ÷ 전달 종가 · 코스피 부동산·IT 서비스·오락문화는 2024-08 업종 개편 때 생겨 그 이전 달은 비어 있음 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달 ·
       상승은 빨강, 하락은 파랑
     </div>
-    <div class="sub" style="margin-top:10px;" id="noteFine" hidden>
+    <div class="sub" style="margin-top:10px;" id="noteFine">
       네이버 금융 79개 업종 중 <b>코스피 종목</b>만 사용 · 업종 수익률 = 업종 시가총액 상위 10종목(우선주·스팩 제외)의 그 달 수익률 평균
       (<b>시총 가중</b>은 종목 하나의 비중을 40%로 제한, <b>동일 가중</b>은 같은 비중) · 종목 하나가 -50%~+150%를 넘는 값은 잘라서 계산 ·
       현재 구성 종목·현재 시총 기준이라 과거 상장폐지 종목은 빠져 있음 · 코스피 종목이 3개 미만인 업종(코스닥 중심 업종 포함)과 '기타'는 제외 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달
@@ -144,17 +170,30 @@
   <div class="card" id="detailCard" hidden>
     <h2 id="detailTitle"></h2>
     <div class="sub" id="detailSub"></div>
+    <div class="charts" id="charts"></div>
     <div style="overflow-x:auto;"><table class="dtbl" id="detailTbl"></table></div>
   </div>
 </div>
 
 <script>
 let DATA = null, FINE = null, fineLoading = false;
-let market = "KOSPI", range = 36, topN = 30, selected = null, selMonth = null, weight = "cap";
+let market = "FINE", range = 36, topN = 30, selected = null, selMonth = null, weight = "cap", basis = 3;
 
 const fmt = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
 const hueOf = (i, n) => Math.round((i * 360) / n + 8) % 360;
 const cur = () => (market === "FINE" ? FINE : DATA);
+const ym = (mm) => `${mm.slice(0, 4)}.${mm.slice(4)}`;
+
+// 월 수익률 배열 → "최근 k개월 누적 수익률" 배열(k개월이 모두 있어야 값이 생긴다)
+function cumSeries(m, k) {
+  return m.map((_, i) => {
+    if (k === 1) return m[i];
+    if (i < k - 1) return null;
+    let p = 1;
+    for (let j = i - k + 1; j <= i; j++) { if (m[j] == null) return null; p *= 1 + m[j] / 100; }
+    return (p - 1) * 100;
+  });
+}
 
 async function load() {
   const msg = document.getElementById("msg");
@@ -199,48 +238,64 @@ async function loadFine() {
   }
 }
 
+// 현재 탭의 업종 목록. m = 월 수익률(전체 구간), c = 순위 기준 값(전체 구간)
 function sectorsOf() {
   const d = cur();
   if (!d) return [];
+  let list;
   if (market === "FINE") {
-    const list = d.industries.slice().sort((a, b) => a.name.localeCompare(b.name, "ko"));
-    return list.map((s, i) => ({ ...s, rets: weight === "eq" ? s.retsEq : s.rets, code: "n" + s.no, hue: Math.round((i * 137.508) % 360) }));
+    list = d.industries.slice().sort((a, b) => a.name.localeCompare(b.name, "ko"))
+      .map((s, i) => ({ ...s, rets: weight === "eq" ? s.retsEq : s.rets, code: "n" + s.no, hue: Math.round((i * 137.508) % 360) }));
+  } else {
+    const l = d.markets[market] || [];
+    list = l.map((s, i) => ({ ...s, hue: hueOf(i, l.length) }));
   }
-  const list = d.markets[market] || [];
-  const n = list.length;
-  return list.map((s, i) => ({ ...s, hue: hueOf(i, n) }));
+  return list.map((s) => ({ ...s, m: s.rets, c: cumSeries(s.rets, basis) }));
+}
+
+// 코스피/코스닥 종합지수 월 수익률(상대강도 기준선). 세분 업종(코스피 종목)은 코스피와 비교
+function benchOf() {
+  if (!DATA || !DATA.bench) return null;
+  const arr = DATA.bench[market === "KOSDAQ" ? "KOSDAQ" : "KOSPI"];
+  if (!arr) return null;
+  const map = {};
+  DATA.months.forEach((mm, i) => { map[mm] = arr[i]; });
+  return map;
 }
 
 function render() {
   const d = cur();
   const msg = document.getElementById("msg"), scroller = document.getElementById("scroller");
-  document.getElementById("topCtl").hidden = market !== "FINE";
-  document.getElementById("wtCtl").hidden = market !== "FINE";
-  document.getElementById("noteKrx").hidden = market === "FINE";
-  document.getElementById("noteFine").hidden = market !== "FINE";
+  const fine = market === "FINE";
+  document.getElementById("topCtl").hidden = !fine;
+  document.getElementById("wtCtl").hidden = !fine;
+  document.getElementById("noteKrx").hidden = fine;
+  document.getElementById("noteFine").hidden = !fine;
   if (!d) {
     scroller.hidden = true; msg.hidden = false;
-    document.getElementById("summaryCard").hidden = true;
-    document.getElementById("detailCard").hidden = true;
+    ["summaryCard", "detailCard", "boardCard"].forEach((id) => { document.getElementById(id).hidden = true; });
     document.getElementById("legend").innerHTML = "";
-    if (market === "FINE") { msg.textContent = "세분 업종을 모으는 중입니다 (처음 한 번은 2~3분 걸립니다)"; loadFine(); }
+    if (fine) { msg.textContent = "세분 업종을 모으는 중입니다 (처음 한 번은 2~3분 걸립니다)"; loadFine(); }
     else msg.textContent = "업종 데이터를 불러오는 중...";
     return;
   }
-  document.getElementById("asOf").textContent = `기준 ${d.asOf} · 최근 ${d.months.length}개월` + (market === "FINE" ? ` · 업종마다 코스피 시총 상위 ${d.topN}종목 ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균` : "");
+  const bLabel = basis === 1 ? "단월" : `${basis}개월 누적`;
+  document.getElementById("asOf").textContent = `기준 ${d.asOf} · 최근 ${d.months.length}개월` +
+    (fine ? ` · 업종마다 코스피 시총 상위 ${d.topN}종목 ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균` : "") + ` · 순위 기준: ${bLabel} 수익률`;
+  document.getElementById("tblSub").textContent = `(위로 갈수록 ${bLabel} 수익률이 높음 · 칸의 %는 ${bLabel} 수익률 · 업종을 누르면 월별 순위 이동을 선으로 이어 줍니다)`;
   const all = sectorsOf();
   const total = d.months.length;
   const from = total - range;
   const months = d.months.slice(from);
-  const sectors = all.map((s) => ({ ...s, r: s.rets.slice(from) }));
+  const sectors = all.map((s) => ({ ...s, r: s.c.slice(from), mm: s.m.slice(from) }));
   const N = sectors.length;
   if (!N) { msg.hidden = false; msg.textContent = "이 시장의 업종 데이터가 없습니다"; return; }
 
-  // 월별 순위(0부터): 수익률 높은 순
+  // 월별 순위(0부터): 기준 수익률 높은 순
   const rankOf = {};      // code -> [rank per month]
   const byRank = [];      // month -> [sector sorted desc]
   months.forEach((_, m) => {
-    const order = sectors.filter((s) => s.r[m] != null).sort((a, b) => b.r[m] - a.r[m]);   // 아직 없던 업종은 그 달에서 뺀다
+    const order = sectors.filter((s) => s.r[m] != null).sort((a, b) => b.r[m] - a.r[m]);   // 값이 없는 업종은 그 달에서 뺀다
     byRank.push(order);
     order.forEach((s, i) => { (rankOf[s.code] = rankOf[s.code] || [])[m] = i; });
   });
@@ -251,7 +306,7 @@ function render() {
     sectors.slice().sort((a, b) => a.name.localeCompare(b.name, "ko")).map((s) => `<option value="${s.code}"${s.code === selected ? " selected" : ""}>${s.name}</option>`).join("");
 
   // 표
-  const rows = market === "FINE" ? Math.min(topN, N) : N;
+  const rows = fine ? Math.min(topN, N) : N;
   const partial = d.partialMonth;
   let html = "<thead><tr><th class='rk'>순위</th>";
   months.forEach((mm) => {
@@ -266,7 +321,7 @@ function render() {
       if (!s) { html += "<td class='c'></td>"; return; }
       const v = s.r[m];
       const sel = s.code === selected;
-      html += `<td class="c"><div class="cell${sel ? " sel" : ""}" data-code="${s.code}" data-m="${m}" style="background:hsla(${s.hue},62%,52%,${sel ? 0.5 : 0.22})" title="${s.name} ${fmt(v)}%">` +
+      html += `<td class="c"><div class="cell${sel ? " sel" : ""}" data-code="${s.code}" data-m="${m}" style="background:hsla(${s.hue},62%,52%,${sel ? 0.5 : 0.22})" title="${s.name} ${bLabel} ${fmt(v)}%">` +
               `<span class="nm">${s.name}</span><span class="pc ${v >= 0 ? "up" : "down"}">${fmt(v)}%</span></div></td>`;
     });
     html += "</tr>";
@@ -283,11 +338,12 @@ function render() {
   drawTrace();
 
   // 범례(칩): 세분 업종은 너무 많아서 생략(드롭다운으로 고른다)
-  document.getElementById("legend").innerHTML = market === "FINE" ? "" : sectors.map((s) =>
+  document.getElementById("legend").innerHTML = fine ? "" : sectors.map((s) =>
     `<button class="chip${s.code === selected ? " sel" : ""}" data-code="${s.code}" style="background:hsla(${s.hue},62%,52%,.22)">${s.name}</button>`).join("");
 
+  renderBoard(all, d);
   renderSummary(sectors, rankOf, months, d);
-  renderDetail(sectors, rankOf, months, N);
+  renderDetail(sectors, rankOf, months, N, d);
 }
 
 function drawTrace() {
@@ -337,6 +393,79 @@ function leadersOf(s, absM, k) {
   return s.stocks.filter((t) => t.rets[absM] != null).sort((a, b) => b.rets[absM] - a.rets[absM]).slice(0, k);
 }
 
+// ---- 주도 업종 지속성 표 (전체 36개월, 완료된 달 기준) ----
+function boardRows(all, d) {
+  const total = d.months.length;
+  const done = d.months.map((mm) => mm !== d.partialMonth);
+  const L = done.lastIndexOf(true);                       // 최근 완료 달
+  if (L < 11) return null;
+  const c3 = all.map((s) => cumSeries(s.m, 3)), c6 = all.map((s) => cumSeries(s.m, 6));
+  const rankAt = (arrs, i) => {                           // 그 달 기준 각 업종의 순위(1부터)와 대상 수
+    const idx = arrs.map((a, k) => ({ k, v: a[i] })).filter((x) => x.v != null).sort((a, b) => b.v - a.v);
+    const out = new Array(all.length).fill(null);
+    idx.forEach((x, r) => { out[x.k] = r + 1; });
+    return { rank: out, n: idx.length };
+  };
+  const r3 = rankAt(c3, L), r3prev = rankAt(c3, L - 3);
+  const top = (n) => Math.max(1, Math.ceil(n * 0.2));
+  // 단월 순위(상위 20% 달 수·연속)
+  const monthlyTop = [];                                  // monthlyTop[i][k] = true/false/null
+  for (let i = 0; i < total; i++) {
+    const rr = rankAt(all.map((s) => s.m), i);
+    monthlyTop.push(rr.rank.map((x) => (x == null ? null : x <= top(rr.n))));
+  }
+  return all.map((s, k) => {
+    let cnt = 0, streak = 0, streakOpen = true;
+    for (let i = L; i > L - 12; i--) {
+      const t = monthlyTop[i][k];
+      if (t) cnt++;
+      if (streakOpen) { if (t) streak++; else streakOpen = false; }
+    }
+    // 현재(진행 중인 달 포함)까지 누적지수의 최근 12개월 고점 대비 낙폭
+    let idx = 1; const series = [];
+    for (let i = 0; i < total; i++) { if (s.m[i] != null) idx *= 1 + s.m[i] / 100; series.push(s.m[i] != null ? idx : null); }
+    const last = series[total - 1];
+    const peak = Math.max(...series.slice(total - 12).filter((x) => x != null));
+    const dd = last != null && isFinite(peak) ? (last / peak - 1) * 100 : null;
+    const rank3 = r3.rank[k], rank3p = r3prev.rank[k];
+    let status = "none", label = "-";
+    const nowTop = rank3 != null && rank3 <= top(r3.n);
+    if (nowTop && dd != null && dd > -10) {
+      if (rank3p != null && rank3p > r3prev.n * 0.5) { status = "rise"; label = "신규 부상"; }
+      else { status = "keep"; label = "주도 지속"; }
+    } else if (nowTop) { status = "none"; label = "고점 하회 반등"; }          // 3개월 상위지만 12개월 고점 대비 -10% 넘게 아래
+    else if (cnt >= 3 && ((c3[k][L] != null && c3[k][L] < 0) || (dd != null && dd <= -15))) { status = "fall"; label = "주도 꺾임"; }
+    return { s, cum3: c3[k][L], cum6: c6[k][L], cnt, streak, dd, rank3, n: r3.n, status, label };
+  }).filter((x) => x.cum3 != null);
+}
+
+function renderBoard(all, d) {
+  const card = document.getElementById("boardCard");
+  const rows = boardRows(all, d);
+  if (!rows) { card.hidden = true; return; }
+  rows.sort((a, b) => b.cum3 - a.cum3);
+  const limit = market === "FINE" ? 15 : 12;
+  const fallen = rows.slice(limit).filter((x) => x.status === "fall").slice(0, 4);
+  const show = rows.slice(0, limit).concat(fallen);
+  const last = d.months[d.months.map((mm) => mm !== d.partialMonth).lastIndexOf(true)];
+  let html = "<thead><tr><th>업종</th><th>3개월</th><th>6개월</th><th>상위20%<br>12개월 중</th><th>연속</th><th>고점 대비</th><th style='text-align:left'>상태</th></tr></thead><tbody>";
+  show.forEach((x) => {
+    html += `<tr class="row${x.s.code === selected ? " sel" : ""}" data-code="${x.s.code}"><td><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:hsl(${x.s.hue},62%,52%);margin-right:6px;"></span>${x.s.name}</td>` +
+      `<td><b class="${x.cum3 >= 0 ? "up" : "down"}">${fmt(x.cum3)}%</b></td>` +
+      `<td>${x.cum6 == null ? "-" : `<b class="${x.cum6 >= 0 ? "up" : "down"}">${fmt(x.cum6)}%</b>`}</td>` +
+      `<td>${x.cnt}개월</td><td>${x.streak ? x.streak + "개월" : "-"}</td>` +
+      `<td>${x.dd == null ? "-" : `<b class="${x.dd >= 0 ? "up" : "down"}">${fmt(x.dd)}%</b>`}</td>` +
+      `<td style="text-align:left"><span class="st ${x.status}">${x.label}</span></td></tr>`;
+  });
+  html += "</tbody>";
+  document.getElementById("board").innerHTML = html;
+  document.getElementById("boardNote").innerHTML =
+    `기준 달: ${ym(last)} (진행 중인 달 제외, 고점 대비만 오늘까지 포함) · 3·6개월 = 최근 3·6개월 누적 수익률 · <b>상위20%</b> = 그 달 단월 수익률이 업종 중 상위 20% 안에 든 달 수 · <b>연속</b> = 최근 달부터 이어서 상위 20%였던 개월 수 · ` +
+    `<b>고점 대비</b> = 최근 12개월 누적지수 고점에서 지금까지 낙폭<br>` +
+    `<b>주도 지속</b>: 3개월 누적이 상위 20%이고 고점 대비 -10% 이내 · <b>신규 부상</b>: 같은 조건인데 3개월 전엔 중하위(50% 밖) · <b>고점 하회 반등</b>: 3개월 누적은 상위 20%인데 고점 대비 -10%보다 아래 · <b>주도 꺾임</b>: 3개월 누적이 상위 20% 밖이고 12개월 중 3번 이상 상위였는데 3개월 누적이 마이너스이거나 고점 대비 -15% 이하 · 업종 ${rows.length}개 중`;
+  card.hidden = false;
+}
+
 function renderSummary(sectors, rankOf, months, d) {
   const card = document.getElementById("summaryCard");
   const done = months.map((m) => m !== d.partialMonth);      // 완료된 달만
@@ -350,14 +479,14 @@ function renderSummary(sectors, rankOf, months, d) {
   const rows = sectors.filter(hasAll).map((s) => ({ s, rec: avg(recent, s.code), prv: avg(prev, s.code) }))
                       .map((x) => ({ ...x, imp: x.prv - x.rec }));
   const lastAbs = off + recent[recent.length - 1];
+  // 최근 3개월 누적 수익률(월 수익률을 이어서 곱함)은 순위 기준과 무관하게 월 수익률(mm)로 계산
+  rows.forEach((x) => { x.cum = (recent.reduce((a, m) => a * (1 + x.s.mm[m] / 100), 1) - 1) * 100; });
   const chip = (x, withDelta) => {
     const lead = leadersOf(x.s, lastAbs, 2).map((t) => t.name).join(", ");
     return `<button class="chip${x.s.code === selected ? " sel" : ""}" data-code="${x.s.code}" style="background:hsla(${x.s.hue},62%,52%,.22)">${x.s.name}` +
       (withDelta ? `<span class="dlt">${x.prv.toFixed(0)}위→${x.rec.toFixed(0)}위</span>` : `<span class="dlt">3개월 ${fmt(x.cum)}%</span>`) +
       (lead ? `<span class="dlt">· ${lead}</span>` : "") + `</button>`;
   };
-  // 최근 3개월 주도 = 최근 완료 3개월 누적 수익률 상위(평균 순위는 꾸준히 중상위인 업종이 앞에 서서 주도 여부를 가리기 어려움)
-  rows.forEach((x) => { x.cum = (recent.reduce((a, m) => a * (1 + x.s.r[m] / 100), 1) - 1) * 100; });
   const leaders = rows.slice().sort((a, b) => b.cum - a.cum).slice(0, 3);
   const risers = rows.filter((x) => x.rec <= N / 2 && x.imp >= N * 0.25).sort((a, b) => b.imp - a.imp).slice(0, 3);
   const fallers = rows.filter((x) => x.prv <= N / 2 && x.rec >= N / 2 && -x.imp >= N * 0.25).sort((a, b) => a.imp - b.imp).slice(0, 3);
@@ -368,33 +497,90 @@ function renderSummary(sectors, rankOf, months, d) {
     line("🏆 3개월 누적 상위", leaders, false, "") +
     line("🔼 신규 부상", risers, true, "뚜렷한 부상 업종 없음") +
     line("🔽 주도 이탈", fallers, true, "뚜렷한 이탈 업종 없음") +
-    `<div class="sub" style="margin-top:8px;">비교 기간: 최근 3개월(~${lastMonth.slice(0, 4)}.${lastMonth.slice(4)}) 평균 순위 vs 그 앞 3개월 평균 순위(부상·이탈) · 누적 상위는 최근 완료 3개월 수익률을 이어서 곱한 값 · 업종 ${N}개 중` +
+    `<div class="sub" style="margin-top:8px;">부상·이탈: 표의 순위 기준(${basis === 1 ? "단월" : basis + "개월 누적"})으로 최근 3개월(~${ym(lastMonth)}) 평균 순위 vs 그 앞 3개월 평균 순위 · 누적 상위는 최근 완료 3개월 수익률을 이어서 곱한 값 · 업종 ${N}개 중` +
     (market === "FINE" ? " · 이름 뒤는 최근 완료 달에 가장 많이 오른 대표 종목" : "") + `</div>`;
   card.hidden = false;
 }
 
-// 선택한 업종의 월별 순위·수익률과 그 달 대표 상승 종목(세분 업종만)
-function renderDetail(sectors, rankOf, months, N) {
+// ---- 그래프 (SVG) ----
+function lineChart(title, months, series, opts) {
+  const W = 600, H = 170, padL = 38, padR = 10, padT = 10, padB = 20;
+  const vals = series.flatMap((s) => s.v.filter((x) => x != null));
+  if (!vals.length) return "";
+  let lo = Math.min(...vals, opts.base ?? Infinity), hi = Math.max(...vals, opts.base ?? -Infinity);
+  const span = hi - lo || 1; lo -= span * 0.06; hi += span * 0.06;
+  const X = (i) => padL + (i * (W - padL - padR)) / Math.max(1, months.length - 1);
+  const Y = (v) => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg">`;
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const v = lo + ((hi - lo) * t) / ticks, y = Y(v);
+    svg += `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="currentColor" opacity=".10"/><text x="${padL - 4}" y="${y + 3}" font-size="9" text-anchor="end" fill="currentColor" opacity=".6">${v.toFixed(0)}</text>`;
+  }
+  if (opts.base != null) svg += `<line x1="${padL}" x2="${W - padR}" y1="${Y(opts.base)}" y2="${Y(opts.base)}" stroke="currentColor" opacity=".45" stroke-dasharray="3 3"/>`;
+  months.forEach((mm, i) => {
+    if (i % Math.ceil(months.length / 6) === 0 || i === months.length - 1)
+      svg += `<text x="${X(i)}" y="${H - 5}" font-size="9" text-anchor="middle" fill="currentColor" opacity=".6">${mm.slice(2, 4)}.${mm.slice(4)}</text>`;
+  });
+  series.forEach((s) => {
+    let dpath = "", pen = false;
+    s.v.forEach((v, i) => { if (v == null) { pen = false; return; } dpath += `${pen ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)} `; pen = true; });
+    svg += `<path d="${dpath}" fill="none" stroke="${s.color}" stroke-width="${s.w || 2}" stroke-linejoin="round" stroke-linecap="round" ${s.dash ? 'stroke-dasharray="4 3"' : ""}/>`;
+    const li = s.v.map((v, i) => (v != null ? i : -1)).filter((i) => i >= 0).pop();
+    if (li != null) svg += `<circle cx="${X(li)}" cy="${Y(s.v[li])}" r="3" fill="${s.color}"/><text x="${X(li) - 4}" y="${Y(s.v[li]) - 6}" font-size="10" font-weight="700" text-anchor="end" fill="${s.color}">${s.v[li].toFixed(0)}</text>`;
+  });
+  svg += "</svg>";
+  const lgd = series.map((s) => `<span><i style="background:${s.color}"></i>${s.name}</span>`).join("");
+  return `<div class="chartbox"><div class="ct">${title}</div><div class="lgd">${lgd}</div>${svg}</div>`;
+}
+
+// 선택한 업종의 누적 수익률(업종 vs 시장)과 상대강도, 월별 순위·수익률·대표 종목
+function renderDetail(sectors, rankOf, months, N, d) {
   const card = document.getElementById("detailCard");
   const s = sectors.find((x) => x.code === selected);
   if (!s) { card.hidden = true; return; }
-  const d = cur();
   const off = d.months.length - months.length;
-  document.getElementById("detailTitle").textContent = s.name;
-  document.getElementById("detailSub").textContent = market === "FINE"
-    ? `코스피 시총 상위 ${s.n}종목 ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균 (업종 전체 ${s.total}종목) · 구성: ${s.stocks.map((t) => t.name).join(", ")}`
-    : "KRX 업종지수 · 표를 누를 때마다 같은 업종이 선택/해제됩니다";
   const fine = market === "FINE";
+  document.getElementById("detailTitle").textContent = s.name;
+  document.getElementById("detailSub").textContent = fine
+    ? `코스피 시총 상위 ${s.n}종목 ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균 (업종 전체 ${s.total}종목) · 구성: ${s.stocks.map((t) => t.name).join(", ")}`
+    : "KRX 업종지수 · 같은 업종을 다시 누르면 선택이 해제됩니다";
+
+  // 누적지수(표시 구간 시작을 100으로)와 상대강도
+  const bench = benchOf();
+  let charts = "";
+  if (bench) {
+    let a = 100, b = 100, started = false;
+    const sv = [], bv = [], rv = [];
+    months.forEach((mm, i) => {
+      const r = s.mm[i], br = bench[mm];
+      if (r == null || br == null) { sv.push(null); bv.push(null); rv.push(null); return; }
+      if (!started) { a = 100; b = 100; started = true; }
+      a *= 1 + r / 100; b *= 1 + br / 100;
+      sv.push(a); bv.push(b); rv.push((a / b) * 100);
+    });
+    const bn = market === "KOSDAQ" ? "코스닥" : "코스피";
+    charts = lineChart(`누적 수익률 (시작=100) · 업종 vs ${bn}`, months, [
+      { name: s.name, v: sv, color: `hsl(${s.hue},70%,42%)`, w: 2.4 }, { name: bn, v: bv, color: "#9ca3af", w: 1.8, dash: true }], { base: 100 }) +
+      lineChart(`상대강도 (업종 ÷ ${bn}, 시작=100) · 오르면 시장보다 강함`, months, [
+      { name: "상대강도", v: rv, color: "#d97706", w: 2.4 }], { base: 100 });
+  }
+  document.getElementById("charts").innerHTML = charts;
+
   const showContrib = fine && weight === "cap";
-  let html = `<thead><tr><th>월</th><th>순위</th><th>수익률</th>${fine ? "<th>그 달 많이 오른 종목</th>" : ""}</tr></thead><tbody>`;
+  const bLabel = basis === 1 ? "" : `${basis}개월 누적`;
+  let html = `<thead><tr><th>월</th><th>순위</th><th>단월</th>${basis === 1 ? "" : `<th>${bLabel}</th>`}${fine ? "<th>그 달 많이 오른 종목</th>" : ""}</tr></thead><tbody>`;
   const recentIdx = months.map((_, i) => i).slice(-12).reverse();
   recentIdx.forEach((m) => {
-    const mm = months[m], v = s.r[m];
+    const mm = months[m], v = s.mm[m], c = s.r[m];
     const rk = rankOf[s.code] && rankOf[s.code][m] != null ? `${rankOf[s.code][m] + 1}위/${N}` : "-";
     const lead = fine && v != null ? leadersOf(s, off + m, 3).map((t) => `<span class="lead">${t.name} <b class="${t.rets[off + m] >= 0 ? "up" : "down"}">${fmt(t.rets[off + m])}%</b></span>`).join("") : "";
-    html += `<tr class="${mm === selMonth ? "hl" : ""}"><td>${mm.slice(0, 4)}.${mm.slice(4)}${mm === d.partialMonth ? "*" : ""}</td><td>${rk}</td>` +
-            `<td>${v == null ? "-" : `<b class="${v >= 0 ? "up" : "down"}">${fmt(v)}%</b>`}</td>${fine ? `<td>${lead}` : ""}` +
-            (showContrib && v != null ? `<div class="tag-sub" style="margin-top:3px;">업종 수익률 기여(%p): ${contributorsOf(s, off + m, 2).map((x) => `${x.name} <b class="${x.c >= 0 ? "up" : "down"}">${x.c >= 0 ? "+" : ""}${x.c.toFixed(1)}</b>`).join(" · ")}</div>` : "") + (fine ? "</td>" : "") + `</tr>`;
+    html += `<tr class="${mm === selMonth ? "hl" : ""}"><td>${ym(mm)}${mm === d.partialMonth ? "*" : ""}</td><td>${rk}</td>` +
+            `<td>${v == null ? "-" : `<b class="${v >= 0 ? "up" : "down"}">${fmt(v)}%</b>`}</td>` +
+            (basis === 1 ? "" : `<td>${c == null ? "-" : `<b class="${c >= 0 ? "up" : "down"}">${fmt(c)}%</b>`}</td>`) +
+            (fine ? `<td>${lead}` : "") +
+            (showContrib && v != null ? `<div class="tag-sub" style="margin-top:3px;">업종 수익률 기여(%p): ${contributorsOf(s, off + m, 2).map((x) => `${x.name} <b class="${x.c >= 0 ? "up" : "down"}">${x.c >= 0 ? "+" : ""}${x.c.toFixed(1)}</b>`).join(" · ")}</div>` : "") +
+            (fine ? "</td>" : "") + `</tr>`;
   });
   html += "</tbody>";
   document.getElementById("detailTbl").innerHTML = html;
@@ -402,16 +588,18 @@ function renderDetail(sectors, rankOf, months, N) {
 }
 
 document.addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-market],button[data-range],button[data-top],button[data-weight]");
+  const b = e.target.closest("button[data-market],button[data-range],button[data-top],button[data-weight],button[data-basis]");
   if (b) {
     if (b.dataset.market) { market = b.dataset.market; selected = null; selMonth = null; }
     if (b.dataset.range) range = +b.dataset.range;
     if (b.dataset.top) topN = +b.dataset.top;
     if (b.dataset.weight) weight = b.dataset.weight;
-    document.querySelectorAll("button[data-weight]").forEach((x) => x.classList.toggle("active", x.dataset.weight === weight));
+    if (b.dataset.basis) basis = +b.dataset.basis;
     document.querySelectorAll("button[data-market]").forEach((x) => x.classList.toggle("active", x.dataset.market === market));
     document.querySelectorAll("button[data-range]").forEach((x) => x.classList.toggle("active", +x.dataset.range === range));
     document.querySelectorAll("button[data-top]").forEach((x) => x.classList.toggle("active", +x.dataset.top === topN));
+    document.querySelectorAll("button[data-weight]").forEach((x) => x.classList.toggle("active", x.dataset.weight === weight));
+    document.querySelectorAll("button[data-basis]").forEach((x) => x.classList.toggle("active", +x.dataset.basis === basis));
     render();
     return;
   }
@@ -434,6 +622,8 @@ document.getElementById("pick").addEventListener("change", (e) => {
 });
 window.addEventListener("resize", () => drawTrace());
 load();
+loadFine();
+render();
 </script>
 </body>
 </html>
