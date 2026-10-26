@@ -1247,6 +1247,26 @@ def breadth_compute():
     return info
 
 
+_down20_cache = {"ts": 0.0, "data": None}
+
+
+def down20_data():
+    """종베 페이지용: 현재 20일선 아래 비율(2분 캐시). (데이터, 에러문구)"""
+    now = time.time()
+    if _down20_cache["data"] and now - _down20_cache["ts"] < 120:
+        return _down20_cache["data"], ""
+    try:
+        info = breadth_compute()
+    except Exception as e:
+        if _down20_cache["data"]:
+            return _down20_cache["data"], ""
+        return None, str(e)[:120]
+    data = {**info, "up1": BREADTH_UP1, "up2": BREADTH_UP2, "down": BREADTH_DOWN,
+            "asOf": _kst_now().strftime("%m/%d %H:%M")}
+    _down20_cache.update(ts=now, data=data)
+    return data, ""
+
+
 def breadth_message(kind, info):
     """kind: up1 | up2 | release | test"""
     head = {"up1": f"📉 20 Down 알림 ({BREADTH_UP1:.0f}% 이상)", "up2": f"📉📉 20 Down 알림 ({BREADTH_UP2:.0f}% 이상)",
@@ -1528,6 +1548,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_kis_income()
         elif self.path.startswith("/api/ops/kis-raw"):
             self.handle_ops_kis_raw()
+        elif self.path.startswith("/api/market/down20"):
+            data, err = down20_data()
+            if data is None:
+                self.send_json(503, {"error": err})
+            else:
+                self.send_json(200, data)
         elif self.path.startswith("/api/ops/breadth"):
             self.handle_ops_breadth()
         elif self.path.startswith("/api/ops/sectors-fine"):

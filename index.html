@@ -115,6 +115,23 @@
   .rank-compare { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
   .rank-compare-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .rank-compare-label { font-size: 11px; color: var(--sub); width: 28px; flex-shrink: 0; }
+  .down20 { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px 8px; margin-top: 8px; }
+  .down20-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .down20-num { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .down20-badge { font-size: 12.5px; font-weight: 700; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--border); color: var(--sub); }
+  .down20-bar { position: relative; height: 10px; border-radius: 6px; background: var(--border); margin-top: 10px; overflow: visible; }
+  .down20-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 6px; background: var(--sub); }
+  .down20-bar b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--text); opacity: .35; }
+  .down20-scale { position: relative; height: 16px; font-size: 10.5px; color: var(--sub); }
+  .down20-scale span { position: absolute; transform: translateX(-50%); }
+  .down20-scale span:first-child { transform: translateX(-100%); }
+  .down20-scale span:last-child { transform: translateX(0); }
+  .down20.hot { border-color: var(--tl-red); background: color-mix(in srgb, var(--tl-red) 10%, transparent); box-shadow: 0 0 0 1px var(--tl-red) inset; }
+  .down20.hot .down20-num { color: var(--tl-red); }
+  .down20.hot .down20-badge { color: #fff; background: var(--tl-red); border-color: var(--tl-red); }
+  .down20.hot .down20-bar i { background: var(--tl-red); }
+  .down20.hot2 { background: color-mix(in srgb, var(--tl-red) 20%, transparent); animation: down20Pulse 1.6s ease-in-out infinite; }
+  @keyframes down20Pulse { 0%,100% { box-shadow: 0 0 0 1px var(--tl-red) inset; } 50% { box-shadow: 0 0 0 3px var(--tl-red) inset; } }
   .align-text { font-size: 11.5px; font-weight: 600; line-height: 1.5; margin: -2px 0 2px 36px; }
   .align-text .up { color: var(--up); } .align-text .down { color: var(--down); } .align-text .flat { color: var(--sub); }
   .badge {
@@ -429,6 +446,20 @@
         <canvas id="kospiFlowTrendChart" class="chart-lg" style="height:170px;"></canvas>
         <div class="legend" id="kospiFlowTrendLegend"></div>
         <div class="meta-row"><span id="kospiFlowTrendNote">-</span></div>
+      </div>
+      <div class="checklist-item">
+        <div class="checklist-title-row">
+          <div class="checklist-title">20 Down 지수 <span style="font-weight:400;color:var(--sub);font-size:12px;">· 코스피 종목 중 20일선 아래 비율</span></div>
+        </div>
+        <div class="down20" id="down20Box">
+          <div class="down20-top">
+            <span class="down20-num" id="down20Num">-</span>
+            <span class="down20-badge" id="down20Badge">확인 중</span>
+          </div>
+          <div class="down20-bar"><i id="down20Fill"></i><b style="left:80%"></b><b style="left:85%"></b><b style="left:90%"></b></div>
+          <div class="down20-scale"><span style="left:80%">80</span><span style="left:85%">85</span><span style="left:90%">90</span></div>
+          <div class="meta-row"><span id="down20Note">-</span></div>
+        </div>
       </div>
       <div class="error-msg" id="kospiError"></div>
     </div>
@@ -1487,6 +1518,29 @@ function updateSignalSummary(signals) {
   renderSignalSummary(signalSummaryEl, signalSummaryDotsEl, signalSummaryTextEl, signals);
 }
 
+async function updateDown20() {
+  const box = document.getElementById("down20Box");
+  try {
+    const d = await fetchJson("/api/market/down20");
+    const r = d.ratio;
+    document.getElementById("down20Num").textContent = r.toFixed(1) + "%";
+    document.getElementById("down20Fill").style.width = Math.min(100, r) + "%";
+    const hot = r >= d.up1, hot2 = r >= d.up2;
+    box.classList.toggle("hot", hot);
+    box.classList.toggle("hot2", hot2);
+    const badge = document.getElementById("down20Badge");
+    badge.textContent = hot2 ? `🔴 ${d.up2}% 이상 · 강한 20 Down` : hot ? `⚠ ${d.up1}% 이상 · 20 Down 알림 구간` : r <= d.down ? "20 Down 해제 구간" : "정상 범위";
+    const prev = d.prevRatio != null ? ` · 어제 마감 ${d.prevRatio.toFixed(1)}%` : "";
+    document.getElementById("down20Note").textContent =
+      `${d.below}/${d.total}종목이 20일선 아래${prev} · ${d.asOf} 기준 · 텔레그램 알림: ${d.up1}%·${d.up2}% 이상 / ${d.down}% 이하 해제 (평일 09:05~14:55)`;
+  } catch (e) {
+    box.classList.remove("hot", "hot2");
+    document.getElementById("down20Num").textContent = "-";
+    document.getElementById("down20Badge").textContent = "계산 중";
+    document.getElementById("down20Note").textContent = "종목별 데이터를 모으는 중이거나 불러오지 못했습니다 (서버를 방금 켰다면 1~2분 걸립니다)";
+  }
+}
+
 async function refreshAll() {
   refreshBtn.disabled = true;
   statusText.textContent = "갱신 중...";
@@ -1494,6 +1548,7 @@ async function refreshAll() {
   const [results, flowSignal] = await Promise.all([Promise.all(keys.map(updateCard)), updateKospiFlowTrend()]);
   updateMarketTradingValue();
   updateMarketBreadth();
+  updateDown20();
   const okCount = results.filter((r) => r.ok).length;
 
   updateSignalSummary([...results.flatMap((r) => r.signals), { signal: flowSignal, weight: WEIGHTS.macro.kospiFlow }]);
