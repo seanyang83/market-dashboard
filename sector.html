@@ -108,7 +108,7 @@
 
   <div class="card">
     <div class="controls">
-      <button class="btn active" data-market="FINE">세분 업종(코스피)</button>
+      <button class="btn active" data-market="FINE">세분 업종</button>
       <button class="btn" data-market="KOSDAQ">코스닥 업종</button>
       <button class="btn" data-market="KOSPI">코스피 업종(KRX)</button>
       <span class="sep"></span>
@@ -161,9 +161,9 @@
       상승은 빨강, 하락은 파랑
     </div>
     <div class="sub" style="margin-top:10px;" id="noteFine">
-      네이버 금융 79개 업종 중 <b>코스피 종목</b>만 사용 · 업종 수익률 = 업종 시가총액 상위 10종목(우선주·스팩 제외)의 그 달 수익률 평균
+      네이버 금융 79개 업종 사용 · <b>코스피·코스닥 종목 중 시가총액 <span id="minMvTxt">2,000</span>억원 이상</b> · 업종 수익률 = 업종 시가총액 상위 10종목(우선주·스팩 제외)의 그 달 수익률 평균
       (<b>시총 가중</b>은 종목 하나의 비중을 40%로 제한, <b>동일 가중</b>은 같은 비중) · 종목 하나가 -50%~+150%를 넘는 값은 잘라서 계산 ·
-      현재 구성 종목·현재 시총 기준이라 과거 상장폐지 종목은 빠져 있음 · 코스피 종목이 3개 미만인 업종(코스닥 중심 업종 포함)과 '기타'는 제외 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달
+      현재 구성 종목·현재 시총 기준이라 과거 상장폐지 종목은 빠져 있음 · 조건에 맞는 종목이 3개 미만인 업종과 '기타'는 제외 · 상대강도의 기준선은 코스피 · <span style="color:var(--accent)">파란 월(*)</span>은 오늘까지 진행 중인 달
     </div>
   </div>
 
@@ -271,6 +271,7 @@ function render() {
   document.getElementById("wtCtl").hidden = !fine;
   document.getElementById("noteKrx").hidden = fine;
   document.getElementById("noteFine").hidden = !fine;
+  if (FINE && FINE.minMv) document.getElementById("minMvTxt").textContent = FINE.minMv.toLocaleString("ko-KR");
   if (!d) {
     scroller.hidden = true; msg.hidden = false;
     ["summaryCard", "detailCard", "boardCard"].forEach((id) => { document.getElementById(id).hidden = true; });
@@ -281,7 +282,7 @@ function render() {
   }
   const bLabel = basis === 1 ? "단월" : `${basis}개월 누적`;
   document.getElementById("asOf").textContent = `기준 ${d.asOf} · 최근 ${d.months.length}개월` +
-    (fine ? ` · 업종마다 코스피 시총 상위 ${d.topN}종목 ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균` : "") + ` · 순위 기준: ${bLabel} 수익률`;
+    (fine ? ` · 업종마다 ${d.kospiOnly ? "코스피" : "코스피·코스닥"} 시총 상위 ${d.topN}종목(시총 ${(d.minMv || 0).toLocaleString("ko-KR")}억 이상) ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균` : "") + ` · 순위 기준: ${bLabel} 수익률`;
   document.getElementById("tblSub").textContent = `(위로 갈수록 ${bLabel} 수익률이 높음 · 칸의 %는 ${bLabel} 수익률 · 업종을 누르면 월별 순위 이동을 선으로 이어 줍니다)`;
   const all = sectorsOf();
   const total = d.months.length;
@@ -543,7 +544,7 @@ function renderDetail(sectors, rankOf, months, N, d) {
   const fine = market === "FINE";
   document.getElementById("detailTitle").textContent = s.name;
   document.getElementById("detailSub").textContent = fine
-    ? `코스피 시총 상위 ${s.n}종목 ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균 (업종 전체 ${s.total}종목) · 구성: ${s.stocks.map((t) => t.name).join(", ")}`
+    ? `${FINE.kospiOnly ? "코스피" : "코스피·코스닥"} 시총 상위 ${s.n}종목 ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균 (업종 전체 ${s.total}종목) · 구성: ${s.stocks.map((t) => t.name + (t.kq ? "(코)" : "")).join(", ")}  ※ (코)=코스닥`
     : "KRX 업종지수 · 같은 업종을 다시 누르면 선택이 해제됩니다";
 
   // 누적지수(표시 구간 시작을 100으로)와 상대강도
