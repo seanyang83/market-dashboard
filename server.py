@@ -1130,6 +1130,190 @@ def fine_sector_data():
     return None, err or ("세분 업종을 모으는 중입니다" + (f" ({prog})" if prog else "") + " — 처음 한 번은 2~3분 걸립니다")
 
 
+# --- 코스피 "20일선 아래 종목 비율" 알림 (장중 09:05~14:55) ---
+# 코스피 보통주+우선주(네이버 stockEndType=stock, 약 940종목) 중 현재가가 20일 이동평균 아래인 종목의 비율.
+# 20일선 = (어제까지 직전 19일 종가 + 오늘 현재가) / 20. 종목별 일봉은 하루 한 번(08:20 이후) 모아 두고, 장중에는 시세 목록(100종목씩 10번)만 받는다.
+# 알림: 85% 이상 → "20 Down 알림 (85% 이상)", 90% 이상 → "20 Down 알림 (90% 이상)", 80% 이하로 내려오면 "20 Down 알림 해제 (80% 이하)" 한 번.
+# 상태(level 0/1/2)는 메모리에만 있다. 서버를 장중에 다시 켜면 그때 비율로 조용히 초기화(중복 방지), 장 시간 밖이면 어제 마감 비율로 초기화.
+BREADTH_UP1, BREADTH_UP2, BREADTH_DOWN = 85.0, 90.0, 80.0
+BREADTH_WINDOW = (9 * 60 + 5, 14 * 60 + 55)      # 알림을 보내는 시간대(분)
+BREADTH_INTERVAL = 10 * 60                        # 확인 간격(초). 서버 부담이 크면 30분(1800)으로
+BREADTH_CACHE_FROM = 8 * 60 + 20                  # 이 시각 이후 하루 한 번 종목별 일봉을 새로 모은다
+_breadth = {"cache": None, "building": False, "level": None, "last_check": 0.0, "last_check_at": None, "boot_in_window": False}
+_breadth_lock = threading.Lock()
+_breadth_msg_lock = threading.Lock()
+
+
+def _breadth_universe():
+    """코스피 종목 목록 + 현재가: [(code, name, price)]"""
+    out, page, total = [], 1, None
+    while True:
+        d = _naver_get_json(f"https://m.stock.naver.com/api/stocks/marketValue/KOSPI?page={page}&pageSize=100")
+        got = d.get("stocks") or []
+        total = d.get("totalCount", 0)
+        for s in got:
+            if s.get("stockEndType") != "stock":
+                continue
+            try:
+                price = float(str(s.get("closePrice") or "0").replace(",", ""))
+            except ValueError:
+                continue
+            if price > 0:
+                out.append((str(s["itemCode"]), str(s.get("stockName") or ""), price))
+        if not got or page * 100 >= total or page >= 40:
+            break
+        page += 1
+    return out
+
+
+def _breadth_stock_closes(code, start, end):
+    url = f"{NAVER_SISEJSON_URL}?symbol={code}&requestType=1&startTime={start}&endTime={end}&timeframe=day"
+    req = urllib.request.Request(url, headers=NAVER_HEADERS)
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        body = resp.read().decode("utf-8", errors="replace")
+    return [(str(r[0]), float(r[4])) for r in ast.literal_eval(body.strip())[1:]]
+
+
+def _breadth_build_cache():
+    """종목별 최근 종가(오늘 봉은 뺀 어제까지 20개)를 모은다. 약 65초."""
+    now = _kst_now()
+    today = now.strftime("%Y%m%d")
+    start = (now - timedelta(days=60)).strftime("%Y%m%d")
+    stocks = {}
+    for code, name, _price in _breadth_universe():
+        try:
+            rows = [(d, c) for d, c in _breadth_stock_closes(code, start, today) if d != today]    # 오늘(장중) 봉은 제외
+        except Exception:
+            continue
+        if len(rows) >= 20:
+            stocks[code] = {"name": name, "closes": [c for _, c in rows[-20:]], "last": rows[-1][0]}
+        time.sleep(0.02)
+    if len(stocks) < 500:
+        raise ValueError(f"종목 일봉을 충분히 모으지 못했습니다({len(stocks)}개)")
+    return {"built_for": today, "stocks": stocks}
+
+
+def _breadth_cache_async():
+    with _breadth_lock:
+        if _breadth["building"]:
+            return
+        _breadth["building"] = True
+
+    def work():
+        try:
+            cache = _breadth_build_cache()
+            with _breadth_lock:
+                _breadth["cache"] = cache
+            print(f"breadth cache built: {len(cache['stocks'])} stocks")
+        except Exception as e:
+            print(f"breadth cache failed: {e}")
+        finally:
+            with _breadth_lock:
+                _breadth["building"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def breadth_compute():
+    """지금 시세로 계산: {"ratio","below","total","prevRatio","kospi":{price,pct}}"""
+    with _breadth_lock:
+        cache = _breadth["cache"]
+    if not cache:
+        raise ValueError("종목 일봉을 아직 모으는 중입니다")
+    live = _breadth_universe()
+    below = total = 0
+    for code, _name, price in live:
+        s = cache["stocks"].get(code)
+        if not s:
+            continue
+        ma20 = (sum(s["closes"][-19:]) + price) / 20
+        total += 1
+        if price < ma20:
+            below += 1
+    pb = pt = 0
+    for s in cache["stocks"].values():             # 어제 마감 기준 비율(어제 종가가 어제까지 20일선 아래인 종목)
+        c = s["closes"]
+        pt += 1
+        if c[-1] < sum(c) / 20:
+            pb += 1
+    if not total:
+        raise ValueError("현재가를 받지 못했습니다")
+    info = {"ratio": below / total * 100, "below": below, "total": total, "prevRatio": pb / pt * 100 if pt else None}
+    try:
+        q = _local_get("/api/kospi/quote")
+        info["kospi"] = {"price": q["price"], "pct": (q["price"] / q["prevClose"] - 1) * 100 if q.get("prevClose") else None}
+    except Exception:
+        info["kospi"] = None
+    return info
+
+
+def breadth_message(kind, info):
+    """kind: up1 | up2 | release | test"""
+    head = {"up1": f"📉 20 Down 알림 ({BREADTH_UP1:.0f}% 이상)", "up2": f"📉📉 20 Down 알림 ({BREADTH_UP2:.0f}% 이상)",
+            "release": f"✅ 20 Down 알림 해제 ({BREADTH_DOWN:.0f}% 이하)",
+            "test": "📊 코스피 20일선 아래 종목 비율 (현재)"}[kind]
+    lines = [head, f"코스피 20일선 아래 종목 {info['ratio']:.1f}% ({info['below']}/{info['total']}종목)"]
+    k = info.get("kospi")
+    if k:
+        lines.append(f"코스피 {k['price']:,.2f}" + (f" ({k['pct']:+.2f}%)" if k.get("pct") is not None else ""))
+    if info.get("prevRatio") is not None:
+        lines.append(f"어제 마감 비율 {info['prevRatio']:.1f}%")
+    lines.append(f"{_kst_now().strftime('%H:%M')} 기준 · 알림 시간 09:05~14:55")
+    return "\n".join(lines)
+
+
+def run_breadth_check():
+    """한 번 확인하고 필요하면 알림. 보낸 메시지 종류(없으면 None)를 돌려준다."""
+    info = breadth_compute()
+    ratio = info["ratio"]
+    with _breadth_msg_lock:
+        level = _breadth["level"]
+        if level is None:      # 첫 확인: 장중에 켠 서버는 지금 비율로 조용히 초기화, 장 시간 밖에서 켠 서버는 어제 마감 비율로 초기화
+            base = ratio if _breadth["boot_in_window"] else (info["prevRatio"] if info["prevRatio"] is not None else ratio)
+            level = 2 if base >= BREADTH_UP2 else (1 if base >= BREADTH_UP1 else 0)
+            if _breadth["boot_in_window"]:
+                _breadth["level"] = level
+                return None
+        kind = None
+        if ratio >= BREADTH_UP2 and level < 2:
+            level, kind = 2, "up2"
+        elif ratio >= BREADTH_UP1 and level == 0:
+            level, kind = 1, "up1"
+        elif ratio <= BREADTH_DOWN and level > 0:
+            level, kind = 0, "release"
+        _breadth["level"] = level
+    if kind:
+        send_telegram_message(breadth_message(kind, info))
+        print(f"breadth alert sent: {kind} {ratio:.1f}%")
+    return kind
+
+
+def _breadth_scheduler():
+    boot = _kst_now()
+    mins0 = boot.hour * 60 + boot.minute
+    _breadth["boot_in_window"] = boot.weekday() < 5 and BREADTH_WINDOW[0] <= mins0 <= BREADTH_WINDOW[1]
+    first = True
+    while True:
+        try:
+            now = _kst_now()
+            mins = now.hour * 60 + now.minute
+            today = now.strftime("%Y%m%d")
+            with _breadth_lock:
+                cache, building = _breadth["cache"], _breadth["building"]
+            if (cache is None or cache["built_for"] != today) and not building and (first or mins >= BREADTH_CACHE_FROM):
+                _breadth_cache_async()
+            first = False
+            in_window = now.weekday() < 5 and BREADTH_WINDOW[0] <= mins <= BREADTH_WINDOW[1]
+            if (in_window and cache is not None and TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+                    and time.time() - _breadth["last_check"] >= BREADTH_INTERVAL and is_krx_trading_day()):
+                _breadth["last_check"] = time.time()
+                _breadth["last_check_at"] = now.strftime("%H:%M")
+                run_breadth_check()
+        except Exception as e:
+            print(f"breadth scheduler error: {e}")
+        time.sleep(20)
+
+
 # 종목 일별 수급(최근 7거래일 표)은 "오늘을 뺀 지난 거래일"만 담기 때문에 하루 안에는 값이 변하지 않는다
 # (어제 값은 어제 20시 NXT 마감 뒤 확정). 그래서 KST 날짜가 바뀔 때까지 종목별로 메모리에 보관하고,
 # 한투 호출(1.3초)은 종목당 하루 한 번만 한다. 한투 성공 응답만 저장(네이버 대체 응답은 저장 안 함).
@@ -1344,6 +1528,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_kis_income()
         elif self.path.startswith("/api/ops/kis-raw"):
             self.handle_ops_kis_raw()
+        elif self.path.startswith("/api/ops/breadth"):
+            self.handle_ops_breadth()
         elif self.path.startswith("/api/ops/sectors-fine"):
             if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
                 self.send_json(403, {"error": "forbidden"})
@@ -1920,6 +2106,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             out["program"] = {"error": str(e)}
         self.send_json(200, out)
+
+    def handle_ops_breadth(self):
+        # 점검용: 코스피 "20일선 아래 종목 비율"을 지금 계산해서 보여 준다(상태는 바꾸지 않음). send=1이면 [테스트]로 텔레그램 발송.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        try:
+            info = breadth_compute()
+            text = breadth_message("test", info)
+            sent = False
+            if self.query_param("send") == "1":
+                send_telegram_message("[테스트] " + text)
+                sent = True
+            with _breadth_lock:
+                state = {"level": _breadth["level"], "cacheDate": (_breadth["cache"] or {}).get("built_for"),
+                         "universe": len((_breadth["cache"] or {}).get("stocks", {})), "lastCheck": _breadth["last_check_at"]}
+            self.send_json(200, {"info": info, "state": state, "text": text, "sent": sent})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:300]})
 
     def handle_ops_regime(self):
         # 점검/테스트용: kind=morning|pre|change 메시지를 만들어 보여준다. send=1이면 텔레그램으로도 보낸다.
@@ -3547,6 +3752,7 @@ if __name__ == "__main__":
     threading.Thread(target=_summary_scheduler, daemon=True).start()
     threading.Thread(target=_alert_scheduler, daemon=True).start()
     threading.Thread(target=_regime_scheduler, daemon=True).start()
+    threading.Thread(target=_breadth_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()
