@@ -952,6 +952,8 @@ def sector_monthly_data():
 # 각 종목의 월 수익률도 같이 보내서 화면에서 "그 달 대표 상승 종목"을 보여 준다. 현재 구성 종목 기준이라 생존 편향이 조금 있다.
 FINE_TOP_N = 10
 FINE_MIN_STOCKS = 3
+FINE_KOSPI_ONLY = True              # 코스피 종목만(코스닥 소형주의 큰 등락이 업종 흐름을 흐리는 것을 막는다)
+FINE_WEIGHT_CAP = 0.4               # 시총 가중 평균에서 종목 하나의 최대 비중
 FINE_RET_CLIP = (-50.0, 150.0)      # 종목 한 개의 극단값이 업종 평균을 흔들지 않게 자른다(%)
 FINE_SKIP_GROUPS = {25}              # '기타'(1,500여 종목 잡다한 묶음)
 FINE_CACHE_TTL = 12 * 3600
@@ -987,13 +989,15 @@ def _fine_top_stocks(group_no, total):
         code, name = str(s.get("itemCode") or ""), str(s.get("stockName") or "")
         if s.get("stockEndType") != "stock" or not re.fullmatch(r"\d{5}0", code) or "스팩" in name:
             continue                # 우선주(코드 끝자리가 0이 아님)·코넥스·스팩 제외
+        if FINE_KOSPI_ONLY and str(s.get("sosok")) != "0":
+            continue                # sosok: 0=코스피, 1=코스닥, 2=코넥스
         try:
             mv = float(str(s.get("marketValue") or "0").replace(",", ""))
         except ValueError:
             mv = 0.0
         out.append((mv, code, name))
     out.sort(reverse=True)
-    return [(code, name) for _, code, name in out[:FINE_TOP_N]]
+    return [(code, name, mv) for mv, code, name in out[:FINE_TOP_N]]
 
 
 def _fine_month_closes(code, start_ym):
@@ -1040,7 +1044,7 @@ def _build_fine_data():
             print(f"fine group {no} {name} failed: {e}")
             continue
         stock_rows = []
-        for code, sname in top:
+        for code, sname, mv in top:
             try:
                 closes = _fine_month_closes(code, ext[0])
             except Exception as e:
@@ -1052,20 +1056,30 @@ def _build_fine_data():
                 c1, c0 = closes.get(mth), closes.get(prev_of[mth])
                 rets.append(round((c1 / c0 - 1) * 100, 2) if c1 and c0 else None)
             if sum(1 for r in rets if r is not None) >= 6:
-                stock_rows.append({"code": code, "name": sname, "rets": rets})
+                stock_rows.append({"code": code, "name": sname, "mv": mv, "rets": rets})
         if len(stock_rows) < FINE_MIN_STOCKS:
             continue
         lo, hi = FINE_RET_CLIP
-        ind_rets = []
+        ind_rets, ind_rets_eq = [], []
         for i in range(len(months)):
-            vals = [min(hi, max(lo, s["rets"][i])) for s in stock_rows if s["rets"][i] is not None]
-            ind_rets.append(round(sum(vals) / len(vals), 2) if len(vals) >= FINE_MIN_STOCKS else None)
-        industries.append({"no": no, "name": name, "total": total, "n": len(stock_rows), "rets": ind_rets, "stocks": stock_rows})
+            vals = [(min(hi, max(lo, s["rets"][i])), s["mv"]) for s in stock_rows if s["rets"][i] is not None]
+            if len(vals) < FINE_MIN_STOCKS:
+                ind_rets.append(None); ind_rets_eq.append(None)
+                continue
+            ind_rets_eq.append(round(sum(r for r, _ in vals) / len(vals), 2))
+            # 시총 가중 평균: 한 종목 비중이 FINE_WEIGHT_CAP을 넘지 않게 자르고 다시 맞춘다(그 달 수익률이 있는 종목끼리)
+            tot = sum(m for _, m in vals) or 1.0
+            w = [min(FINE_WEIGHT_CAP, m / tot) for _, m in vals]
+            ws = sum(w)
+            ind_rets.append(round(sum(r * x for (r, _), x in zip(vals, w)) / ws, 2))
+        industries.append({"no": no, "name": name, "total": total, "n": len(stock_rows), "rets": ind_rets,
+                           "retsEq": ind_rets_eq, "stocks": stock_rows})
     if not industries:
         raise ValueError("세분 업종 데이터를 만들지 못했습니다")
     now = datetime.now(timezone.utc) + timedelta(hours=9)
     return {"asOf": now.strftime("%Y-%m-%d %H:%M"), "months": months, "partialMonth": now.strftime("%Y%m"),
-            "topN": FINE_TOP_N, "industries": industries}
+            "topN": FINE_TOP_N, "kospiOnly": FINE_KOSPI_ONLY, "weightCap": FINE_WEIGHT_CAP,
+            "industries": industries}
 
 
 def _fine_refresh_async():
