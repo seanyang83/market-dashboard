@@ -2060,7 +2060,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         names = ["quote", "history", "investors", "theme", "investor-live", "program-trade"]
         # 종목 패널이 그 뒤에 순서대로 부르는 동일 산업군 조회(미국 ETF 시세, 국내 ETF 시세)도 같이 잰다.
         extra = {"us-proxy": "/api/quote?symbol=SOXX&range=1d&interval=2m",
-                 "kr-proxy": "/api/stock/quote?code=091160"}
+                 "kr-proxy": "/api/stock/quote?code=091160",
+                 "kospi-quote": "/api/kospi/quote", "kospi-history": "/api/kospi/history",
+                 "flow-trend": "/api/kospi/flow-trend", "trading-value": "/api/market/trading-value",
+                 "breadth": "/api/market/breadth", "volume-rank": "/api/market/volume-rank",
+                 "down20": "/api/market/down20"}
         out = {"code": code, "cold_ms": {}, "warm_ms": {}}
 
         def timed(n):
