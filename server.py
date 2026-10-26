@@ -27,6 +27,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 
 HOST = os.environ.get("HOST", "0.0.0.0")
@@ -1144,25 +1145,31 @@ _breadth_lock = threading.Lock()
 _breadth_msg_lock = threading.Lock()
 
 
+def _breadth_page(page):
+    d = _naver_get_json(f"https://m.stock.naver.com/api/stocks/marketValue/KOSPI?page={page}&pageSize=100")
+    out = []
+    for s in d.get("stocks") or []:
+        if s.get("stockEndType") != "stock":
+            continue
+        try:
+            price = float(str(s.get("closePrice") or "0").replace(",", ""))
+        except ValueError:
+            continue
+        if price > 0:
+            out.append((str(s["itemCode"]), str(s.get("stockName") or ""), price))
+    return out, int(d.get("totalCount") or 0)
+
+
 def _breadth_universe():
-    """코스피 종목 목록 + 현재가: [(code, name, price)]"""
-    out, page, total = [], 1, None
-    while True:
-        d = _naver_get_json(f"https://m.stock.naver.com/api/stocks/marketValue/KOSPI?page={page}&pageSize=100")
-        got = d.get("stocks") or []
-        total = d.get("totalCount", 0)
-        for s in got:
-            if s.get("stockEndType") != "stock":
-                continue
-            try:
-                price = float(str(s.get("closePrice") or "0").replace(",", ""))
-            except ValueError:
-                continue
-            if price > 0:
-                out.append((str(s["itemCode"]), str(s.get("stockName") or ""), price))
-        if not got or page * 100 >= total or page >= 40:
-            break
-        page += 1
+    """코스피 종목 목록 + 현재가: [(code, name, price)]. 목록에 ETF 등까지 2,500개(25쪽)라서 쪽을 동시에 받는다
+    (Render에서 한 쪽이 약 1초라 순서대로 받으면 27초가 걸렸다)."""
+    first, total = _breadth_page(1)
+    pages = min(40, (total + 99) // 100)
+    out = list(first)
+    if pages > 1:
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for part, _ in ex.map(_breadth_page, range(2, pages + 1)):
+                out.extend(part)
     return out
 
 
@@ -1180,14 +1187,20 @@ def _breadth_build_cache():
     today = now.strftime("%Y%m%d")
     start = (now - timedelta(days=60)).strftime("%Y%m%d")
     stocks = {}
-    for code, name, _price in _breadth_universe():
+
+    def one(item):
+        code, name, _price = item
         try:
             rows = [(d, c) for d, c in _breadth_stock_closes(code, start, today) if d != today]    # 오늘(장중) 봉은 제외
         except Exception:
-            continue
-        if len(rows) >= 20:
-            stocks[code] = {"name": name, "closes": [c for _, c in rows[-20:]], "last": rows[-1][0]}
-        time.sleep(0.02)
+            return None
+        return (code, name, rows) if len(rows) >= 20 else None
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        for res in ex.map(one, _breadth_universe()):
+            if res:
+                code, name, rows = res
+                stocks[code] = {"name": name, "closes": [c for _, c in rows[-20:]], "last": rows[-1][0]}
     if len(stocks) < 500:
         raise ValueError(f"종목 일봉을 충분히 모으지 못했습니다({len(stocks)}개)")
     return {"built_for": today, "stocks": stocks}
@@ -1250,21 +1263,32 @@ def breadth_compute():
 _down20_cache = {"ts": 0.0, "data": None}
 
 
+_down20_lock = threading.Lock()
+
+
 def down20_data():
-    """종베 페이지용: 현재 20일선 아래 비율(2분 캐시). (데이터, 에러문구)"""
+    """종베 페이지용: 현재 20일선 아래 비율(2분 캐시). 이미 누가 계산 중이면 기다리지 않고 지난 값을 준다. (데이터, 에러문구)"""
     now = time.time()
     if _down20_cache["data"] and now - _down20_cache["ts"] < 120:
         return _down20_cache["data"], ""
-    try:
-        info = breadth_compute()
-    except Exception as e:
+    if not _down20_lock.acquire(blocking=False):          # 새로고침이 겹쳐도 계산은 한 번만
         if _down20_cache["data"]:
             return _down20_cache["data"], ""
-        return None, str(e)[:120]
-    data = {**info, "up1": BREADTH_UP1, "up2": BREADTH_UP2, "down": BREADTH_DOWN,
-            "asOf": _kst_now().strftime("%m/%d %H:%M")}
-    _down20_cache.update(ts=now, data=data)
-    return data, ""
+        with _down20_lock:                                 # 첫 계산이면 끝나길 기다렸다가 그 결과를 쓴다
+            return (_down20_cache["data"], "") if _down20_cache["data"] else (None, "계산 중")
+    try:
+        try:
+            info = breadth_compute()
+        except Exception as e:
+            if _down20_cache["data"]:
+                return _down20_cache["data"], ""
+            return None, str(e)[:120]
+        data = {**info, "up1": BREADTH_UP1, "up2": BREADTH_UP2, "down": BREADTH_DOWN,
+                "asOf": _kst_now().strftime("%m/%d %H:%M")}
+        _down20_cache.update(ts=time.time(), data=data)
+        return data, ""
+    finally:
+        _down20_lock.release()
 
 
 def breadth_message(kind, info):
