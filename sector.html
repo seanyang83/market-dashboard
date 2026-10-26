@@ -66,6 +66,7 @@
   .cell .nm { display: block; font-weight: 600; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cell .pc { display: block; font-size: 10.5px; font-variant-numeric: tabular-nums; }
   .pc.up, b.up { color: var(--up); } .pc.down, b.down { color: var(--down); }
+  tr.pinrow td { border-top: 2px dashed var(--border); padding-top: 6px; }
   .dim .cell { opacity: .22; }
   .dim .cell.sel { opacity: 1; box-shadow: 0 0 0 2px var(--text) inset; }
   svg.trace { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 1; }
@@ -129,8 +130,9 @@
         <button class="btn" data-weight="eq" title="구성 종목을 같은 비중으로 평균">동일 가중</button>
       </span>
       <span id="topCtl">
-        <button class="btn" data-top="20">상위 20</button>
-        <button class="btn active" data-top="30">상위 30</button>
+        <button class="btn" data-top="10">상위 10</button>
+        <button class="btn active" data-top="20">상위 20</button>
+        <button class="btn" data-top="30">상위 30</button>
         <button class="btn" data-top="999">전체</button>
       </span>
     </div>
@@ -177,7 +179,7 @@
 
 <script>
 let DATA = null, FINE = null, fineLoading = false;
-let market = "FINE", range = 36, topN = 30, selected = null, selMonth = null, weight = "cap", basis = 3;
+let market = "FINE", range = 36, topN = 20, selected = null, selMonth = null, weight = "cap", basis = 3;
 
 const fmt = (v) => (v >= 0 ? "+" : "") + v.toFixed(1);
 const hueOf = (i, n) => Math.round((i * 360) / n + 8) % 360;
@@ -267,7 +269,6 @@ function render() {
   const d = cur();
   const msg = document.getElementById("msg"), scroller = document.getElementById("scroller");
   const fine = market === "FINE";
-  document.getElementById("topCtl").hidden = !fine;
   document.getElementById("wtCtl").hidden = !fine;
   document.getElementById("noteKrx").hidden = fine;
   document.getElementById("noteFine").hidden = !fine;
@@ -283,7 +284,6 @@ function render() {
   const bLabel = basis === 1 ? "단월" : `${basis}개월 누적`;
   document.getElementById("asOf").textContent = `기준 ${d.asOf} · 최근 ${d.months.length}개월` +
     (fine ? ` · 업종마다 ${d.kospiOnly ? "코스피" : "코스피·코스닥"} 시총 상위 ${d.topN}종목(시총 ${(d.minMv || 0).toLocaleString("ko-KR")}억 이상) ${weight === "cap" ? "시총 가중" : "동일 가중"} 평균` : "") + ` · 순위 기준: ${bLabel} 수익률`;
-  document.getElementById("tblSub").textContent = `(위로 갈수록 ${bLabel} 수익률이 높음 · 칸의 %는 ${bLabel} 수익률 · 업종을 누르면 월별 순위 이동을 선으로 이어 줍니다)`;
   const all = sectorsOf();
   const total = d.months.length;
   const from = total - range;
@@ -291,6 +291,7 @@ function render() {
   const sectors = all.map((s) => ({ ...s, r: s.c.slice(from), mm: s.m.slice(from) }));
   const N = sectors.length;
   if (!N) { msg.hidden = false; msg.textContent = "이 시장의 업종 데이터가 없습니다"; return; }
+  document.getElementById("tblSub").textContent = `(위로 갈수록 ${bLabel} 수익률이 높음 · 상위 ${topN >= N ? "전체" : topN + "위"}까지 표시 · 칸의 %는 ${bLabel} 수익률 · 업종을 누르면 월별 순위 이동을 선으로 이어 주고, 표시 순위 밖으로 밀린 달은 표 맨 아래에 따로 보여 줍니다)`;
 
   // 월별 순위(0부터): 기준 수익률 높은 순
   const rankOf = {};      // code -> [rank per month]
@@ -307,7 +308,7 @@ function render() {
     sectors.slice().sort((a, b) => a.name.localeCompare(b.name, "ko")).map((s) => `<option value="${s.code}"${s.code === selected ? " selected" : ""}>${s.name}</option>`).join("");
 
   // 표
-  const rows = fine ? Math.min(topN, N) : N;
+  const rows = Math.min(topN, N);
   const partial = d.partialMonth;
   let html = "<thead><tr><th class='rk'>순위</th>";
   months.forEach((mm) => {
@@ -326,6 +327,21 @@ function render() {
               `<span class="nm">${s.name}</span><span class="pc ${v >= 0 ? "up" : "down"}">${fmt(v)}%</span></div></td>`;
     });
     html += "</tr>";
+  }
+  // 선택한 업종이 표시 순위(rows) 밖으로 밀린 달은 표 맨 아래에 따로 붙여서 계속 따라갈 수 있게 한다
+  const selS = selected ? sectors.find((x) => x.code === selected) : null;
+  if (selS) {
+    const out = months.map((_, m) => (rankOf[selS.code] && rankOf[selS.code][m] != null && rankOf[selS.code][m] >= rows ? rankOf[selS.code][m] : null));
+    if (out.some((x) => x != null)) {
+      html += `<tr class="pinrow"><td class="rk" title="선택한 업종 (표시 순위 밖인 달)">▼</td>`;
+      months.forEach((_, m) => {
+        if (out[m] == null) { html += "<td class='c'></td>"; return; }
+        const v = selS.r[m];
+        html += `<td class="c"><div class="cell sel" data-code="${selS.code}" data-m="${m}" style="background:hsla(${selS.hue},62%,52%,0.5)" title="${selS.name} ${bLabel} ${fmt(v)}% (${out[m] + 1}위)">` +
+                `<span class="nm">${selS.name}</span><span class="pc ${v >= 0 ? "up" : "down"}">${fmt(v)}% · ${out[m] + 1}위</span></div></td>`;
+      });
+      html += "</tr>";
+    }
   }
   html += "</tbody>";
   document.getElementById("tbl").innerHTML = html;
