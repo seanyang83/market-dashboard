@@ -1449,12 +1449,21 @@ def _breadth_scheduler():
 
 
 # --- 주봉 4-13-26-52 정배열 종목 목록 (/leader "정배열 목록" 탭) ---
-# 평일 마감 후(ALIGN_SCAN_FROM) 하루 한 번 종목마다 주봉을 받아 정배열 여부·연속 주수를 판정해 메모리에 둔다(화면은 이 결과만 읽음).
+# 보통주만(우선주 제외). 평일 마감 후(ALIGN_SCAN_FROM) 하루 한 번 종목마다 주봉을 받아 정배열 여부·연속 주수를 판정해 메모리에 둔다(화면은 이 결과만 읽음).
 # 서버가 재시작되면 메모리가 비므로 부팅 직후 한 번 바로 스캔한다(3~5분, 그동안 화면은 "계산 중").
 ALIGN_MARKETS = ["KOSPI", "KOSDAQ"]
 ALIGN_SCAN_FROM = 16 * 60 + 35       # 이 시각(KST 분) 이후 하루 한 번
 _align = {"result": None, "building": False, "progress": None, "error": None}
 _align_lock = threading.Lock()
+
+
+_PREFERRED_NAME = re.compile(r"우[A-Z]?(\(전환\))?$")
+
+
+def _is_preferred(code, name):
+    """우선주: 종목코드 끝자리가 0이 아니고(보통주는 0) 이름이 '…우', '…우B', '…2우B', '…우(전환)'로 끝난다.
+    둘 다 봐야 한다 — 이름만 보면 '성우'가, 코드만 보면 '이오플로우' 같은 보통주가 우선주로 잘못 걸린다."""
+    return code[-1:] != "0" and bool(_PREFERRED_NAME.search(name))
 
 
 def _align_page(market, page):
@@ -1468,8 +1477,9 @@ def _align_page(market, page):
             cap = float(str(s.get("marketValue") or "0").replace(",", ""))   # 억원
         except ValueError:
             continue
-        if price > 0:
-            out.append((str(s["itemCode"]), str(s.get("stockName") or ""), price, cap, market))
+        code, name = str(s["itemCode"]), str(s.get("stockName") or "")
+        if price > 0 and not _is_preferred(code, name):
+            out.append((code, name, price, cap, market))
     return out, int(d.get("totalCount") or 0)
 
 

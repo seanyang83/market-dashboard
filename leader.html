@@ -580,7 +580,7 @@ async function loadAlign() {
     alLoaded = true;
     const mk = d.markets.map((m) => (m === "KOSPI" ? "코스피" : "코스닥")).join("+");
     const base = d.finalFor ? "" : " · 마감 전 스캔이라 오늘 밤 마감 후 다시 갱신됩니다";
-    $("alSummary").textContent = `${mk} 보통주·우선주 ${fmt(d.total)}종목 중 정배열 ${fmt(d.items.length)}개 · ${d.builtAt} 기준 (매 평일 16:35 이후 갱신)${base}`;
+    $("alSummary").textContent = `${mk} 보통주 ${fmt(d.total)}종목 중 정배열 ${fmt(d.items.length)}개 · ${d.builtAt} 기준 (매 평일 16:35 이후 갱신)${base}`;
     $("alBody").innerHTML = d.items.map((it, i) => `
       <tr data-code="${it.code}" data-name="${it.name}">
         <td class="nm"><span class="rk">${i + 1}</span>${it.name}<small>${it.code}</small></td>
