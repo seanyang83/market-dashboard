@@ -1451,7 +1451,7 @@ def _breadth_scheduler():
 # --- 주봉 4-13-26-52 정배열 종목 목록 (/leader "정배열 목록" 탭) ---
 # 평일 마감 후(ALIGN_SCAN_FROM) 하루 한 번 종목마다 주봉을 받아 정배열 여부·연속 주수를 판정해 메모리에 둔다(화면은 이 결과만 읽음).
 # 서버가 재시작되면 메모리가 비므로 부팅 직후 한 번 바로 스캔한다(3~5분, 그동안 화면은 "계산 중").
-ALIGN_MARKETS = ["KOSPI"]            # 테스트 단계: 코스피만. 코스닥까지 하려면 ["KOSPI", "KOSDAQ"]
+ALIGN_MARKETS = ["KOSPI", "KOSDAQ"]
 ALIGN_SCAN_FROM = 16 * 60 + 35       # 이 시각(KST 분) 이후 하루 한 번
 _align = {"result": None, "building": False, "progress": None, "error": None}
 _align_lock = threading.Lock()
