@@ -83,6 +83,11 @@
   table.run { min-width: 0; font-size: 11.5px; }
   table.run small { white-space: normal; }
   table.run th, table.run td { padding: 6px 4px; }
+  .earn-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .earn-head h2 { margin: 0; }
+  .etabs { display: flex; gap: 4px; }
+  .etab { font-size: 12px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg); color: var(--sub); cursor: pointer; font-family: inherit; }
+  .etab.active { border-color: var(--accent); color: var(--accent); font-weight: 700; }
   .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
   canvas { width: 100%; height: 220px; display: block; margin-top: 12px; }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 11.5px; color: var(--sub); margin-top: 8px; }
@@ -125,16 +130,18 @@
     </div>
 
     <div class="card">
-      <h2>분기 실적 — 영업이익 증가율</h2>
+      <div class="earn-head">
+        <h2 id="earnTitle">분기 실적 — 영업이익 증가율</h2>
+        <div class="etabs"><button class="etab active" data-mode="quarter">분기</button><button class="etab" data-mode="annual">연간</button></div>
+      </div>
       <div class="scroll">
         <table class="q">
-          <thead>
-            <tr><th>분기</th><th>매출액(억)</th><th>매출 YoY</th><th>가속</th><th>영업이익(억)</th><th>증가율 YoY</th><th>가속</th><th>증가율 QoQ</th><th>가속</th><th>지배순이익(억)</th><th>순이익 YoY</th></tr>
-          </thead>
+          <thead id="qhead"></thead>
           <tbody id="qbody"></tbody>
         </table>
       </div>
-      <div class="sub" style="margin-top:8px;">(괄호) 실적 발표일 · 증가율 = 비교 분기 대비, 가속 = 직전 분기 증가율 대비 변화(%p) · E 컨센서스 · ※ 비교 기준 이익률 5% 미만(판정 제외) · † 한투 당기순이익(지배 아님)</div>
+      <div class="sub" id="earnLegend" style="margin-top:8px;"></div>
+      <div class="sub" id="earnNote"></div>
       <div class="sub" id="peakNote" style="margin-top:10px;font-weight:600;"></div>
       <canvas id="fundChart" style="height:360px;"></canvas>
     </div>
@@ -198,8 +205,8 @@ function growthCell(rate, state, lowBase, mixed) {
 }
 
 // 표에는 최근 12개 실제 분기 + 컨센서스 분기를 보여준다 (계산은 전체 이력으로 이미 끝남).
-function shownQuarters(all) {
-  const actual = all.filter((q) => !q.estimate).slice(-12);
+function shownQuarters(all, n = 12) {
+  const actual = all.filter((q) => !q.estimate).slice(-n);
   return actual.concat(all.filter((q) => q.estimate));
 }
 
@@ -210,10 +217,10 @@ function stageClass(label) {
 }
 
 // 주가 고점 분기와 증가율 고점 분기의 시차를 한 줄로 요약한다.
-function peakNote(qs, price) {
+function peakNote(qs, price, annual) {
   const dates = price.dates || [];
   if (!dates.length) return "";
-  const first = new Date(+qs[0].key.slice(0, 4), +qs[0].key.slice(4, 6) - 3, 0).getTime();
+  const first = new Date(+qs[0].key.slice(0, 4), +qs[0].key.slice(4, 6) - (annual ? 12 : 3), 0).getTime();
   let pi = -1;
   dates.forEach((d, i) => { if (new Date(d).getTime() > first && (pi < 0 || price.close[i] > price.close[pi])) pi = i; });
   if (pi < 0) return "";
@@ -222,13 +229,17 @@ function peakNote(qs, price) {
   const peakOf = (rk, lk) => { const c = qs.filter((q) => !q.estimate && q[rk] != null && !q[lk]); return c.length ? c.reduce((a, b) => (b[rk] > a[rk] ? b : a)) : null; };
   const qq = peakOf("opQoqRate", "opQoqLowBase"), yy = peakOf("opYoyRate", "opYoyLowBase");
   const d = dates[pi].slice(2).replace(/-/g, ".");
+  if (annual) {
+    const yy = peakOf("opYoyRate", "opYoyLowBase");
+    return `주가 고점 ${d}(${t.getFullYear()}년) · 영업이익 증가율 고점: ${yy ? yy.period.slice(0, 4) + "년" : "–"}`;
+  }
   return `주가 고점 ${d}(${qOf(t)} 분기) · 증가율 고점: QoQ ${qq ? qq.period.slice(2) : "–"}, YoY ${yy ? yy.period.slice(2) : "–"}`;
 }
 
 const BAD_STATES = ["피크아웃", "둔화", "음전환", "악화"];
 
 // 분기별 매출액·영업이익 막대와 주가(주봉 종가)를 같은 가로축(분기)에 맞춰 세 단으로 그린다.
-function drawFundChart(canvas, qs, price) {
+function drawFundChart(canvas, qs, price, annual) {
   const ctx = canvas.getContext("2d");
   const dpr = window.devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -244,7 +255,7 @@ function drawFundChart(canvas, qs, price) {
   // 분기 슬롯 경계(월말) — 주가 날짜를 슬롯 안의 위치로 바꾸는 데 쓴다.
   const bounds = qs.map((q) => {
     const y = +q.key.slice(0, 4), m = +q.key.slice(4, 6);
-    return [new Date(y, m - 3, 0).getTime(), new Date(y, m, 0).getTime()];
+    return [new Date(y, m - (annual ? 12 : 3), 0).getTime(), new Date(y, m, 0).getTime()];
   });
   const xOfDate = (iso) => {
     const t = new Date(iso).getTime();
@@ -323,8 +334,13 @@ function drawFundChart(canvas, qs, price) {
   }
 
   const pct = (v) => `${v > 0 ? "+" : ""}${Math.round(v).toLocaleString("ko-KR")}%`;
-  bars("opQoqRate", panelH + gap, "영업이익 증가율 QoQ (전분기 대비)", pct, "opQoqLowBase");
-  bars("opYoyRate", (panelH + gap) * 2, "영업이익 증가율 YoY (전년동기 대비)", pct, "opYoyLowBase");
+  if (annual) {
+    bars("opIncome", panelH + gap, "영업이익 (연간)", short);
+    bars("opYoyRate", (panelH + gap) * 2, "영업이익 증가율 YoY (전년 대비)", pct, "opYoyLowBase");
+  } else {
+    bars("opQoqRate", panelH + gap, "영업이익 증가율 QoQ (전분기 대비)", pct, "opQoqLowBase");
+    bars("opYoyRate", (panelH + gap) * 2, "영업이익 증가율 YoY (전년동기 대비)", pct, "opYoyLowBase");
+  }
   // 주가 고점이 있는 분기를 세 단에 걸쳐 연하게 칠해, 그 분기에 증가율이 어땠는지 바로 보이게 한다.
   if (pts.length > 1) {
     const pk = pts.reduce((a, b) => (b[1] > a[1] ? b : a));
@@ -334,7 +350,7 @@ function drawFundChart(canvas, qs, price) {
   }
   ctx.fillStyle = sub; ctx.font = "10px -apple-system, sans-serif"; ctx.textAlign = "center";
   qs.forEach((q, i) => {
-    if (i % 2 === (n - 1) % 2) ctx.fillText(q.period.slice(2) + (q.estimate ? "E" : ""), Math.min(Math.max(padX + i * slot + slot / 2, 14), w - 16), h - 4);
+    if (annual || i % 2 === (n - 1) % 2) ctx.fillText((annual ? q.period.slice(0, 4) : q.period.slice(2)) + (q.estimate ? "E" : ""), Math.min(Math.max(padX + i * slot + slot / 2, 14), w - 16), h - 4);
   });
 }
 
@@ -421,16 +437,8 @@ function render(name, code, quote, a) {
   $("flags").innerHTML = trend.flags.map((f) => `<li class="${f.level}">${f.text}</li>`).join("");
   $("notes").innerHTML = trend.notes.join("<br>");
 
-  const shown = shownQuarters(a.quarters);
-  $("qbody").innerHTML = shown.map((q) => `
-    <tr class="${q.estimate ? "est" : ""}">
-      <td>${q.period.slice(2)}${q.estimate ? "E" : ""}${q.releaseDate ? `<small>(${q.releaseDate.slice(5).replace("-", ".")})</small>` : ""}</td>
-      <td>${fmt(q.revenue)}</td>${growthCell(q.revenueYoyRate)}${accelCell(q.revenueYoyAccel)}
-      <td>${fmt(q.opIncome)}</td>
-      ${growthCell(q.opYoyRate, q.opYoyState, q.opYoyLowBase)}${accelCell(q.opYoyAccel)}
-      ${growthCell(q.opQoqRate, q.opQoqState, q.opQoqLowBase)}${accelCell(q.opQoqAccel)}
-      <td>${fmt(q.netIncome)}${q.netIsParent ? "" : "†"}</td>${growthCell(q.netYoyRate, q.netYoyState, false, q.netYoyMixed)}
-    </tr>`).join("");
+  lastA = a;
+  renderEarn();
 
   const w = a.weekly;
   const dev = (v) => v == null ? "–" : `${sign(v)}${fmt(v, 1)}%`;
@@ -464,9 +472,63 @@ function render(name, code, quote, a) {
   }
   $("result").classList.remove("hidden");
   drawChart($("chart"), w.series, run);
-  drawFundChart($("fundChart"), shown, a.priceWeekly || {});
-  $("peakNote").textContent = peakNote(shown, a.priceWeekly || {});
 }
+
+// 분기/연간 탭에 따라 실적 표·차트를 다시 그린다.
+let lastA = null;
+let earnMode = "quarter";
+try { if (localStorage.getItem("leaderEarnMode") === "annual") earnMode = "annual"; } catch (e) {}
+
+const QHEAD = `<tr><th>분기</th><th>매출액(억)</th><th>매출 YoY</th><th>가속</th><th>영업이익(억)</th><th>증가율 YoY</th><th>가속</th><th>증가율 QoQ</th><th>가속</th><th>지배순이익(억)</th><th>순이익 YoY</th></tr>`;
+const AHEAD = `<tr><th>연도</th><th>매출액(억)</th><th>매출 YoY</th><th>영업이익(억)</th><th>이익률</th><th>증가율 YoY</th><th>가속</th><th>지배순이익(억)</th><th>순이익 YoY</th></tr>`;
+
+function renderEarn() {
+  const a = lastA;
+  if (!a) return;
+  const annual = earnMode === "annual";
+  document.querySelectorAll(".etab").forEach((b) => b.classList.toggle("active", b.dataset.mode === earnMode));
+  $("earnTitle").textContent = annual ? "연간 실적 — 영업이익 증가율" : "분기 실적 — 영업이익 증가율";
+  const list = annual ? (a.annual || []) : a.quarters;
+  if (annual && !list.length) {
+    $("qhead").innerHTML = ""; $("qbody").innerHTML = "";
+    $("earnLegend").textContent = ""; $("peakNote").textContent = "";
+    $("earnNote").textContent = a.annualNote || "연간 실적이 없는 종목입니다.";
+    const c = $("fundChart"); c.getContext("2d").clearRect(0, 0, c.width, c.height);
+    return;
+  }
+  const shown = shownQuarters(list, annual ? 8 : 12);
+  const label = (q) => (annual ? q.period.slice(0, 4) + (q.period.slice(5) !== "12" ? `<small>(${+q.period.slice(5)}월 결산)</small>` : "") : q.period.slice(2)) + (q.estimate ? "E" : "");
+  $("qhead").innerHTML = annual ? AHEAD : QHEAD;
+  $("qbody").innerHTML = shown.map((q) => annual ? `
+    <tr class="${q.estimate ? "est" : ""}">
+      <td>${label(q)}</td>
+      <td>${fmt(q.revenue)}</td>${growthCell(q.revenueYoyRate)}
+      <td>${fmt(q.opIncome)}</td><td>${q.opm == null ? "–" : fmt(q.opm, 1) + "%"}</td>
+      ${growthCell(q.opYoyRate, q.opYoyState, q.opYoyLowBase)}${accelCell(q.opYoyAccel)}
+      <td>${fmt(q.netIncome)}${q.netIsParent ? "" : "†"}</td>${growthCell(q.netYoyRate, q.netYoyState, false, q.netYoyMixed)}
+    </tr>` : `
+    <tr class="${q.estimate ? "est" : ""}">
+      <td>${label(q)}${q.releaseDate ? `<small>(${q.releaseDate.slice(5).replace("-", ".")})</small>` : ""}</td>
+      <td>${fmt(q.revenue)}</td>${growthCell(q.revenueYoyRate)}${accelCell(q.revenueYoyAccel)}
+      <td>${fmt(q.opIncome)}</td>
+      ${growthCell(q.opYoyRate, q.opYoyState, q.opYoyLowBase)}${accelCell(q.opYoyAccel)}
+      ${growthCell(q.opQoqRate, q.opQoqState, q.opQoqLowBase)}${accelCell(q.opQoqAccel)}
+      <td>${fmt(q.netIncome)}${q.netIsParent ? "" : "†"}</td>${growthCell(q.netYoyRate, q.netYoyState, false, q.netYoyMixed)}
+    </tr>`).join("");
+  $("earnLegend").textContent = annual
+    ? "증가율 = 전년 대비, 가속 = 전년 증가율 대비 변화(%p) · E 컨센서스 · ※ 비교 기준 이익률 5% 미만(판정 제외) · † 한투 당기순이익(지배 아님)"
+    : "(괄호) 실적 발표일 · 증가율 = 비교 분기 대비, 가속 = 직전 분기 증가율 대비 변화(%p) · E 컨센서스 · ※ 비교 기준 이익률 5% 미만(판정 제외) · † 한투 당기순이익(지배 아님)";
+  $("earnNote").innerHTML = annual && a.annualNote ? a.annualNote : "";
+  const price = (annual ? a.priceWeeklyAll : a.priceWeekly) || {};
+  drawFundChart($("fundChart"), shown, price, annual);
+  $("peakNote").textContent = peakNote(shown, price, annual);
+}
+
+document.querySelectorAll(".etab").forEach((b) => b.addEventListener("click", () => {
+  earnMode = b.dataset.mode;
+  try { localStorage.setItem("leaderEarnMode", earnMode); } catch (e) {}
+  renderEarn();
+}));
 
 async function load(code, name) {
   showError("");

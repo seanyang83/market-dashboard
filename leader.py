@@ -78,8 +78,8 @@ def _shift_key(key, months):
     return f"{idx // 12:04d}{idx % 12 + 1:02d}"
 
 
-def _fetch_finance(code):
-    url = FINANCE_URL.format(code=code)
+def _fetch_finance(code, period="quarter"):
+    url = FINANCE_URL.format(code=code).replace("/quarter", "/" + period)
     req = urllib.request.Request(url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
@@ -163,10 +163,11 @@ def _growth(cur, base):
     return (None, None) if cur == 0 and base == 0 else (None, "적자지속")
 
 
-def _compute_rates(quarters):
+def _compute_rates(quarters, step=3):
     """분기 리스트(키 오름차순)에 영업이익 증가율(전년동기 YoY / 전분기 QoQ)과 그 가속도
     (증가율의 변화, %p)를 채운다. 비교 분기는 인덱스가 아니라 키(YYYYMM) 산술로 찾는다.
-    영업이익률(opm)과 그 변화는 성장의 질을 보는 보조 지표로 같이 남긴다."""
+    영업이익률(opm)과 그 변화는 성장의 질을 보는 보조 지표로 같이 남긴다.
+    step=12로 부르면 연간 리스트용 — "직전 기간"이 1년 전이라 QoQ 필드는 YoY와 같고, 가속은 전년 증가율 대비 변화가 된다."""
     by_key = {q["key"]: q for q in quarters}
 
     def low_base(prev):
@@ -174,7 +175,7 @@ def _compute_rates(quarters):
         return bool(prev and prev["opm"] is not None and 0 < prev["opm"] < LOW_BASE_OPM)
 
     for q in quarters:
-        prev_q = by_key.get(_shift_key(q["key"], -3))
+        prev_q = by_key.get(_shift_key(q["key"], -step))
         prev_y = by_key.get(_shift_key(q["key"], -12))
         q["opYoyRate"], q["opYoyState"] = _growth(q["opIncome"], prev_y["opIncome"]) if prev_y else (None, None)
         q["opQoqRate"], q["opQoqState"] = _growth(q["opIncome"], prev_q["opIncome"]) if prev_q else (None, None)
@@ -187,7 +188,7 @@ def _compute_rates(quarters):
         q["opmYoyPp"] = _pp(q["opm"], prev_y["opm"]) if prev_y else None
         q["opmQoqPp"] = _pp(q["opm"], prev_q["opm"]) if prev_q else None
     for q in quarters:
-        prev_q = by_key.get(_shift_key(q["key"], -3))
+        prev_q = by_key.get(_shift_key(q["key"], -step))
         cur, prev = q["revenueYoyRate"], prev_q["revenueYoyRate"] if prev_q else None
         q["revenueYoyAccel"] = round(cur - prev, 1) if cur is not None and prev is not None else None
         for name in ("Yoy", "Qoq"):
@@ -234,6 +235,28 @@ def _fetch_kis_quarters(code, kis_get):
             "netIsParent": False,
         })
     return out
+
+
+def _fetch_kis_annual(code, kis_get):
+    """한투 손익계산서(연간) — 연 단위 값이라 누적 풀이가 필요 없다."""
+    rows = kis_income_raw(code, kis_get, "0").get("output") or []
+    out = []
+    for r in rows:
+        key = str(r.get("stac_yymm") or "")
+        rev, op, net = _num(r.get("sale_account")), _num(r.get("bsop_prti")), _num(r.get("thtr_ntin"))
+        if len(key) != 6 or rev is None:
+            continue
+        out.append({
+            "key": key,
+            "period": f"{key[:4]}.{key[4:6]}",
+            "estimate": False,
+            "revenue": rev,
+            "opIncome": op,
+            "opm": round(op / rev * 100, 2) if op is not None and rev else None,
+            "netIncome": net,
+            "netIsParent": False,
+        })
+    return sorted(out, key=lambda q: q["key"])
 
 
 def _merge_quarters(naver, kis):
@@ -566,9 +589,24 @@ def analyze(code, kis_get=None):
     if not weekly["aligned"] and run and run.get("breakDate"):
         flags.append({"level": "warn", "text": f"정배열 이탈 ({run['breakReason']})"})
     flags.sort(key=lambda f: f["level"] != "bad")
+    annual, annual_note = [], None
+    try:
+        a_naver = _cached(("fin", code, "annual"), FINANCE_TTL, lambda: _fetch_finance(code, "annual"))
+        a_kis = []
+        if kis_get is not None:
+            try:
+                a_kis = _cached(("kis", code, "annual"), FINANCE_TTL, lambda: _fetch_kis_annual(code, kis_get))
+            except Exception:
+                annual_note = "한투 연간 이력을 불러오지 못해 네이버의 최근 3개 연도만 사용했습니다"
+        annual = _compute_rates(_merge_quarters(a_naver, a_kis), step=12)
+    except Exception as e:
+        annual_note = f"연간 실적을 불러오지 못했습니다 ({e})"
     return {
         "code": code,
         "quarters": quarters,
+        "annual": annual,
+        "annualNote": annual_note,
+        "priceWeeklyAll": {"dates": [d for d, _ in weekly_raw], "close": [c for _, c in weekly_raw]},
         "weekly": weekly,
         # 분기 실적 차트와 나란히 그리는 주가(주봉 종가). 표시 분기(최근 12개+E)를 덮도록 4년치.
         "priceWeekly": {"dates": [d for d, _ in weekly_raw[-210:]], "close": [c for _, c in weekly_raw[-210:]]},
