@@ -284,7 +284,7 @@ def _fetch_index_closes(symbol, days=40):
     """{YYYYMMDD: 종가} - 오늘(장중)은 현재가. 네이버 siseJson 일봉."""
     now = time.time()
     with _market_extra_lock:
-        hit = _index_closes_cache.get(symbol)
+        hit = _index_closes_cache.get((symbol, days))
         if hit and now - hit[0] < INDEX_CLOSES_CACHE_TTL:
             return hit[1]
     end = datetime.now(timezone.utc) + timedelta(hours=9)
@@ -298,18 +298,12 @@ def _fetch_index_closes(symbol, days=40):
     rows = ast.literal_eval(body.strip().replace("null", "None"))[1:]
     out = {str(r[0]): float(r[4]) for r in rows if r[4] is not None}
     with _market_extra_lock:
-        _index_closes_cache[symbol] = (now, out)
+        _index_closes_cache[(symbol, days)] = (now, out)
     return out
 
 
-def _fetch_market_credit(days=40):
-    """{YYYYMMDD: {"kospi": 원, "kosdaq": 원}} - 신용융자 잔고."""
-    now = time.time()
-    with _market_extra_lock:
-        if _credit_cache["data"] and now - _credit_cache["ts"] < CREDIT_CACHE_TTL:
-            return _credit_cache["data"]
-    end = datetime.now(timezone.utc) + timedelta(hours=9)
-    start = end - timedelta(days=days)
+def _kofia_credit_range(start, end):
+    """{YYYYMMDD: {"kospi": 원, "kosdaq": 원}} - start~end(datetime) 구간. 구간이 길면 응답이 잘려서 호출 쪽이 90일 안팎으로 나눠 부른다."""
     body = json.dumps({"dmSearch": {
         "tmpV40": "1000000", "tmpV41": "1", "tmpV1": "D",
         "tmpV45": start.strftime("%Y%m%d"), "tmpV46": end.strftime("%Y%m%d"),
@@ -327,11 +321,106 @@ def _fetch_market_credit(days=40):
             out[str(r["TMPV1"])] = {"kospi": int(r["TMPV3"]) * 1_000_000, "kosdaq": int(r["TMPV4"]) * 1_000_000}
         except (KeyError, TypeError, ValueError):
             continue
+    return out
+
+
+def _fetch_market_credit(days=40):
+    """{YYYYMMDD: {"kospi": 원, "kosdaq": 원}} - 신용융자 잔고."""
+    now = time.time()
+    with _market_extra_lock:
+        if _credit_cache["data"] and now - _credit_cache["ts"] < CREDIT_CACHE_TTL:
+            return _credit_cache["data"]
+    end = datetime.now(timezone.utc) + timedelta(hours=9)
+    out = _kofia_credit_range(end - timedelta(days=days), end)
     if not out:
         raise ValueError("신용융자 잔고 데이터가 비어 있습니다")
     with _market_extra_lock:
         _credit_cache["data"], _credit_cache["ts"] = out, now
     return out
+
+
+# --- MDD (종베 "MDD" 섹션): 올해 고점 대비 낙폭 - 지수 vs 신용융자 잔고, 코스피/코스닥 따로 ---
+# MDD(Maximum Drawdown) = 고점 대비 가장 깊게 빠진 비율. 선은 매일의 "그날까지의 올해 최고점 대비 낙폭"이고
+# 요약의 최대(MDD)는 그 선의 가장 깊은 값. 신용잔고는 하루 늦게 공표돼 마지막 날은 값이 없을 수 있다(None).
+MDD_CACHE_TTL = 60
+CREDIT_YTD_CACHE_TTL = 1800
+_mdd_cache = {"data": None, "ts": 0}
+_credit_ytd_cache = {"data": None, "ts": 0, "year": None}
+_mdd_lock = threading.Lock()
+
+
+def _fetch_credit_ytd(year, end):
+    now = time.time()
+    with _market_extra_lock:
+        c = _credit_ytd_cache
+        if c["data"] and c["year"] == year and now - c["ts"] < CREDIT_YTD_CACHE_TTL:
+            return c["data"]
+    ranges, s = [], datetime(year, 1, 1)
+    while s <= end:
+        e = min(s + timedelta(days=89), end)
+        ranges.append((s, e))
+        s = e + timedelta(days=1)
+    with ThreadPoolExecutor(max_workers=len(ranges)) as ex:
+        parts = list(ex.map(lambda r: _kofia_credit_range(*r), ranges))
+    out = {}
+    for part in parts:
+        out.update(part)
+    if not out:
+        raise ValueError("신용융자 잔고 데이터가 비어 있습니다")
+    with _market_extra_lock:
+        _credit_ytd_cache.update(data=out, ts=now, year=year)
+    return out
+
+
+def _drawdown_series(dates, values):
+    """values: {YYYYMMDD: 값}. dates(전체 날짜축)에 맞춘 낙폭% 리스트(값 없는 날 None)와 요약."""
+    dd, peak, peak_d, mdd, mdd_d, mdd_peak_d, last = [], None, None, 0.0, None, None, None
+    for d in dates:
+        v = values.get(d)
+        if v is None:
+            dd.append(None)
+            continue
+        if peak is None or v >= peak:
+            peak, peak_d = v, d
+        x = (v / peak - 1) * 100
+        dd.append(round(x, 1))
+        if x < mdd:
+            mdd, mdd_d, mdd_peak_d = x, d, peak_d
+        last = (d, x)
+    return {"dd": dd, "peakDate": peak_d, "mdd": round(mdd, 1), "mddDate": mdd_d,
+            "mddPeakDate": mdd_peak_d or peak_d, "now": round(last[1], 1) if last else None,
+            "lastDate": last[0] if last else None}
+
+
+def mdd_data():
+    now = time.time()
+    with _mdd_lock:
+        if _mdd_cache["data"] and now - _mdd_cache["ts"] < MDD_CACHE_TTL:
+            return _mdd_cache["data"]
+    kst = _kst_now()
+    year = kst.year
+    end = datetime(kst.year, kst.month, kst.day)
+    days = (end - datetime(year, 1, 1)).days + 5
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_ks = ex.submit(_fetch_index_closes, "KOSPI", days)
+        f_kq = ex.submit(_fetch_index_closes, "KOSDAQ", days)
+        f_cr = ex.submit(_fetch_credit_ytd, year, end)
+        ks, kq, credit = f_ks.result(), f_kq.result(), f_cr.result()
+    ymd = "%d0101" % year
+    ks = {d: v for d, v in ks.items() if d >= ymd}
+    kq = {d: v for d, v in kq.items() if d >= ymd}
+    credit = {d: v for d, v in credit.items() if d >= ymd}
+    dates = sorted(set(ks) | set(kq) | set(credit))
+    data = {
+        "asOf": kst.strftime("%m/%d %H:%M"), "dates": dates,
+        "kospi": {"index": _drawdown_series(dates, ks),
+                  "credit": _drawdown_series(dates, {d: v["kospi"] for d, v in credit.items()})},
+        "kosdaq": {"index": _drawdown_series(dates, kq),
+                   "credit": _drawdown_series(dates, {d: v["kosdaq"] for d, v in credit.items()})},
+    }
+    with _mdd_lock:
+        _mdd_cache.update(data=data, ts=now)
+    return data
 
 
 # --- 코스피 당일 투자자별 순매수 추이 (키움 "당일추이"와 같은 데이터) ---
@@ -1572,6 +1661,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_kis_income()
         elif self.path.startswith("/api/ops/kis-raw"):
             self.handle_ops_kis_raw()
+        elif self.path.startswith("/api/market/mdd"):
+            try:
+                self.send_json(200, mdd_data())
+            except Exception as e:
+                self.send_json(503, {"error": str(e)[:120]})
         elif self.path.startswith("/api/market/down20"):
             data, err = down20_data()
             if data is None:
@@ -2088,7 +2182,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                  "kospi-quote": "/api/kospi/quote", "kospi-history": "/api/kospi/history",
                  "flow-trend": "/api/kospi/flow-trend", "trading-value": "/api/market/trading-value",
                  "breadth": "/api/market/breadth", "volume-rank": "/api/market/volume-rank",
-                 "down20": "/api/market/down20"}
+                 "down20": "/api/market/down20", "mdd": "/api/market/mdd"}
         out = {"code": code, "cold_ms": {}, "warm_ms": {}}
 
         def timed(n):
