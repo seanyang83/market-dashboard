@@ -1496,14 +1496,83 @@ def _align_universe():
     return out
 
 
+ALIGN_SECTOR_TTL = 12 * 3600
+ALIGN_SECTOR_MIN = 3          # 업종 통계에 넣는 최소 종목 수(스캔 대상 기준)
+_align_sector_cache = {"map": None, "ts": 0.0}
+
+
+def _align_sector_map():
+    """{종목코드: 네이버 세분 업종 이름}. 업종 목록(약 80개)과 각 업종의 구성 종목을 받는다(요청 100여 건, 12시간 캐시).
+    '기타'(FINE_SKIP_GROUPS)는 잡다한 묶음이라 뺀다 — 그 종목들은 업종 없음."""
+    with _align_lock:
+        if _align_sector_cache["map"] is not None and time.time() - _align_sector_cache["ts"] < ALIGN_SECTOR_TTL:
+            return _align_sector_cache["map"]
+    groups = _naver_get_json(f"{NAVER_M_INDUSTRY_URL}?page=1&pageSize=100").get("groups") or []
+
+    def members(g):
+        out, page, total = [], 1, int(g.get("totalCount") or 0)
+        while len(out) < total and page <= 20:
+            got = _naver_get_json(f"{NAVER_M_INDUSTRY_URL}/{g['no']}?page={page}&pageSize=100").get("stocks") or []
+            out.extend(str(x.get("itemCode")) for x in got)
+            if len(got) < 100:
+                break
+            page += 1
+        return g.get("name"), out
+
+    mapping = {}
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        for name, codes in ex.map(members, [g for g in groups if g.get("no") not in FINE_SKIP_GROUPS]):
+            for c in codes:
+                mapping.setdefault(c, name)
+    if len(mapping) < 500:
+        raise ValueError(f"업종 구성 종목을 충분히 받지 못했습니다({len(mapping)}개)")
+    with _align_lock:
+        _align_sector_cache.update(map=mapping, ts=time.time())
+    return mapping
+
+
+def _align_sectors(items, stocks, mapping):
+    """업종별 정배열 통계: 스캔 대상 중 그 업종 종목 수(total)·정배열 수·평균 주수·최근 4주 안에 정배열이 된 신규 수."""
+    total = {}
+    for code, *_ in stocks:
+        sec = mapping.get(code)
+        if sec:
+            total[sec] = total.get(sec, 0) + 1
+    rows = {}
+    for it in items:
+        sec = mapping.get(it["code"])
+        it["sector"] = sec
+        if not sec:
+            continue
+        r = rows.setdefault(sec, {"name": sec, "aligned": 0, "weeksSum": 0, "new": 0})
+        r["aligned"] += 1
+        r["weeksSum"] += it["weeks"]
+        r["new"] += 1 if it["weeks"] <= 4 else 0
+    out = []
+    for sec, n in total.items():
+        if n < ALIGN_SECTOR_MIN:
+            continue
+        r = rows.get(sec, {"name": sec, "aligned": 0, "weeksSum": 0, "new": 0})
+        out.append({"name": sec, "total": n, "aligned": r["aligned"], "ratio": round(r["aligned"] / n * 100, 1),
+                    "avgWeeks": round(r["weeksSum"] / r["aligned"], 1) if r["aligned"] else None, "new": r["new"]})
+    out.sort(key=lambda r: (r["total"] < 5 or r["aligned"] < 2, -r["ratio"], -r["aligned"]))   # 표본이 작거나 1개뿐인 업종은 아래로
+    return out
+
+
 def _align_run():
     started = _kst_now()
     final = started.weekday() < 5 and started.hour * 60 + started.minute >= ALIGN_SCAN_FROM
     t0 = time.time()
     stocks = _align_universe()
+    try:
+        mapping = _align_sector_map()
+    except Exception as e:
+        print(f"align sector map failed: {e}")
+        mapping = None
     res = alignscan.scan(stocks, progress=lambda d, t: _align.update(progress=(d, t)))
     if res["failed"] > len(stocks) * 0.2:
         raise ValueError(f"주봉을 받지 못한 종목이 너무 많습니다({res['failed']}/{len(stocks)})")
+    res["sectors"] = _align_sectors(res["items"], stocks, mapping) if mapping else None
     res.update(markets=list(ALIGN_MARKETS), builtAt=started.strftime("%Y-%m-%d %H:%M"), finalFor=started.strftime("%Y%m%d") if final else None,
                seconds=round(time.time() - t0))
     return res

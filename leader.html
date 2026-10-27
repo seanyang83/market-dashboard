@@ -93,6 +93,17 @@
   table.al td.nm { font-weight: 700; white-space: normal; }
   table.al td small { display: block; }
   table.al .rk { color: var(--sub); font-weight: 500; font-size: 11px; margin-right: 5px; }
+  .sec-row { display: grid; grid-template-columns: 112px 1fr 84px; align-items: center; gap: 8px; padding: 5px 4px; border-radius: 8px; cursor: pointer; }
+  .sec-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  .sec-row.on { background: color-mix(in srgb, var(--accent) 12%, transparent); outline: 1px solid var(--accent); }
+  .sec-row.small { opacity: .55; }
+  .sec-name { font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sec-bar { height: 14px; background: var(--bg); border-radius: 4px; overflow: hidden; }
+  .sec-bar i { display: block; height: 100%; background: var(--up); border-radius: 4px; }
+  .sec-val { font-size: 12px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
+  .sec-val small { display: block; font-size: 10.5px; font-weight: 500; color: var(--sub); }
+  .sec-more { margin-top: 6px; font-size: 12px; color: var(--accent); cursor: pointer; background: none; border: none; padding: 4px; font-family: inherit; }
+  .filt { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--accent); color: var(--accent); font-size: 12px; font-weight: 700; cursor: pointer; background: none; font-family: inherit; }
   .earn-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .earn-head h2 { margin: 0; }
   .etabs { display: flex; gap: 4px; }
@@ -122,9 +133,17 @@
   </div>
 
   <div id="viewAlign" class="hidden">
+    <div class="card hidden" id="secCard">
+      <h2>업종별 정배열 비율</h2>
+      <div class="sub">업종 종목 중 정배열인 비율이 높은 순 · 막대를 누르면 아래 목록이 그 업종만 남습니다</div>
+      <div id="secRows" style="margin-top:10px;"></div>
+      <button class="sec-more hidden" id="secMore"></button>
+      <div class="sub" id="secNote" style="margin-top:6px;"></div>
+    </div>
     <div class="card">
       <h2>주봉 4-13-26-52 정배열 종목 — 오래된 순</h2>
       <div class="sub" id="alSummary">불러오는 중…</div>
+      <div id="alFilt"></div>
       <div class="scroll">
         <table class="al">
           <thead><tr><th>종목</th><th>현재가</th><th>정배열</th><th>시작 대비</th><th>4주선 대비</th></tr></thead>
@@ -573,33 +592,65 @@ function setView(v) {
 }
 document.querySelectorAll(".ptab").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
 
+let alData = null, alFilter = null, secAll = false;
+
+function renderAlign() {
+  const d = alData;
+  const items = alFilter ? d.items.filter((it) => it.sector === alFilter) : d.items;
+  const mk = d.markets.map((m) => (m === "KOSPI" ? "코스피" : "코스닥")).join("+");
+  const base = d.finalFor ? "" : " · 마감 전 스캔이라 오늘 밤 마감 후 다시 갱신됩니다";
+  $("alSummary").textContent = `${mk} 보통주 ${fmt(d.total)}종목 중 정배열 ${fmt(d.items.length)}개 · ${d.builtAt} 기준 (매 평일 16:35 이후 갱신)${base}`;
+  $("alFilt").innerHTML = alFilter ? `<button class="filt" id="alFiltBtn">${alFilter} ${fmt(items.length)}개 ✕</button>` : "";
+  if (alFilter) $("alFiltBtn").addEventListener("click", () => { alFilter = null; renderAlign(); });
+
+  // 업종별 정배열 비율 막대 (스캔 대상 업종 종목 중 정배열 비율 순, 종목 5개 미만 업종은 흐리게 맨 아래)
+  const secs = (d.sectors || []).filter((r) => r.aligned > 0);
+  $("secCard").classList.toggle("hidden", !d.sectors);
+  if (d.sectors) {
+    const shownSecs = secAll ? secs : secs.slice(0, 15);
+    const maxRatio = Math.max(1, ...secs.map((r) => r.ratio));   // 막대는 가장 높은 업종을 꽉 채우는 상대 길이
+    $("secRows").innerHTML = shownSecs.map((r) => `
+      <div class="sec-row${alFilter === r.name ? " on" : ""}${r.total < 5 || r.aligned < 2 ? " small" : ""}" data-sec="${r.name}">
+        <div class="sec-name">${r.name}</div>
+        <div class="sec-bar"><i style="width:${Math.max(r.ratio / maxRatio * 100, 3)}%"></i></div>
+        <div class="sec-val">${r.aligned}/${r.total} · ${fmt(r.ratio, 0)}%<small>평균 ${fmt(r.avgWeeks, 0)}주${r.new ? ` · 신규 ${r.new}` : ""}</small></div>
+      </div>`).join("");
+    $("secRows").querySelectorAll(".sec-row").forEach((el) => el.addEventListener("click", () => {
+      alFilter = alFilter === el.dataset.sec ? null : el.dataset.sec; renderAlign();
+    }));
+    $("secMore").classList.toggle("hidden", secs.length <= 15);
+    $("secMore").textContent = secAll ? "접기" : `정배열 있는 업종 ${secs.length}개 모두 보기`;
+    $("secNote").textContent = "업종 = 네이버 세분 업종. 신규 = 정배열이 된 지 4주 이하. 막대 길이는 가장 높은 업종 기준 상대값. 종목 5개 미만이거나 정배열이 1개뿐인 업종은 우연히 높게 나올 수 있어 흐리게 맨 아래.";
+  }
+
+  $("alBody").innerHTML = items.map((it, i) => `
+    <tr data-code="${it.code}" data-name="${it.name}">
+      <td class="nm"><span class="rk">${i + 1}</span>${it.name}<small>${it.code}${it.sector ? " · " + it.sector : ""}</small></td>
+      <td>${fmt(Math.round(it.price))}</td>
+      <td><b>${it.weeks}주${it.truncated ? "+" : ""}</b><small>${it.since.slice(2).replace(/-/g, ".")}~</small></td>
+      <td class="${it.gainSincePct >= 0 ? "up" : "down"}">${sign(it.gainSincePct)}${fmt(it.gainSincePct, 1)}%</td>
+      <td class="${it.vsMa4Pct >= 0 ? "up" : "down"}">${sign(it.vsMa4Pct)}${fmt(it.vsMa4Pct, 1)}%</td>
+    </tr>`).join("");
+  $("alBody").querySelectorAll("tr").forEach((tr) => tr.addEventListener("click", () => {
+    setView("analyze"); $("q").value = tr.dataset.name; load(tr.dataset.code, tr.dataset.name); window.scrollTo(0, 0);
+  }));
+  const notes = [`정배열 = 주봉 4주선 > 13주선 > 26주선 > 52주선. 주수는 이번 주 봉까지 이어진 연속 주수이고, +는 조회 가능한 기간(약 7년) 맨 앞부터 계속 정배열이라 실제로는 더 길 수 있다는 뜻.`,
+    `상장 1년 미만 ${fmt(d.short)}종목은 52주선이 없어 판정에서 제외${d.failed ? `, 주봉을 못 받은 ${fmt(d.failed)}종목 누락` : ""}. 이번 주 봉은 마감 전이면 현재가 기준.`];
+  $("alNote").innerHTML = notes.join("<br>");
+}
+
 async function loadAlign() {
   if (alLoaded) return;
   try {
-    const d = await getJson("/api/align");
+    alData = await getJson("/api/align");
     alLoaded = true;
-    const mk = d.markets.map((m) => (m === "KOSPI" ? "코스피" : "코스닥")).join("+");
-    const base = d.finalFor ? "" : " · 마감 전 스캔이라 오늘 밤 마감 후 다시 갱신됩니다";
-    $("alSummary").textContent = `${mk} 보통주 ${fmt(d.total)}종목 중 정배열 ${fmt(d.items.length)}개 · ${d.builtAt} 기준 (매 평일 16:35 이후 갱신)${base}`;
-    $("alBody").innerHTML = d.items.map((it, i) => `
-      <tr data-code="${it.code}" data-name="${it.name}">
-        <td class="nm"><span class="rk">${i + 1}</span>${it.name}<small>${it.code}</small></td>
-        <td>${fmt(Math.round(it.price))}</td>
-        <td><b>${it.weeks}주${it.truncated ? "+" : ""}</b><small>${it.since.slice(2).replace(/-/g, ".")}~</small></td>
-        <td class="${it.gainSincePct >= 0 ? "up" : "down"}">${sign(it.gainSincePct)}${fmt(it.gainSincePct, 1)}%</td>
-        <td class="${it.vsMa4Pct >= 0 ? "up" : "down"}">${sign(it.vsMa4Pct)}${fmt(it.vsMa4Pct, 1)}%</td>
-      </tr>`).join("");
-    $("alBody").querySelectorAll("tr").forEach((tr) => tr.addEventListener("click", () => {
-      setView("analyze"); $("q").value = tr.dataset.name; load(tr.dataset.code, tr.dataset.name); window.scrollTo(0, 0);
-    }));
-    const notes = [`정배열 = 주봉 4주선 > 13주선 > 26주선 > 52주선. 주수는 이번 주 봉까지 이어진 연속 주수이고, +는 조회 가능한 기간(약 7년) 맨 앞부터 계속 정배열이라 실제로는 더 길 수 있다는 뜻.`,
-      `상장 1년 미만 ${fmt(d.short)}종목은 52주선이 없어 판정에서 제외${d.failed ? `, 주봉을 못 받은 ${fmt(d.failed)}종목 누락` : ""}. 이번 주 봉은 마감 전이면 현재가 기준.`];
-    $("alNote").innerHTML = notes.join("<br>");
+    renderAlign();
   } catch (e) {
     $("alSummary").textContent = e.message;
     setTimeout(() => { if (!document.hidden && !$("viewAlign").classList.contains("hidden")) loadAlign(); }, 15000);
   }
 }
+$("secMore").addEventListener("click", () => { secAll = !secAll; renderAlign(); });
 
 async function load(code, name) {
   showError("");
