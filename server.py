@@ -17,6 +17,7 @@ import hmac
 import http.server
 import json
 import leader
+import alignscan
 import rsirule
 import os
 import re
@@ -1447,6 +1448,115 @@ def _breadth_scheduler():
         time.sleep(20)
 
 
+# --- 주봉 4-13-26-52 정배열 종목 목록 (/leader "정배열 목록" 탭) ---
+# 평일 마감 후(ALIGN_SCAN_FROM) 하루 한 번 종목마다 주봉을 받아 정배열 여부·연속 주수를 판정해 메모리에 둔다(화면은 이 결과만 읽음).
+# 서버가 재시작되면 메모리가 비므로 부팅 직후 한 번 바로 스캔한다(3~5분, 그동안 화면은 "계산 중").
+ALIGN_MARKETS = ["KOSPI"]            # 테스트 단계: 코스피만. 코스닥까지 하려면 ["KOSPI", "KOSDAQ"]
+ALIGN_SCAN_FROM = 16 * 60 + 35       # 이 시각(KST 분) 이후 하루 한 번
+_align = {"result": None, "building": False, "progress": None, "error": None}
+_align_lock = threading.Lock()
+
+
+def _align_page(market, page):
+    d = _naver_get_json(f"https://m.stock.naver.com/api/stocks/marketValue/{market}?page={page}&pageSize=100")
+    out = []
+    for s in d.get("stocks") or []:
+        if s.get("stockEndType") != "stock":
+            continue
+        try:
+            price = float(str(s.get("closePrice") or "0").replace(",", ""))
+            cap = float(str(s.get("marketValue") or "0").replace(",", ""))   # 억원
+        except ValueError:
+            continue
+        if price > 0:
+            out.append((str(s["itemCode"]), str(s.get("stockName") or ""), price, cap, market))
+    return out, int(d.get("totalCount") or 0)
+
+
+def _align_universe():
+    out = []
+    for market in ALIGN_MARKETS:
+        first, total = _align_page(market, 1)
+        out.extend(first)
+        pages = min(60, (total + 99) // 100)
+        if pages > 1:
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                for part, _ in ex.map(lambda pg, m=market: _align_page(m, pg), range(2, pages + 1)):
+                    out.extend(part)
+    return out
+
+
+def _align_run():
+    started = _kst_now()
+    final = started.weekday() < 5 and started.hour * 60 + started.minute >= ALIGN_SCAN_FROM
+    t0 = time.time()
+    stocks = _align_universe()
+    res = alignscan.scan(stocks, progress=lambda d, t: _align.update(progress=(d, t)))
+    if res["failed"] > len(stocks) * 0.2:
+        raise ValueError(f"주봉을 받지 못한 종목이 너무 많습니다({res['failed']}/{len(stocks)})")
+    res.update(markets=list(ALIGN_MARKETS), builtAt=started.strftime("%Y-%m-%d %H:%M"), finalFor=started.strftime("%Y%m%d") if final else None,
+               seconds=round(time.time() - t0))
+    return res
+
+
+def _align_async():
+    with _align_lock:
+        if _align["building"]:
+            return
+        _align["building"] = True
+        _align["progress"] = (0, 0)
+
+    def work():
+        try:
+            res = _align_run()
+            with _align_lock:
+                _align["result"], _align["error"] = res, None
+            print(f"align scan done: {len(res['items'])}/{res['total']} aligned, {res['failed']} failed, {res['seconds']}s")
+        except Exception as e:
+            with _align_lock:
+                _align["error"] = str(e)[:200]
+            print(f"align scan failed: {e}")
+        finally:
+            with _align_lock:
+                _align["building"] = False
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def _align_scheduler():
+    # 로컬(사무실 IP 등)에서 서버를 켤 때마다 종목 수천 건을 요청하지 않도록, Render(환경변수 RENDER)에서만 자동으로 돈다.
+    # 로컬에서 확인하려면 ALIGN_LOCAL=1로 켠다.
+    if not (os.environ.get("RENDER") or os.environ.get("ALIGN_LOCAL")):
+        print("align scheduler off (not on Render; set ALIGN_LOCAL=1 to scan locally)")
+        return
+    time.sleep(20)   # 부팅 직후 다른 초기 수집과 겹치지 않게 조금 늦춘다
+    while True:
+        try:
+            now = _kst_now()
+            today = now.strftime("%Y%m%d")
+            with _align_lock:
+                res, building = _align["result"], _align["building"]
+            if not building:
+                if res is None or res.get("markets") != ALIGN_MARKETS:
+                    _align_async()
+                elif now.weekday() < 5 and now.hour * 60 + now.minute >= ALIGN_SCAN_FROM and res.get("finalFor") != today:
+                    _align_async()
+        except Exception as e:
+            print(f"align scheduler error: {e}")
+        time.sleep(30)
+
+
+def align_data():
+    with _align_lock:
+        res, building, prog, err = _align["result"], _align["building"], _align["progress"], _align["error"]
+    if res is None:
+        if building:
+            d, t = prog or (0, 0)
+            return None, "정배열 종목을 모으는 중입니다" + (f" ({d}/{t})" if t else "") + " — 서버를 켠 직후엔 3~5분 걸립니다"
+        return None, err or "아직 스캔 전입니다"
+    return res, ""
+
+
 # 종목 일별 수급(최근 7거래일 표)은 "오늘을 뺀 지난 거래일"만 담기 때문에 하루 안에는 값이 변하지 않는다
 # (어제 값은 어제 20시 NXT 마감 뒤 확정). 그래서 KST 날짜가 바뀔 때까지 종목별로 메모리에 보관하고,
 # 한투 호출(1.3초)은 종목당 하루 한 번만 한다. 한투 성공 응답만 저장(네이버 대체 응답은 저장 안 함).
@@ -1666,6 +1776,9 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(200, mdd_data())
             except Exception as e:
                 self.send_json(503, {"error": str(e)[:120]})
+        elif self.path.startswith("/api/align"):
+            data, err = align_data()
+            self.send_json(200 if data else 503, data or {"error": err})
         elif self.path.startswith("/api/market/down20"):
             data, err = down20_data()
             if data is None:
@@ -3901,6 +4014,7 @@ if __name__ == "__main__":
     threading.Thread(target=_alert_scheduler, daemon=True).start()
     threading.Thread(target=_regime_scheduler, daemon=True).start()
     threading.Thread(target=_breadth_scheduler, daemon=True).start()
+    threading.Thread(target=_align_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()

@@ -2,6 +2,6 @@ services:
   - type: web
     name: market-dashboard
     env: python
-    plan: free
+    plan: starter
     buildCommand: ""
     startCommand: "python3 server.py"
