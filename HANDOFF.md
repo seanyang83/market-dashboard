@@ -742,4 +742,4 @@ Render 유료 인스턴스(항상 켜짐) + 서버 안 스케줄러로 모든 �
 `/leader`의 "분기 실적" 카드 제목 오른쪽에 **분기 | 연간** 탭(선택은 localStorage `leaderEarnMode`). 연간을 누르면 같은 카드의 표와 차트가 연간으로 바뀐다.
 - 표(연간): 연도(비12월 결산은 `(N월 결산)` 표기)·매출액·매출 YoY·영업이익·이익률·증가율 YoY·가속(전년 증가율 대비 %p)·지배순이익·순이익 YoY. 최근 8개 연도 + 컨센서스 연도(E). 차트: 주가(주봉 종가, `priceWeeklyAll` 약 7년) / 영업이익 막대 / 영업이익 증가율 YoY, 가로축은 연도 슬롯.
 - 서버 `leader.analyze()`가 `annual`(리스트)·`annualNote`·`priceWeeklyAll`을 같이 돌려준다. 데이터: 네이버 `finance/annual`(최근 3개 연도+컨센서스 1개)을 한투 손익계산서 연간(`FID_DIV_CLS_CODE=0`, `_fetch_kis_annual`, 연 단위 값이라 누적 풀이 없음)과 `_merge_quarters`로 합친다(겹치면 네이버). 증가율·가속은 `_compute_rates(..., step=12)` 재사용. 한투 연간 조회가 실패하면 네이버 3개 연도만 쓰고 `annualNote`로 알림.
-- 로컬은 한투 키가 없어 네이버 3개 연도만 확인함 — 운영에서 한투 연간이 몇 개 연도까지 오는지는 배포 후 확인 필요(`/api/leader/income?code=…&div=0` 디버그 경로).
+- 로컬은 한투 키가 없어 네이버 3개 연도만 확인함 — 운영에서 한투 연간이 몇 개 연도까지 오는지는 배포 후 확인 필요(`/api/ops/kis-income?key=…&code=…&div=0` 디버그 경로).
