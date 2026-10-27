@@ -93,11 +93,14 @@
   table.al td.nm { font-weight: 700; white-space: normal; }
   table.al td small { display: block; }
   table.al .rk { color: var(--sub); font-weight: 500; font-size: 11px; margin-right: 5px; }
-  .sec-row { display: grid; grid-template-columns: 112px 1fr 84px; align-items: center; gap: 8px; padding: 5px 4px; border-radius: 8px; cursor: pointer; }
+  .sec-row { display: grid; grid-template-columns: 124px 1fr 96px; align-items: center; gap: 8px; padding: 5px 4px; border-radius: 8px; cursor: pointer; }
   .sec-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
   .sec-row.on { background: color-mix(in srgb, var(--accent) 12%, transparent); outline: 1px solid var(--accent); }
   .sec-row.small { opacity: .55; }
   .sec-name { font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sec-name small { display: block; font-size: 10.5px; font-weight: 500; color: var(--sub); }
+  .sort-row { display: flex; gap: 6px; margin-top: 10px; align-items: center; }
+  .sort-row span { font-size: 11.5px; color: var(--sub); }
   .sec-bar { height: 14px; background: var(--bg); border-radius: 4px; overflow: hidden; }
   .sec-bar i { display: block; height: 100%; background: var(--up); border-radius: 4px; }
   .sec-val { font-size: 12px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; }
@@ -135,7 +138,10 @@
   <div id="viewAlign" class="hidden">
     <div class="card hidden" id="secCard">
       <h2>업종별 정배열 비율</h2>
-      <div class="sub">업종 종목 중 정배열인 비율이 높은 순 · 막대를 누르면 아래 목록이 그 업종만 남습니다</div>
+      <div class="sub">막대를 누르면 아래 목록이 그 업종만 남습니다 · 상승률 = 정배열이 시작된 주의 종가 대비 현재가 (업종 내 정배열 종목의 중앙값)</div>
+      <div class="sort-row"><span>정렬</span>
+        <button class="etab active" data-sort="ratio">비율</button><button class="etab" data-sort="aligned">정배열 수</button><button class="etab" data-sort="gain">상승률</button>
+      </div>
       <div id="secRows" style="margin-top:10px;"></div>
       <button class="sec-more hidden" id="secMore"></button>
       <div class="sub" id="secNote" style="margin-top:6px;"></div>
@@ -592,7 +598,7 @@ function setView(v) {
 }
 document.querySelectorAll(".ptab").forEach((b) => b.addEventListener("click", () => setView(b.dataset.view)));
 
-let alData = null, alFilter = null, secAll = false;
+let alData = null, alFilter = null, secAll = false, secSort = "ratio";
 
 function renderAlign() {
   const d = alData;
@@ -604,23 +610,27 @@ function renderAlign() {
   if (alFilter) $("alFiltBtn").addEventListener("click", () => { alFilter = null; renderAlign(); });
 
   // 업종별 정배열 비율 막대 (스캔 대상 업종 종목 중 정배열 비율 순, 종목 5개 미만 업종은 흐리게 맨 아래)
-  const secs = (d.sectors || []).filter((r) => r.aligned > 0);
+  const small = (r) => r.total < 5 || r.aligned < 2;
+  const keyOf = { ratio: (r) => r.ratio, aligned: (r) => r.aligned, gain: (r) => r.medianGain ?? -1e9 }[secSort];
+  const secs = (d.sectors || []).filter((r) => r.aligned > 0)
+    .sort((a, b) => (small(a) - small(b)) || (keyOf(b) - keyOf(a)) || (b.aligned - a.aligned));
+  document.querySelectorAll(".sort-row .etab").forEach((b) => b.classList.toggle("active", b.dataset.sort === secSort));
   $("secCard").classList.toggle("hidden", !d.sectors);
   if (d.sectors) {
     const shownSecs = secAll ? secs : secs.slice(0, 15);
     const maxRatio = Math.max(1, ...secs.map((r) => r.ratio));   // 막대는 가장 높은 업종을 꽉 채우는 상대 길이
     $("secRows").innerHTML = shownSecs.map((r) => `
       <div class="sec-row${alFilter === r.name ? " on" : ""}${r.total < 5 || r.aligned < 2 ? " small" : ""}" data-sec="${r.name}">
-        <div class="sec-name">${r.name}</div>
+        <div class="sec-name">${r.name}<small>평균 ${fmt(r.avgWeeks, 0)}주${r.new ? ` · 신규 ${r.new}` : ""}</small></div>
         <div class="sec-bar"><i style="width:${Math.max(r.ratio / maxRatio * 100, 3)}%"></i></div>
-        <div class="sec-val">${r.aligned}/${r.total} · ${fmt(r.ratio, 0)}%<small>평균 ${fmt(r.avgWeeks, 0)}주${r.new ? ` · 신규 ${r.new}` : ""}</small></div>
+        <div class="sec-val">${r.aligned}/${r.total} · ${fmt(r.ratio, 0)}%<small class="${r.medianGain >= 0 ? "up" : "down"}">상승 ${sign(r.medianGain)}${fmt(r.medianGain, 0)}%</small></div>
       </div>`).join("");
     $("secRows").querySelectorAll(".sec-row").forEach((el) => el.addEventListener("click", () => {
       alFilter = alFilter === el.dataset.sec ? null : el.dataset.sec; renderAlign();
     }));
     $("secMore").classList.toggle("hidden", secs.length <= 15);
     $("secMore").textContent = secAll ? "접기" : `정배열 있는 업종 ${secs.length}개 모두 보기`;
-    $("secNote").textContent = "업종 = 네이버 세분 업종. 신규 = 정배열이 된 지 4주 이하. 막대 길이는 가장 높은 업종 기준 상대값. 종목 5개 미만이거나 정배열이 1개뿐인 업종은 우연히 높게 나올 수 있어 흐리게 맨 아래.";
+    $("secNote").textContent = "업종 = 네이버 세분 업종. 신규 = 정배열이 된 지 4주 이하. 막대 길이(정배열 비율)는 가장 높은 업종 기준 상대값. 종목 5개 미만이거나 정배열이 1개뿐인 업종은 우연히 높게 나올 수 있어 흐리게 맨 아래.";
   }
 
   $("alBody").innerHTML = items.map((it, i) => `
@@ -650,6 +660,7 @@ async function loadAlign() {
     setTimeout(() => { if (!document.hidden && !$("viewAlign").classList.contains("hidden")) loadAlign(); }, 15000);
   }
 }
+document.querySelectorAll(".sort-row .etab").forEach((b) => b.addEventListener("click", () => { secSort = b.dataset.sort; renderAlign(); }));
 $("secMore").addEventListener("click", () => { secAll = !secAll; renderAlign(); });
 
 async function load(code, name) {

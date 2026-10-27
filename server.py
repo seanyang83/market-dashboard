@@ -1544,7 +1544,8 @@ def _align_sectors(items, stocks, mapping):
         it["sector"] = sec
         if not sec:
             continue
-        r = rows.setdefault(sec, {"name": sec, "aligned": 0, "weeksSum": 0, "new": 0})
+        r = rows.setdefault(sec, {"name": sec, "aligned": 0, "weeksSum": 0, "new": 0, "gains": []})
+        r["gains"].append(it["gainSincePct"])
         r["aligned"] += 1
         r["weeksSum"] += it["weeks"]
         r["new"] += 1 if it["weeks"] <= 4 else 0
@@ -1552,8 +1553,12 @@ def _align_sectors(items, stocks, mapping):
     for sec, n in total.items():
         if n < ALIGN_SECTOR_MIN:
             continue
-        r = rows.get(sec, {"name": sec, "aligned": 0, "weeksSum": 0, "new": 0})
-        out.append({"name": sec, "total": n, "aligned": r["aligned"], "ratio": round(r["aligned"] / n * 100, 1),
+        r = rows.get(sec, {"name": sec, "aligned": 0, "weeksSum": 0, "new": 0, "gains": []})
+        g = sorted(r["gains"])
+        med = (g[len(g) // 2] if len(g) % 2 else (g[len(g) // 2 - 1] + g[len(g) // 2]) / 2) if g else None
+        out.append({"medianGain": round(med, 1) if med is not None else None,
+                    "avgGain": round(sum(g) / len(g), 1) if g else None,
+                    "name": sec, "total": n, "aligned": r["aligned"], "ratio": round(r["aligned"] / n * 100, 1),
                     "avgWeeks": round(r["weeksSum"] / r["aligned"], 1) if r["aligned"] else None, "new": r["new"]})
     out.sort(key=lambda r: (r["total"] < 5 or r["aligned"] < 2, -r["ratio"], -r["aligned"]))   # 표본이 작거나 1개뿐인 업종은 아래로
     return out
