@@ -18,6 +18,7 @@ import http.server
 import json
 import leader
 import alignscan
+import regime
 import rsirule
 import os
 import re
@@ -1841,6 +1842,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_trading_value()
         elif self.path.startswith("/api/market/breadth"):
             self.handle_market_breadth()
+        elif self.path.startswith("/api/ops/snapshot"):
+            self.handle_ops_snapshot()
         elif self.path.startswith("/api/ops/score-snapshot"):
             self.handle_ops_score_snapshot()
         elif self.path.startswith("/api/ops/stock-flow"):
@@ -2362,6 +2365,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"ok": True, "row": row})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_ops_snapshot(self):
+        # 일지 시트용 하루 스냅샷(Apps Script가 호출). TELEGRAM_SUMMARY_KEY로 보호.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        try:
+            self.send_json(200, market_snapshot())
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
 
     def handle_ops_timing(self):
         # 점검용: 종베가 새로고침 때 부르는 종목 API들의 서버 응답시간(ms). 각 API를 1회 순차 호출(콜드),
@@ -3999,6 +4012,74 @@ def _signal_map(lines, keys, fallback_key=None):
         if key and key not in out:
             out[key] = _SIGNAL_LETTER[l[0]]
     return " ".join(f"{k}:{v}" for k, v in out.items())
+
+
+# --- 일지 시트용 하루 스냅샷 (/api/ops/snapshot) ---
+# 구글 시트의 Apps Script가 장 마감 후(15:30 이후) 이 주소를 불러 `스냅샷` 탭에 하루 한 줄을 쌓는다(sheets/snapshot.gs).
+# 서버는 JSON만 내려주고 저장하지 않는다(이력은 시트가 가진다). 항목별로 따로 감싸서 하나가 실패해도 나머지는 준다.
+# 종베 점수 종목은 TELEGRAM_SUMMARY_STOCK_CODE 고정(사용자 선택: 방식 B).
+def market_snapshot():
+    now = _kst_now()
+    mins = now.hour * 60 + now.minute
+    out = {
+        "date": now.strftime("%Y-%m-%d"),
+        "dayKey": f"{now.strftime('%y.%m.%d')}({'월화수목금토일'[now.weekday()]})",   # 일지 날짜 칸과 같은 모양
+        "asOf": now.strftime("%H:%M"),
+        "afterClose": mins >= 15 * 60 + 30,
+        "errors": {},
+    }
+
+    def part(name, fn):
+        try:
+            out[name] = fn()
+        except Exception as e:
+            out["errors"][name] = str(e)[:100]
+
+    def scores():
+        macro, _ml, stock, stock_name, _sl = _compute_scores()
+        return {"macro": macro, "stock": stock, "stockName": stock_name, "stockCode": TELEGRAM_SUMMARY_STOCK_CODE}
+
+    def indices():
+        res = {}
+        for name in ("KOSPI", "KOSDAQ"):
+            closes = _fetch_index_closes(name, 400)
+            dates = sorted(closes)
+            d = regime.detail([closes[x] for x in dates])
+            if d:
+                d["sinceDate"] = dates[d.pop("sinceIndex")]
+                d["lastDate"] = dates[-1]
+            res[name.lower()] = d
+        return res
+
+    def mdd():
+        m = mdd_data()
+        res = {}
+        for mk in ("kospi", "kosdaq"):
+            res[mk] = {k: {f: m[mk][k].get(f) for f in ("now", "mdd", "mddDate", "peakDate", "lastDate")} for k in ("index", "credit")}
+        return res
+
+    def flow():
+        d, err = down20_data()
+        if d is None:
+            raise ValueError(err)
+        return {"ratio": d["ratio"], "below": d["below"], "total": d["total"]}
+
+    def trading():
+        t = _fetch_market_trading_value()
+        return {mk: round(t[mk][0]["value"] / 1e12, 2) for mk in ("kospi", "kosdaq") if t.get(mk)}
+
+    def align():
+        a, err = align_data()
+        if a is None:
+            raise ValueError(err)
+        secs = [r for r in (a.get("sectors") or []) if r["aligned"] >= 2 and r["total"] >= 5]
+        by_ratio = sorted(secs, key=lambda r: -r["ratio"])[:3]
+        return {"builtAt": a["builtAt"], "finalFor": a.get("finalFor"), "aligned": len(a["items"]), "total": a["total"],
+                "topSectors": " · ".join(f"{r['name']} {r['aligned']}/{r['total']}" for r in by_ratio)}
+
+    for name, fn in (("scores", scores), ("indices", indices), ("mdd", mdd), ("down20", flow), ("trading", trading), ("align", align)):
+        part(name, fn)
+    return out
 
 
 def build_score_snapshot(slot):
