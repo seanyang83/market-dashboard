@@ -19,7 +19,8 @@ var COLS = [
   '코스닥 종가', '코스닥 Stage', '코스닥 20일선대비%', '코스닥 60일고점대비%', '코스닥 올해낙폭%', '코스닥 올해MDD%',
   '신용 코스피낙폭%', '신용 코스닥낙폭%', '신용 기준일',
   '20Down%', '거래대금 코스피(조)', '거래대금 코스닥(조)',
-  '정배열 종목수', '정배열 상위업종', '정배열 기준'
+  '정배열 종목수', '정배열 상위업종', '정배열 기준',
+  '코스피 등락%', '코스닥 등락%'
 ];
 
 function get_(o, path) {
@@ -59,6 +60,9 @@ function snapshotNow() {
   if (sh.getLastRow() === 0 || sh.getRange(1, 1).getValue() !== COLS[0]) {
     sh.getRange(1, 1, 1, COLS.length).setValues([COLS]).setFontWeight('bold').setBackground('#ffff00');
     sh.setFrozenRows(1);
+  } else if (sh.getRange(1, COLS.length).getValue() !== COLS[COLS.length - 1]) {
+    // 코드에 칸이 추가된 경우: 맨 뒤에 붙은 머리글만 채운다(기존 칸 위치는 그대로)
+    sh.getRange(1, 1, 1, COLS.length).setValues([COLS]).setFontWeight('bold').setBackground('#ffff00');
   }
   var d = new Date(s.date + 'T00:00:00+09:00');
   var v = {
@@ -87,7 +91,9 @@ function snapshotNow() {
     '거래대금 코스닥(조)': get_(s, ['trading', 'kosdaq']),
     '정배열 종목수': get_(s, ['align', 'aligned']),
     '정배열 상위업종': get_(s, ['align', 'topSectors']),
-    '정배열 기준': get_(s, ['align', 'builtAt'])
+    '정배열 기준': get_(s, ['align', 'builtAt']),
+    '코스피 등락%': get_(s, ['indices', 'kospi', 'chgPct']),
+    '코스닥 등락%': get_(s, ['indices', 'kosdaq', 'chgPct'])
   };
 
   // 같은 날짜 줄 찾기 (날짜 칸은 날짜 값)

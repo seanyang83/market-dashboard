@@ -4044,10 +4044,12 @@ def market_snapshot():
         for name in ("KOSPI", "KOSDAQ"):
             closes = _fetch_index_closes(name, 400)
             dates = sorted(closes)
-            d = regime.detail([closes[x] for x in dates])
+            vals = [closes[x] for x in dates]
+            d = regime.detail(vals)
             if d:
                 d["sinceDate"] = dates[d.pop("sinceIndex")]
                 d["lastDate"] = dates[-1]
+                d["chgPct"] = round((vals[-1] / vals[-2] - 1) * 100, 2) if len(vals) >= 2 else None   # 전일 종가 대비 등락률(%)
             res[name.lower()] = d
         return res
 
