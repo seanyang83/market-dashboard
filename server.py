@@ -797,18 +797,16 @@ _volume_rank_flows_lock = threading.Lock()
 
 def _stock_flow_signs(code):
     """-> {"foreignQty","institutionQty","programNetAmount"} (없으면 None 값). 한 종목 호출 2~3번.
-    장중에는 한투 가집계(추정치)를, 장 마감(15:30) 후에는 확정된 일별 수급의 오늘 행을 먼저 쓴다.
-    마감 후에도 가집계를 쓰면 마지막 추정 시점의 부호가 확정 값과 달라 Hit 뱃지가 틀릴 수 있다."""
+    장중에는 한투 가집계(추정치)를, 마감 후(15:40~)에는 종목 체크리스트와 같이 일별 수급의 오늘 행
+    (investor_today_row, 캐시 공유)을 먼저 쓴다. 마감 후에도 가집계를 쓰면 마지막 추정 시점의 부호가
+    확정 값과 달라 Hit 뱃지가 틀릴 수 있다(2026-11-02 하이닉스: 가집계 외국인 +1,000주, 확정 -150,254주)."""
     out = {"foreignQty": None, "institutionQty": None, "programNetAmount": None}
     now = _kst_now()
-    after_close = now.hour * 60 + now.minute >= 15 * 60 + 30
+    after_close = now.weekday() < 5 and now.hour * 60 + now.minute >= 15 * 60 + 40
 
     def from_daily():
         try:
-            data = kis_get("/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily", "FHPTJ04160001",
-                           {"FID_COND_MRKT_DIV_CODE": "UN", "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": "",
-                            "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": ""})
-            row = next((r for r in (data.get("output2") or []) if r.get("stck_bsop_date") == now.strftime("%Y%m%d")), None)
+            row = investor_today_row(code)
             if row:
                 out["foreignQty"] = int(row.get("frgn_ntby_qty", 0))
                 out["institutionQty"] = int(row.get("orgn_ntby_qty", 0))
