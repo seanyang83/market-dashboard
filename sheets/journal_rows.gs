@@ -17,10 +17,13 @@ var AHEAD_DAYS = 14;              // 오늘로부터 며칠 앞까지(2주) 날�
 var MEMO_ROWS = 2;                // 이 행까지(머리글·메모 줄)는 날짜 줄이 아니므로 건드리지 않는다 — 날짜 줄은 그 아래부터
 var SCAN_ROWS = 60;               // 메모 줄 아래로 이 줄 수 안에서 맨 위 날짜 줄을 찾는다
 var HOLIDAYS = ['2026-12-25', '2026-12-31', '2027-01-01'];   // 증시 휴장일(yyyy-mm-dd). 필요하면 더 적는다
-// 새 줄에 넣을 스냅샷 수식 칸. 비워 두면([]) 수식은 넣지 않는다. header 는 `스냅샷` 탭 머리글 이름.
+// 새 줄에 넣을 스냅샷 수식 칸. 비워 두면([]) 수식은 넣지 않는다. header 는 `스냅샷` 탭 머리글 이름,
+// pct 는 퍼센트 값(스냅샷엔 79 처럼 저장돼 있어 /100 후 퍼센트 서식), fmt 는 칸 서식.
 var FILL_COLS = [
-  { col: 'C', header: '코스피 등락%' },
-  { col: 'K', header: '종베 매크로%' }
+  { col: 'C', header: '코스피 등락%', pct: true, fmt: '0.00%' },
+  { col: 'K', header: '종베 매크로%', pct: true, fmt: '0%' },       // 종베 점수 매크로
+  { col: 'L', header: '종베 종목', pct: false, fmt: '' },           // 종베 종목명 (서버 설정 종목 고정: SK하이닉스)
+  { col: 'M', header: '종베 종목%', pct: true, fmt: '0%' }          // 종베 점수 종목
 ];
 
 function dayNum_(y, m, d) { return Math.round(Date.UTC(y, m - 1, d) / 86400000); }
@@ -47,9 +50,36 @@ function labelFor_(n) {                      // '26.11.19(수)'
   return String(p.y).slice(2) + '.' + pad_(p.m) + '.' + pad_(p.d) + '(' + '일월화수목금토'.charAt(p.dow) + ')';
 }
 
-function formulaFor_(header, r) {
+function formulaFor_(c, r) {
   return '=LET(k,IF(ISNUMBER($A' + r + '),$A' + r + ',DATE(2000+LEFT($A' + r + ',2),MID($A' + r + ',4,2),MID($A' + r + ',7,2))),'
-    + 'IFERROR(INDEX(스냅샷!$A:$AB,MATCH(k,스냅샷!$A:$A,0),MATCH("' + header + '",스냅샷!$1:$1,0))/100,""))';
+    + 'IFERROR(INDEX(스냅샷!$A:$AB,MATCH(k,스냅샷!$A:$A,0),MATCH("' + c.header + '",스냅샷!$1:$1,0))' + (c.pct ? '/100' : '') + ',""))';
+}
+
+function setFormulaCell_(sh, c, r) {
+  var cell = sh.getRange(c.col + r);
+  cell.setFormula(formulaFor_(c, r));
+  if (c.fmt) cell.setNumberFormat(c.fmt);
+}
+
+/** 오늘과 앞으로의 날짜 줄 중 FILL_COLS 칸이 비어 있는 곳에만 수식을 넣는다(이미 적은 값·수식은 건드리지 않음, 지난 날짜도 건드리지 않음). */
+function fillFormulas_(sh) {
+  var first = MEMO_ROWS + 1;
+  var last = Math.min(sh.getLastRow(), MEMO_ROWS + SCAN_ROWS);
+  if (last < first) return 0;
+  var t = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd').split('-');
+  var todayNum = dayNum_(+t[0], +t[1], +t[2]);
+  var vals = sh.getRange(first, 1, last - first + 1, 1).getValues();
+  var filled = 0;
+  for (var i = 0; i < vals.length; i++) {
+    var p = parseCell_(vals[i][0]);
+    if (!p || p.num < todayNum) continue;
+    var r = i + first;
+    FILL_COLS.forEach(function (c) {
+      var cell = sh.getRange(c.col + r);
+      if (cell.getFormula() === '' && cell.getValue() === '') { setFormulaCell_(sh, c, r); filled++; }
+    });
+  }
+  return filled;
 }
 
 function plan_(sh) {
@@ -89,7 +119,10 @@ function ensureJournalRows() {
     var sh = SpreadsheetApp.getActive().getSheetByName(JOURNAL_TAB);
     if (!sh) throw new Error('탭 "' + JOURNAL_TAB + '" 을 찾지 못했습니다');
     var pl = plan_(sh);
-    if (!pl.todo.length) { Logger.log('추가할 날짜 없음'); return; }
+    if (!pl.todo.length) {
+      Logger.log('추가할 날짜 없음 — 비어 있는 오늘·앞날 수식 칸 ' + fillFormulas_(sh) + '개 채움');
+      return;
+    }
     var lastCol = sh.getLastColumn(), r = pl.topRow;
     pl.todo.forEach(function (n) {          // 오래된 날짜부터 차례로 맨 위에 끼워 넣으므로 결과는 최신이 위
       sh.insertRowBefore(r);                // 새 줄이 r행, 이전 맨 위는 r+1행으로 내려간다
@@ -99,9 +132,9 @@ function ensureJournalRows() {
       var a = sh.getRange(r, 1);
       if (pl.top.isDate) a.setValue(new Date(iso_(n) + 'T00:00:00+09:00'));
       else a.setValue(labelFor_(n));
-      FILL_COLS.forEach(function (c) { sh.getRange(c.col + r).setFormula(formulaFor_(c.header, r)); });
+      FILL_COLS.forEach(function (c) { setFormulaCell_(sh, c, r); });
     });
-    Logger.log('일지에 날짜 ' + pl.todo.length + '개 추가: ' + pl.todo.map(labelFor_).join(', '));
+    Logger.log('일지에 날짜 ' + pl.todo.length + '개 추가: ' + pl.todo.map(labelFor_).join(', ') + ' / 비어 있던 수식 칸 ' + fillFormulas_(sh) + '개 추가 채움');
   } finally {
     lock.releaseLock();
   }
