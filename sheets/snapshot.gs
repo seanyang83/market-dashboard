@@ -6,11 +6,12 @@
  *  2) 왼쪽 톱니(프로젝트 설정) > 스크립트 속성 에 두 개 추가
  *       SNAPSHOT_URL = https://market-dashboard-gqxq.onrender.com/api/ops/snapshot
  *       SNAPSHOT_KEY = (텔레그램 요약에 쓰는 TELEGRAM_SUMMARY_KEY 값)
- *  3) 위 함수 선택 목록에서 setupTriggers 를 한 번 실행(권한 허용) -> 매일 15:30 이후와 17시경 자동 실행
+ *  3) 위 함수 선택 목록에서 setupTriggers 를 한 번 실행(권한 허용) -> 매일 16시경 하루 한 번 자동 실행
  *  4) snapshotNow 를 직접 한 번 실행해 `스냅샷` 탭에 오늘 줄이 생기는지 확인
  *
- * 장 마감 전(15:30 이전)이거나 휴장일이면 아무것도 쓰지 않는다. 같은 날짜 줄이 이미 있으면 값을 갱신한다
- * (15:45경 1차 기록, 17시경 2차로 정배열 칸 등을 채운다).
+ * 장 마감 전(15:30 이전)이거나 휴장일이면 아무것도 쓰지 않는다. 하루 한 번(16시경) 기록한다 — 서버의 정배열 스캔이
+ * 15:50부터 돌아 16시 전에 끝나므로, 아직 오늘 스캔이 아니면 몇 번 기다렸다가 쓴다. 같은 날짜 줄이 이미 있으면
+ * (직접 다시 실행한 경우) 값이 있는 칸만 갱신한다.
  */
 var TAB = '스냅샷';
 var COLS = [
@@ -54,6 +55,11 @@ function snapshotNow() {
   var kospi = get_(s, ['indices', 'kospi']);
   if (!s.afterClose) { Logger.log('장 마감 전(' + s.asOf + ') — 건너뜀'); return; }
   if (!kospi || kospi.lastDate !== today) { Logger.log('휴장일이거나 오늘 종가가 아직 없음 — 건너뜀'); return; }
+  // 정배열은 서버가 15:50부터 스캔해 하루 한 번 만든다. 아직 오늘 결과가 아니면(스캔 중) 최대 150초 기다린다.
+  for (var w = 0; w < 5 && get_(s, ['align', 'finalFor']) !== today; w++) {
+    Utilities.sleep(30000);
+    try { s = fetchSnapshot_(); kospi = get_(s, ['indices', 'kospi']); } catch (e) { break; }
+  }
 
   var ss = SpreadsheetApp.getActive();
   var sh = ss.getSheetByName(TAB) || ss.insertSheet(TAB);
@@ -117,11 +123,10 @@ function snapshotNow() {
   Logger.log('기록 완료: ' + s.date + ' (' + (isNew ? '새 줄' : '갱신') + ')');
 }
 
-/** 한 번만 실행: 평일 15:30~16:00 사이와 16:45~17:15 사이에 snapshotNow 를 부르는 트리거를 만든다. */
+/** 한 번만 실행: 매일 16시경(구글 트리거는 몇 분 오차가 있다) snapshotNow 를 부르는 트리거 하나를 만든다. 기존 트리거는 지운다. */
 function setupTriggers() {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'snapshotNow') ScriptApp.deleteTrigger(t);
   });
-  ScriptApp.newTrigger('snapshotNow').timeBased().everyDays(1).atHour(15).nearMinute(45).inTimezone('Asia/Seoul').create();
-  ScriptApp.newTrigger('snapshotNow').timeBased().everyDays(1).atHour(17).nearMinute(0).inTimezone('Asia/Seoul').create();
+  ScriptApp.newTrigger('snapshotNow').timeBased().everyDays(1).atHour(16).nearMinute(10).inTimezone('Asia/Seoul').create();
 }
