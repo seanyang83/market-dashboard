@@ -4086,7 +4086,22 @@ def market_snapshot():
         return {"builtAt": a["builtAt"], "finalFor": a.get("finalFor"), "aligned": len(a["items"]), "total": a["total"],
                 "topSectors": " · ".join(f"{r['name']} {r['aligned']}/{r['total']}" for r in by_ratio)}
 
-    for name, fn in (("scores", scores), ("indices", indices), ("mdd", mdd), ("down20", flow), ("trading", trading), ("align", align)):
+    def volume_rank():
+        # 거래대금 TOP10(KRX+NXT 합산, ETF·ETN·관리종목·거래정지 제외, 우선주 포함). 외/기/프는 순매수 부호(+1/-1/0, 모르면 None).
+        rank = _fetch_volume_rank()
+        flows = (_fetch_volume_rank_flows().get("flows") or {})
+        sign = lambda v: None if v is None else (1 if v > 0 else -1 if v < 0 else 0)
+        rows = []
+        for r in rank:
+            f = flows.get(r["code"]) or {}
+            rows.append({"rank": r["rank"], "code": r["code"], "name": r["name"], "price": r["price"],
+                         "changePct": round(r["changePct"], 2), "tradingValueEok": round(r["tradingValue"] / 1e8),
+                         "foreign": sign(f.get("foreignQty")), "institution": sign(f.get("institutionQty")),
+                         "program": sign(f.get("programNetAmount")), "hit": bool(f.get("pass"))})
+        return rows
+
+    for name, fn in (("scores", scores), ("indices", indices), ("mdd", mdd), ("down20", flow), ("trading", trading), ("align", align),
+                     ("volumeRank", volume_rank)):
         part(name, fn)
     return out
 
