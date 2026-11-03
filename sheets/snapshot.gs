@@ -21,8 +21,13 @@ var COLS = [
   '신용 코스피낙폭%', '신용 코스닥낙폭%', '신용 기준일',
   '20Down%', '거래대금 코스피(조)', '거래대금 코스닥(조)',
   '정배열 종목수', '정배열 상위업종', '정배열 기준',
-  '코스피 등락%', '코스닥 등락%'
+  '코스피 등락%', '코스닥 등락%',
+  'TOP10 요약', 'TOP10 Hit수'
 ];
+
+// 거래대금 TOP10 전용 탭(하루 10줄, 같은 날짜를 다시 실행하면 그날 줄을 지우고 다시 쓴다). 종목코드는 글자로 저장한다.
+var TOP_TAB = '거래대금TOP10';
+var TOP_COLS = ['날짜', '순위', '종목코드', '종목명', '현재가', '등락%', '거래대금(억)', '외국인', '기관', '프로그램', 'Hit', '기록시각'];
 
 function get_(o, path) {
   var cur = o;
@@ -99,7 +104,9 @@ function snapshotNow() {
     '정배열 상위업종': get_(s, ['align', 'topSectors']),
     '정배열 기준': get_(s, ['align', 'builtAt']),
     '코스피 등락%': get_(s, ['indices', 'kospi', 'chgPct']),
-    '코스닥 등락%': get_(s, ['indices', 'kosdaq', 'chgPct'])
+    '코스닥 등락%': get_(s, ['indices', 'kosdaq', 'chgPct']),
+    'TOP10 요약': topSummary_(s.volumeRank),
+    'TOP10 Hit수': s.volumeRank ? s.volumeRank.filter(function (r) { return r.hit; }).length : ''
   };
 
   // 같은 날짜 줄 찾기 (날짜 칸은 날짜 값)
@@ -119,8 +126,86 @@ function snapshotNow() {
     if (isNew || (val !== '' && val !== undefined)) sh.getRange(row, c + 1).setValue(val);
   }
   sh.getRange(row, 1).setNumberFormat('yyyy-mm-dd');
+  try { writeTop10_(ss, s, d); } catch (e) { Logger.log('TOP10 기록 실패: ' + e); }
   if (s.errors && Object.keys(s.errors).length) Logger.log('일부 항목 실패: ' + JSON.stringify(s.errors));
   Logger.log('기록 완료: ' + s.date + ' (' + (isNew ? '새 줄' : '갱신') + ')');
+}
+
+function topSummary_(rows) {
+  if (!rows || !rows.length) return '';
+  return rows.map(function (r) { return r.rank + ' ' + r.name + '(' + (r.changePct > 0 ? '+' : '') + r.changePct + ')'; }).join(' · ');
+}
+
+function yn_(v) { return v === null || v === undefined ? '' : (v > 0 ? 'Y' : 'N'); }
+
+/** 거래대금 TOP10을 `거래대금TOP10` 탭에 쓴다. 같은 날짜 줄이 있으면 먼저 지운다(날짜 칸은 날짜 값). */
+function writeTop10_(ss, s, d) {
+  var rows = s.volumeRank;
+  if (!rows || !rows.length) { Logger.log('TOP10 없음(서버 오류?) — 건너뜀: ' + JSON.stringify(s.errors || {})); return; }
+  var sh = ss.getSheetByName(TOP_TAB) || ss.insertSheet(TOP_TAB);
+  if (sh.getLastRow() === 0) {
+    sh.getRange(1, 1, 1, TOP_COLS.length).setValues([TOP_COLS]).setFontWeight('bold').setBackground('#ffff00');
+    sh.setFrozenRows(1);
+  }
+  var last = sh.getLastRow();
+  if (last > 1) {                                       // 같은 날짜 줄 삭제(아래에서부터)
+    var dates = sh.getRange(2, 1, last - 1, 1).getValues();
+    for (var i = dates.length - 1; i >= 0; i--) {
+      var x = dates[i][0];
+      if (x instanceof Date && Utilities.formatDate(x, 'Asia/Seoul', 'yyyy-MM-dd') === s.date) sh.deleteRow(i + 2);
+    }
+  }
+  var start = sh.getLastRow() + 1;
+  var values = rows.map(function (r) {
+    return [d, r.rank, String(r.code), r.name, r.price, r.changePct, r.tradingValueEok,
+            yn_(r.foreign), yn_(r.institution), yn_(r.program), r.hit ? 'Y' : 'N', s.asOf];
+  });
+  sh.getRange(start, 3, values.length, 1).setNumberFormat('@');          // 종목코드 000660 의 앞자리 0 보존
+  sh.getRange(start, 1, values.length, TOP_COLS.length).setValues(values);
+  sh.getRange(start, 1, values.length, 1).setNumberFormat('yyyy-mm-dd');
+  sh.getRange(start, 3, values.length, 1).setNumberFormat('@');
+  Logger.log('TOP10 기록: ' + s.date + ' ' + values.length + '줄');
+}
+
+/**
+ * 한 번만(필요할 때) 실행: `TOP10보기` 탭을 만든다 — 가로 최근 10일 × 세로 1~10위 표, 맨 아래 신규 진입·이탈.
+ * 어제 TOP10에 없던 종목은 주황 배경, 외국인·기관·프로그램이 모두 순매수(Hit)인 종목은 굵은 초록 글자.
+ * 데이터는 `거래대금TOP10` 탭에서 수식으로 읽으므로 새 날짜가 쌓이면 저절로 갱신된다.
+ */
+function buildTop10View() {
+  var ss = SpreadsheetApp.getActive();
+  var sh = ss.getSheetByName('TOP10보기') || ss.insertSheet('TOP10보기');
+  sh.clear();
+  sh.clearConditionalFormatRules();
+  var T = "'" + TOP_TAB + "'!";
+  var cols = 10;                                         // 최근 10일(B~K열)
+  sh.getRange('A1').setValue('순위');
+  for (var c = 0; c < cols; c++) {
+    var L = String.fromCharCode(66 + c);                 // B..K
+    sh.getRange(L + '1').setFormula('=IFERROR(LARGE(UNIQUE(' + T + '$A$2:$A),COLUMNS($B$1:' + L + '$1)),"")').setNumberFormat('mm-dd');
+    for (var r = 2; r <= 11; r++) {
+      sh.getRange(L + r).setFormula('=IFERROR(INDEX(FILTER(' + T + '$D$2:$D,' + T + '$A$2:$A=' + L + '$1,' + T + '$B$2:$B=$A' + r + '),1),"")');
+    }
+  }
+  for (var k = 1; k <= 10; k++) sh.getRange('A' + (k + 1)).setValue(k);
+  sh.getRange('A13').setValue('오늘 신규 진입');
+  sh.getRange('B13').setFormula('=IF($C$1="","-",IFERROR(TEXTJOIN(", ",TRUE,FILTER($B$2:$B$11,$B$2:$B$11<>"",ARRAYFORMULA(ISNA(MATCH($B$2:$B$11,$C$2:$C$11,0))))),"-"))');
+  sh.getRange('A14').setValue('오늘 이탈');
+  sh.getRange('B14').setFormula('=IF($C$1="","-",IFERROR(TEXTJOIN(", ",TRUE,FILTER($C$2:$C$11,$C$2:$C$11<>"",ARRAYFORMULA(ISNA(MATCH($C$2:$C$11,$B$2:$B$11,0))))),"-"))');
+  sh.getRange('A1:K1').setFontWeight('bold').setBackground('#ffff00');
+  sh.getRange('A13:A14').setFontWeight('bold');
+  sh.setFrozenRows(1);
+  sh.setColumnWidth(1, 110);
+  sh.setColumnWidths(2, cols, 110);
+  var rules = [];
+  rules.push(SpreadsheetApp.newConditionalFormatRule()    // 어제 TOP10에 없던 신규 진입
+    .whenFormulaSatisfied('=AND(B2<>"",C$1<>"",COUNTIF(C$2:C$11,B2)=0)')
+    .setBackground('#ffd9a0').setRanges([sh.getRange('B2:J11')]).build());
+  rules.push(SpreadsheetApp.newConditionalFormatRule()    // Hit(외·기·프 모두 순매수)
+    .whenFormulaSatisfied('=COUNTIFS(INDIRECT("\'' + TOP_TAB + '\'!$A:$A"),B$1,INDIRECT("\'' + TOP_TAB + '\'!$D:$D"),B2,INDIRECT("\'' + TOP_TAB + '\'!$K:$K"),"Y")>0')
+    .setBold(true).setFontColor('#0b8043').setRanges([sh.getRange('B2:K11')]).build());
+  sh.setConditionalFormatRules(rules);
+  Logger.log('TOP10보기 탭을 만들었습니다');
 }
 
 /** 한 번만 실행: 매일 16시경(구글 트리거는 몇 분 오차가 있다) snapshotNow 를 부르는 트리거 하나를 만든다. 기존 트리거는 지운다. */
