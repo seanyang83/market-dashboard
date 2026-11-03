@@ -1,7 +1,8 @@
 /**
  * 매매일지 탭에 날짜 줄을 미리 자동으로 만들어 둔다 (Apps Script, 시트 확장 프로그램 > Apps Script 에 snapshot.gs 와 같은 프로젝트로 붙인다).
  *
- * 일지는 "최신 날짜가 위" 순서다. 맨 위 날짜 줄 위에 새 줄을 끼워 넣고, 오늘 + AHEAD_DAYS 일까지 평일(공휴일 제외)을 채운다.
+ * 일지는 "최신 날짜가 위" 순서다. 1~3행(머리글·설명 줄·메모 줄)은 건드리지 않고, 4행부터 찾은 맨 위 날짜 줄 위에
+ * (= 메모 줄 바로 아래) 새 줄을 끼워 넣어 오늘 + AHEAD_DAYS 일까지 평일(공휴일 제외)을 채운다.
  * 새 줄은 바로 아래 줄(이전 맨 위)의 서식·드롭다운(Stage)을 그대로 복사하고, 날짜 칸과 FILL_COLS 수식 칸만 채운다.
  *
  * 쓰는 법:
@@ -12,8 +13,9 @@
  * 공휴일은 코드가 알 수 없으므로 HOLIDAYS 에 적어 둔다(휴장일 줄은 직접 지워도 된다 — 이미 지난 날짜는 다시 만들지 않는다).
  */
 var JOURNAL_TAB = '일지';          // 일지 탭 이름
-var AHEAD_DAYS = 16;              // 오늘로부터 며칠 앞까지 날짜 줄을 만들어 둘지
-var SCAN_ROWS = 60;               // 위에서부터 이 줄 수 안에서 맨 위 날짜 줄을 찾는다
+var AHEAD_DAYS = 14;              // 오늘로부터 며칠 앞까지(2주) 날짜 줄을 만들어 둘지
+var MEMO_ROWS = 3;                // 이 행까지(머리글·설명 줄·메모 줄)는 날짜 줄이 아니므로 건드리지 않는다 — 날짜 줄은 그 아래부터
+var SCAN_ROWS = 60;               // 메모 줄 아래로 이 줄 수 안에서 맨 위 날짜 줄을 찾는다
 var HOLIDAYS = ['2026-12-25', '2026-12-31', '2027-01-01'];   // 증시 휴장일(yyyy-mm-dd). 필요하면 더 적는다
 // 새 줄에 넣을 스냅샷 수식 칸. 비워 두면([]) 수식은 넣지 않는다. header 는 `스냅샷` 탭 머리글 이름.
 var FILL_COLS = [
@@ -51,14 +53,15 @@ function formulaFor_(header, r) {
 }
 
 function plan_(sh) {
-  var last = Math.min(sh.getLastRow(), SCAN_ROWS + 1);
-  var vals = sh.getRange(2, 1, Math.max(last - 1, 1), 1).getValues();
+  var first = MEMO_ROWS + 1;
+  var last = Math.min(sh.getLastRow(), MEMO_ROWS + SCAN_ROWS);
+  var vals = last >= first ? sh.getRange(first, 1, last - first + 1, 1).getValues() : [];
   var topRow = 0, top = null;
   for (var i = 0; i < vals.length; i++) {
     var p = parseCell_(vals[i][0]);
-    if (p) { topRow = i + 2; top = p; break; }
+    if (p) { topRow = i + first; top = p; break; }
   }
-  if (!top) throw new Error('일지 탭 A열(2~' + (SCAN_ROWS + 1) + '행)에서 날짜 줄을 찾지 못했습니다');
+  if (!top) throw new Error('일지 탭 A열(' + first + '~' + (MEMO_ROWS + SCAN_ROWS) + '행)에서 날짜 줄을 찾지 못했습니다');
   var t = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd').split('-');
   var until = dayNum_(+t[0], +t[1], +t[2]) + AHEAD_DAYS;
   var todo = [];
