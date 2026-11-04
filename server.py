@@ -845,6 +845,48 @@ def _stock_flow_signs(code):
     return out
 
 
+_krx_close_cache = {}   # (code, yyyymmdd) -> (price, prev_close)
+_krx_close_lock = threading.Lock()
+
+
+def _krx_regular_close(code, date):
+    """오늘 KRX 정규장 종가와 전일 종가 (price, prev) — 15:30 1분봉(종가 단일가 체결) 기준. 실패 시 None.
+    한투 현재가·일봉 종가는 16:00~18:00 시간외 단일가가 반영돼 계속 움직이므로 마감 기록용으로 쓰지 않는다."""
+    key = (code, date)
+    with _krx_close_lock:
+        if key in _krx_close_cache:
+            return _krx_close_cache[key]
+    data = kis_get(
+        "/uapi/domestic-stock/v1/quotations/inquire-time-dailychartprice", "FHKST03010230",
+        {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_INPUT_HOUR_1": "153000",
+         "FID_INPUT_DATE_1": date, "FID_PW_DATA_INCU_YN": "N", "FID_FAKE_TICK_INCU_YN": ""},
+    )
+    bars = [r for r in (data.get("output2") or []) if r.get("stck_bsop_date") == date and r.get("stck_cntg_hour")]
+    if not bars:
+        return None
+    last = max(bars, key=lambda r: r["stck_cntg_hour"])
+    if last["stck_cntg_hour"] != "153000":
+        return None
+    price = float(last.get("stck_prpr") or 0)
+    daily = kis_get(
+        "/uapi/domestic-stock/v1/quotations/inquire-daily-price", "FHKST01010400",
+        {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code, "FID_PERIOD_DIV_CODE": "D", "FID_ORG_ADJ_PRC": "0"},
+    )
+    rows = daily.get("output") or []
+    if rows and isinstance(rows, dict):
+        rows = rows.get("first") or []
+    if len(rows) < 2 or rows[0].get("stck_bsop_date") != date:
+        return None
+    prev = float(rows[1].get("stck_clpr") or 0)
+    if price <= 0 or prev <= 0:
+        return None
+    res = (price, prev)
+    with _krx_close_lock:
+        _krx_close_cache[key] = res
+    return res
+
+
+
 def _fetch_volume_rank_flows():
     rank = _fetch_volume_rank()
     key = tuple(r["code"] for r in rank)
@@ -4097,11 +4139,27 @@ def market_snapshot():
         rank = _fetch_volume_rank()
         flows = (_fetch_volume_rank_flows().get("flows") or {})
         sign = lambda v: None if v is None else (1 if v > 0 else -1 if v < 0 else 0)
+        # 평일 15:40 이후엔 가격·등락률을 KRX 정규장 종가(15:30)로 고정 — 시간외 단일가로 움직이는 값 대신. 실패하면 순위 응답 값.
+        kst = datetime.now(timezone.utc) + timedelta(hours=9)
+        closes = {}
+        if kst.weekday() < 5 and kst.hour * 60 + kst.minute >= 15 * 60 + 40 and rank:
+            date = kst.strftime("%Y%m%d")
+            def one(r):
+                try:
+                    return r["code"], _krx_regular_close(r["code"], date)
+                except Exception:
+                    return r["code"], None
+            with ThreadPoolExecutor(max_workers=5) as ex:
+                closes = dict(ex.map(one, rank))
         rows = []
         for r in rank:
             f = flows.get(r["code"]) or {}
-            rows.append({"rank": r["rank"], "code": r["code"], "name": r["name"], "price": r["price"],
-                         "changePct": round(r["changePct"], 2), "tradingValueEok": round(r["tradingValue"] / 1e8),
+            price, pct = r["price"], r["changePct"]
+            c = closes.get(r["code"])
+            if c:
+                price, pct = c[0], (c[0] / c[1] - 1) * 100
+            rows.append({"rank": r["rank"], "code": r["code"], "name": r["name"], "price": price,
+                         "changePct": round(pct, 2), "tradingValueEok": round(r["tradingValue"] / 1e8),
                          "foreign": sign(f.get("foreignQty")), "institution": sign(f.get("institutionQty")),
                          "program": sign(f.get("programNetAmount")), "hit": bool(f.get("pass"))})
         return rows
