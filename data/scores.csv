@@ -31,3 +31,4 @@ date,slot,time,macro,stock,stock_code,stock_name,macro_sig,stock_sig
 2026-11-03,close,05:29,59,83,000660,SK하이닉스,tnx:G wti:G ndq:R btc:R kospiDir:G kospiMa:G kospiFlow:O,candle:G usSector:R krSector:G ma:G
 2026-11-03,extended,19:40,45,8,000660,SK하이닉스,tnx:G wti:R ndq:G btc:G kospiDir:R kospiMa:R kospiFlow:R,candle:Y usSector:R krSector:R ma:R flow:R program:R
 2026-11-04,close,03:01,40,18,000660,SK하이닉스,tnx:R wti:G ndq:G btc:G kospiDir:R kospiMa:R kospiFlow:R,candle:Y usSector:G krSector:R ma:R flow:R program:R
+2026-11-04,extended,19:40,59,52,000660,SK하이닉스,tnx:R wti:G ndq:G btc:G kospiDir:G kospiMa:R kospiFlow:O,candle:Y usSector:G krSector:G ma:Y flow:Y program:R
