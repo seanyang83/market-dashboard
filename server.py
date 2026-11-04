@@ -875,9 +875,11 @@ def _krx_regular_close(code, date):
     rows = daily.get("output") or []
     if rows and isinstance(rows, dict):
         rows = rows.get("first") or []
-    if len(rows) < 2 or rows[0].get("stck_bsop_date") != date:
+    if not rows or rows[0].get("stck_bsop_date") != date:
         return None
-    prev = float(rows[1].get("stck_clpr") or 0)
+    # 전일 종가 = 오늘 행의 종가 - 전일대비 (전일대비는 시간외 값과 같이 움직이므로 뺀 결과는 고정). 신규 상장처럼 일봉이 1행뿐이어도 된다.
+    vrss = abs(float(rows[0].get("prdy_vrss") or 0)) * (-1 if rows[0].get("prdy_vrss_sign") in ("4", "5") else 1)
+    prev = float(rows[0].get("stck_clpr") or 0) - vrss
     if price <= 0 or prev <= 0:
         return None
     res = (price, prev)
