@@ -750,20 +750,26 @@ def _fetch_volume_rank():
     except Exception:
         nxt_rows = []  # NXT 조회 실패해도 KRX만으로는 계속 보여줌
 
+    # 거래대금·거래량은 KRX+NXT 합산. 가격·등락률·방향은 KRX(정규장) 값을 우선 쓴다 —
+    # NXT가 덮어쓰면 KRX 마감 후엔 종가가 아니라 시간외 가격이 보인다(KRX 행이 없을 때만 NXT 값).
     merged = {}
-    for r in krx_rows + nxt_rows:
-        code = r.get("mksc_shrn_iscd")
-        if not code:
-            continue
-        entry = merged.setdefault(code, {
-            "name": r.get("hts_kor_isnm"), "price": 0.0,
-            "sign": "3", "pct": 0.0, "tr_pbmn": 0, "vol": 0,
-        })
-        entry["price"] = float(r.get("stck_prpr", 0) or 0)
-        entry["sign"] = r.get("prdy_vrss_sign", entry["sign"])
-        entry["pct"] = abs(float(r.get("prdy_ctrt", 0) or 0))
-        entry["tr_pbmn"] += int(r.get("acml_tr_pbmn", 0) or 0)
-        entry["vol"] += int(r.get("acml_vol", 0) or 0)
+    for src, rows in (("krx", krx_rows), ("nxt", nxt_rows)):
+        for r in rows:
+            code = r.get("mksc_shrn_iscd")
+            if not code:
+                continue
+            entry = merged.setdefault(code, {
+                "name": r.get("hts_kor_isnm"), "price": 0.0,
+                "sign": "3", "pct": 0.0, "tr_pbmn": 0, "vol": 0, "has_krx": False,
+            })
+            price = float(r.get("stck_prpr", 0) or 0)
+            if src == "krx" or (not entry["has_krx"] and price > 0):
+                entry["price"] = price
+                entry["sign"] = r.get("prdy_vrss_sign", entry["sign"])
+                entry["pct"] = abs(float(r.get("prdy_ctrt", 0) or 0))
+                entry["has_krx"] = entry["has_krx"] or src == "krx"
+            entry["tr_pbmn"] += int(r.get("acml_tr_pbmn", 0) or 0)
+            entry["vol"] += int(r.get("acml_vol", 0) or 0)
 
     ranked = sorted(merged.items(), key=lambda kv: -kv[1]["tr_pbmn"])[:10]
     result = []
