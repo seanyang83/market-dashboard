@@ -100,6 +100,12 @@
   tr.now td { font-weight: 700; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); }
   tr.now.over td { background: var(--warn-bg); }
   tr.now td small { font-weight: 600; color: var(--accent); }
+  #tbl table, #limitOut table { font-size: 12px; }
+  #tbl th, #tbl td, #limitOut th, #limitOut td { padding: 6px 5px; }
+  .nm3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; width: 64px; margin-left: auto; text-align: right; line-height: 1.25; word-break: keep-all; overflow-wrap: anywhere; }
+  .nm3.l { margin-left: 0; text-align: left; width: 92px; }
+  small.tg { display: block; font-size: 10.5px; margin-top: 1px; }
+  tr td small.px.c { color: inherit; opacity: .8; }
   small.px { display: block; font-size: 10.5px; font-weight: 400; color: var(--sub); margin-top: 1px; line-height: 1.2; }
   tr.lim td small.px, tr.now td small.px { color: var(--sub); font-weight: 400; }
   .note { font-size: 12px; color: var(--sub); line-height: 1.6; margin-top: 8px; }
@@ -624,7 +630,7 @@
 
     // 표
     if (!ok.length) { $('tbl').innerHTML = ''; $('bars').innerHTML = ''; renderLimit(ok, limit, totalAsset, NaN); renderPicker(true); renderCalc(); return; }
-    var head = '<tr><th>하락률</th><th>합계</th>' + (totalAsset > 0 ? '<th>자산 대비</th>' : '') + ok.map(function (x) { return '<th>' + esc(x.h.name) + '</th>'; }).join('') + '</tr>';
+    var head = '<tr><th>하락률</th><th>합계' + (totalAsset > 0 ? '<small class="px">자산 대비</small>' : '') + '</th>' + ok.map(function (x) { return '<th title="' + esc(x.h.name) + '"><div class="nm3">' + esc(x.h.name) + '</div></th>'; }).join('') + '</tr>';
     var body = '';
     var ps = limit > 0 ? solveP(ok, limit) : NaN;             // 한도에 닿는 하락률(%)
     if (!(ps > 0 && ps < 100)) ps = NaN;
@@ -656,10 +662,9 @@
         tot += l; cells += '<td class="' + cls(l) + '">' + fmtS(l) + (px > 0 ? '<small class="px">' + fmt(px) + '</small>' : '') + '</td>';
       });
       var over = lv.now ? (limit > 0 && -tot >= limit) : (limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9);
-      var label = lv.now ? '<b>-' + lv.p.toFixed(2) + '%</b> <small>현재</small>'
-        : lv.lim ? '<b>-' + lv.p.toFixed(2) + '%</b> <small>한도</small>' : '<b>-' + lv.p + '%</b>';
-      body += '<tr class="' + (over ? 'over ' : '') + (lv.lim ? 'lim ' : '') + (lv.now ? 'now' : '') + '"><td>' + label + '</td><td class="tot ' + cls(tot) + '">' + fmtS(tot) + '</td>' +
-        (totalAsset > 0 ? '<td class="' + cls(tot) + '">' + pct(tot / totalAsset * 100) + '</td>' : '') + cells + '</tr>';
+      var label = lv.now ? '<b>-' + lv.p.toFixed(2) + '%</b><small class="tg">현재</small>'
+        : lv.lim ? '<b>-' + lv.p.toFixed(2) + '%</b><small class="tg">한도</small>' : '<b>-' + lv.p + '%</b>';
+      body += '<tr class="' + (over ? 'over ' : '') + (lv.lim ? 'lim ' : '') + (lv.now ? 'now' : '') + '"><td>' + label + '</td><td class="tot ' + cls(tot) + '">' + fmtS(tot) + (totalAsset > 0 ? '<small class="px c">' + pct(tot / totalAsset * 100) + '</small>' : '') + '</td>' + cells + '</tr>';
     });
     $('tbl').innerHTML = '<div class="tbl-wrap"><table>' + head + body + '</table></div>' +
       '<div class="note">종목 칸 아래 작은 숫자는 그 하락률일 때의 주가입니다(호가단위 반올림).</div>' +
@@ -707,7 +712,7 @@
       var stop = roundTick(x.base * (1 - ps / 100), x.h.market, 'ceil');
       var lossHere = x.q * (x.base - stop) + x.q * stop * rateOf(x);
       var vsAvg = x.a > 0 ? (stop / x.a - 1) * 100 : NaN;
-      html += '<tr><td>' + esc(x.h.name) + '</td><td>' + fmt(stop) + '</td><td class="neg">' + fmtS(-lossHere) + '</td><td class="' + cls(vsAvg) + '">' + (isFinite(vsAvg) ? pct(vsAvg) : '-') + '</td></tr>';
+      html += '<tr><td><div class="nm3 l">' + esc(x.h.name) + '</div></td><td>' + fmt(stop) + '</td><td class="neg">' + fmtS(-lossHere) + '</td><td class="' + cls(vsAvg) + '">' + (isFinite(vsAvg) ? pct(vsAvg) : '-') + '</td></tr>';
     });
     html += '</table></div>';
     if (S.basis === 'cur') html += '<div class="note">현재가 기준이라 "종목 손실"은 지금부터 더 잃는 금액이고, "매입가 대비"는 그 손절가가 평단에서 몇 %인지입니다.</div>';
