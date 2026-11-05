@@ -69,6 +69,12 @@
     border: 1px solid var(--border); background: var(--bg); color: var(--sub); font-weight: 600;
   }
   .toggle button.on { border-color: var(--accent); color: var(--accent); }
+  .toggle.sm { margin-top: 6px; }
+  .toggle.sm button { padding: 6px 4px; font-size: 12.5px; }
+  details#costBox { margin-top: 8px; }
+  details#costBox summary { font-size: 12px; color: var(--sub); cursor: pointer; padding: 2px 0; }
+  details#costBox[open] summary { color: var(--accent); }
+  #basisNote { margin-top: 6px; }
   .tbl-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
   table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
   th, td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); background: var(--card-bg); }
@@ -128,25 +134,26 @@
 
     <div class="card">
       <h2>기준 설정</h2>
-      <div class="toggle" id="basis">
+      <div class="toggle sm" id="basis">
         <button data-b="avg" class="on">평단 기준</button>
         <button data-b="cur">현재가 기준</button>
       </div>
-      <div class="note" id="basisNote"></div>
-      <div class="toggle" id="costTog" style="margin-top:12px">
+      <div class="toggle sm" id="costTog">
         <button data-c="on" class="on">매도 비용 포함</button>
         <button data-c="off">제외</button>
       </div>
-      <div id="costBox">
-        <div class="grid2" style="margin-top:10px">
+      <div class="note" id="basisNote"></div>
+      <details id="costBox">
+        <summary id="costSum"></summary>
+        <div class="grid2" style="margin-top:8px">
           <div><label for="tax">증권거래세 (농특세 포함, %)</label><input id="tax" inputmode="decimal"></div>
           <div><label for="fee">매도 수수료 (%)</label><input id="fee" inputmode="decimal"></div>
         </div>
-        <div class="note">손실금 = 가격 하락분 + 그 가격에 팔 때의 비용(매도대금 × 세율). 세율·수수료율은 직접 입력하는 값이라 개편되거나 우대수수료가 달라도 바로 맞출 수 있습니다. ETF로 지정한 종목은 거래세를 뺍니다. 현재가 기준에서도 매도 비용은 그 가격에 팔 때 드는 전체 비용을 더합니다.</div>
-      </div>
-      <div class="grid2" style="margin-top:12px">
-        <div><label for="total">총 자산 (선택, 원)</label><input id="total" inputmode="numeric" placeholder="예: 50,000,000"></div>
-        <div><label for="limit">감당 가능한 손실금 (선택, 원)</label><input id="limit" inputmode="numeric" placeholder="예: 2,000,000"></div>
+        <div class="note">손실금 = 가격 하락분 + 그 가격에 팔 때의 비용(매도대금 × 세율). ETF로 지정한 종목은 거래세를 뺍니다. 현재가 기준에서도 매도 비용은 팔 때 드는 전체 비용을 더합니다.</div>
+      </details>
+      <div class="grid2" style="margin-top:10px">
+        <div><label for="total">총 자산 (선택, 원)</label><input id="total" inputmode="numeric" placeholder="50,000,000"></div>
+        <div><label for="limit">감당 가능한 손실금 (선택, 원)</label><input id="limit" inputmode="numeric" placeholder="2,000,000"></div>
       </div>
     </div>
 
@@ -206,7 +213,8 @@
 <script>
 (function () {
   var KEY = 'risk.v1';
-  var S = { holdings: [], total: '', limit: '', basis: 'avg', costOn: true, tax: '0.20', fee: '0.0045' };
+  var S = { holdings: [], total: '', limit: '', basis: 'avg', costOn: true, tax: '0.20', fee: '0.0045', sel: '' };
+  var calcManual = false, calcPref = 'p';   // 계산기 기준가를 직접 입력 중인지 / 현재가(p)·평단(a) 중 선호
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- 유틸 ----------
@@ -244,14 +252,14 @@
       var d = JSON.parse(localStorage.getItem(KEY) || '{}');
       S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false }; });
       S.total = d.total || ''; S.limit = d.limit || ''; S.basis = d.basis === 'cur' ? 'cur' : 'avg';
-      S.costOn = d.costOn !== false; if (d.tax != null) S.tax = d.tax; if (d.fee != null) S.fee = (d.fee === '0.015' ? S.fee : d.fee);   // 예전 기본값(0.015) 그대로면 새 기본값으로
+      S.sel = d.sel || ''; S.costOn = d.costOn !== false; if (d.tax != null) S.tax = d.tax; if (d.fee != null) S.fee = (d.fee === '0.015' ? S.fee : d.fee);   // 예전 기본값(0.015) 그대로면 새 기본값으로
     } catch (e) { }
   }
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
         holdings: S.holdings.map(function (h) { return { code: h.code, name: h.name, market: h.market, qty: h.qty, avg: h.avg }; }),
-        total: S.total, limit: S.limit, basis: S.basis, costOn: S.costOn, tax: S.tax, fee: S.fee
+        total: S.total, limit: S.limit, basis: S.basis, costOn: S.costOn, tax: S.tax, fee: S.fee, sel: S.sel
       }));
     } catch (e) { }
   }
@@ -309,6 +317,7 @@
     $('q').value = ''; $('results').innerHTML = '';
     if (S.holdings.some(function (h) { return h.code === it.code; })) return;
     S.holdings.push({ code: it.code, name: it.name, market: it.market || 'kospi', qty: '', avg: '', price: NaN, priceManual: false });
+    S.sel = it.code; calcManual = false; calcPref = 'p';       // 새로 넣은 종목이 하락률 계산기에 바로 연동
     save(); renderHolds(); renderAll(); loadPrices([it.code]);
   }
 
@@ -361,6 +370,10 @@
     }).join('');
     $('holds').querySelectorAll('.hold').forEach(function (card) {
       var h = S.holdings.filter(function (x) { return x.code === card.dataset.code; })[0];
+      card.addEventListener('focusin', function () {           // 카드를 만지면 그 종목이 계산기 기준이 된다
+        if (S.sel === h.code) return;
+        S.sel = h.code; calcManual = false; save(); syncCalc(); renderCalc();
+      });
       card.querySelectorAll('[data-f]').forEach(function (el) {
         var f = el.dataset.f;
         if (f === 'del') {
@@ -438,11 +451,12 @@
     holdMeta();
     document.querySelectorAll('#basis button').forEach(function (b) { b.classList.toggle('on', b.dataset.b === S.basis); });
     $('basisNote').textContent = S.basis === 'avg'
-      ? '평단가에서 -N%가 됐을 때의 평가손실입니다. (매수가 대비 손실, 현재 손익과 무관)'
-      : '지금 현재가에서 -N% 더 빠질 때 추가로 늘어나는 손실입니다. (이미 난 손익은 포함하지 않음)';
+      ? '평단가에서 -N%일 때의 손실 (매수가 대비)'
+      : '지금 현재가에서 -N% 더 빠질 때 늘어나는 손실';
 
     document.querySelectorAll('#costTog button').forEach(function (b) { b.classList.toggle('on', (b.dataset.c === 'on') === S.costOn); });
     $('costBox').classList.toggle('hidden', !S.costOn);
+    $('costSum').textContent = '거래세 ' + (num(S.tax) || 0) + '% · 수수료 ' + (num(S.fee) || 0) + '% (탭해서 수정)';
     if (document.activeElement !== $('tax')) $('tax').value = S.tax;
     if (document.activeElement !== $('fee')) $('fee').value = S.fee;
 
@@ -536,14 +550,27 @@
       if (num(h.avg) > 0) opts += '<option value="a:' + esc(h.code) + '">' + esc(h.name) + ' 평단</option>';
     });
     if (sel.innerHTML !== opts) { sel.innerHTML = opts; if (cur) sel.value = cur; if (sel.value !== cur) sel.value = ''; }
+    syncCalc();
+  }
+  // 시뮬레이터에서 고른(마지막에 추가·터치한) 종목을 기준가에 자동 연결. 직접 입력 중이면 건드리지 않는다.
+  function syncCalc() {
+    if (calcManual) return;
+    var h = S.holdings.filter(function (c) { return c.code === S.sel; })[0] || S.holdings[0];
+    if (!h) return;
+    var vals = { p: h.price > 0 ? h.price : NaN, a: num(h.avg) > 0 ? num(h.avg) : NaN };
+    var f = isFinite(vals[calcPref]) ? calcPref : (calcPref === 'p' ? 'a' : 'p');
+    if (!isFinite(vals[f])) return;
+    $('cpick').value = f + ':' + h.code;
+    if (document.activeElement !== $('cbase')) $('cbase').value = fmt(vals[f]);
+    $('cmk').value = h.market;
   }
   $('cpick').addEventListener('change', function () {
-    var v = this.value; if (!v) return;
-    var h = S.holdings.filter(function (x) { return x.code === v.slice(2); })[0]; if (!h) return;
-    var val = v[0] === 'p' ? h.price : num(h.avg);
-    $('cbase').value = fmt(val); $('cmk').value = h.market; renderCalc();
+    var v = this.value;
+    if (!v) { calcManual = true; return; }
+    calcManual = false; calcPref = v[0]; S.sel = v.slice(2); save();
+    syncCalc(); renderCalc();
   });
-  $('cbase').addEventListener('input', function () { commaInput(this); $('cpick').value = ''; renderCalc(); });
+  $('cbase').addEventListener('input', function () { commaInput(this); calcManual = true; $('cpick').value = ''; renderCalc(); });
   $('cprice').addEventListener('input', function () { commaInput(this); renderCalc(); });
   $('cpct').addEventListener('input', function () { this.value = this.value.replace(/[^0-9.\-]/g, ''); renderCalc(); });
   $('cmk').addEventListener('change', renderCalc);

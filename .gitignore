@@ -3,3 +3,4 @@ __pycache__/
 .DS_Store
 .kis_token_cache.json
 .rsi_min_cache.json
+.claude/settings.local.json
