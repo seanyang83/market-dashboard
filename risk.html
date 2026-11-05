@@ -100,6 +100,8 @@
   tr.now td { font-weight: 700; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); }
   tr.now.over td { background: var(--warn-bg); }
   tr.now td small { font-weight: 600; color: var(--accent); }
+  small.px { display: block; font-size: 10.5px; font-weight: 400; color: var(--sub); margin-top: 1px; line-height: 1.2; }
+  tr.lim td small.px, tr.now td small.px { color: var(--sub); font-weight: 400; }
   .note { font-size: 12px; color: var(--sub); line-height: 1.6; margin-top: 8px; }
   .warn { font-size: 12.5px; color: var(--warn); line-height: 1.6; margin-top: 8px; }
   .big { font-size: 22px; font-weight: 800; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
@@ -649,7 +651,9 @@
       ok.forEach(function (x) {
         // 현재 줄은 균일 하락이 아니라 종목별 실제 손익(현재가 기준) + 지금 팔 때의 비용
         var l = lv.now ? ((x.h.plan || !(x.q0 > 0 && x.a0 > 0)) ? 0 : -(x.q0 * (x.a0 - x.p) + x.q0 * x.p * rateOf(x))) : -lossOf(x, lv.p);
-        tot += l; cells += '<td class="' + cls(l) + '">' + fmtS(l) + '</td>';
+        // 칸 아래 작은 숫자 = 그 하락률일 때의 주가 (호가단위 반올림, 한도 줄은 손절가와 같게 올림, 현재 줄은 현재가)
+        var px = lv.now ? x.p : roundTick(x.base * (1 - lv.p / 100), x.h.market, lv.lim ? 'ceil' : 'nearest');
+        tot += l; cells += '<td class="' + cls(l) + '">' + fmtS(l) + (px > 0 ? '<small class="px">' + fmt(px) + '</small>' : '') + '</td>';
       });
       var over = lv.now ? (limit > 0 && -tot >= limit) : (limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9);
       var label = lv.now ? '<b>-' + lv.p.toFixed(2) + '%</b> <small>현재</small>'
@@ -658,6 +662,7 @@
         (totalAsset > 0 ? '<td class="' + cls(tot) + '">' + pct(tot / totalAsset * 100) + '</td>' : '') + cells + '</tr>';
     });
     $('tbl').innerHTML = '<div class="tbl-wrap"><table>' + head + body + '</table></div>' +
+      '<div class="note">종목 칸 아래 작은 숫자는 그 하락률일 때의 주가입니다(호가단위 반올림).</div>' +
       (S.costOn ? '<div class="note">매도 비용 포함 (거래세 ' + (num(S.tax) || 0) + '% + 수수료 ' + (num(S.fee) || 0) + '%, ETF는 거래세 제외)</div>' : '<div class="note">매도 비용 제외 (가격 하락분만)</div>') +
       (ok.some(function (x) { return x.ai; }) ? '<div class="note">추가 매수 가정 반영: ' + ok.filter(function (x) { return x.ai; }).map(function (x) { return esc(x.h.name) + ' +' + fmt(x.ai.aq) + '주 → 새 평단 ' + fmt(x.ai.an) + '원'; }).join(', ') + '</div>' : '') +
       (nowRow ? '<div class="note">파란 테두리 "현재" 줄이 지금 평단 대비 손실 위치입니다(종목별 실제 손익 기준, 지금 팔 때의 비용 포함).</div>' : '') +
