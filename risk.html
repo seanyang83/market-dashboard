@@ -206,7 +206,7 @@
 <script>
 (function () {
   var KEY = 'risk.v1';
-  var S = { holdings: [], total: '', limit: '', basis: 'avg', costOn: true, tax: '0.20', fee: '0.015' };
+  var S = { holdings: [], total: '', limit: '', basis: 'avg', costOn: true, tax: '0.20', fee: '0.0045' };
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- 유틸 ----------
@@ -244,7 +244,7 @@
       var d = JSON.parse(localStorage.getItem(KEY) || '{}');
       S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false }; });
       S.total = d.total || ''; S.limit = d.limit || ''; S.basis = d.basis === 'cur' ? 'cur' : 'avg';
-      S.costOn = d.costOn !== false; if (d.tax != null) S.tax = d.tax; if (d.fee != null) S.fee = d.fee;
+      S.costOn = d.costOn !== false; if (d.tax != null) S.tax = d.tax; if (d.fee != null) S.fee = (d.fee === '0.015' ? S.fee : d.fee);   // 예전 기본값(0.015) 그대로면 새 기본값으로
     } catch (e) { }
   }
   function save() {
