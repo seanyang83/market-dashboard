@@ -88,6 +88,9 @@
   tr.over td.tot { color: var(--warn); }
   tr.lim td { font-weight: 700; border-top: 2px solid var(--warn); border-bottom: 2px solid var(--warn); }
   tr.lim td small { font-weight: 600; color: var(--warn); }
+  tr.now td { font-weight: 700; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); }
+  tr.now.over td { background: var(--warn-bg); }
+  tr.now td small { font-weight: 600; color: var(--accent); }
   .note { font-size: 12px; color: var(--sub); line-height: 1.6; margin-top: 8px; }
   .warn { font-size: 12.5px; color: var(--warn); line-height: 1.6; margin-top: 8px; }
   .big { font-size: 22px; font-weight: 800; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
@@ -490,16 +493,34 @@
       var at = levels.filter(function (l) { return l.p < ps; }).length;
       levels.splice(at, 0, { p: ps, lim: true });
     }
+    // 현재 손실 위치: 평단 기준이고 모든 종목의 현재가가 있으며 합계가 손실일 때, 지금 평단 대비 손실률 줄을 끼워 넣는다.
+    var nowRow = null;
+    if (S.basis === 'avg' && ok.every(function (x) { return x.p > 0; })) {
+      var cost0 = ok.reduce(function (t, x) { return t + x.q * x.a; }, 0);
+      var mv0 = ok.reduce(function (t, x) { return t + x.q * x.p; }, 0);
+      var pNow = (1 - mv0 / cost0) * 100;
+      if (pNow > 0 && pNow < 100) {
+        nowRow = { p: pNow, now: true };
+        var at2 = levels.filter(function (l) { return l.p < pNow; }).length;
+        levels.splice(at2, 0, nowRow);
+      }
+    }
     levels.forEach(function (lv) {
       var tot = 0, cells = '';
-      ok.forEach(function (x) { var l = -lossOf(x, lv.p); tot += l; cells += '<td class="neg">' + fmtS(l) + '</td>'; });
-      var over = limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9;
-      var label = lv.lim ? '<b>-' + lv.p.toFixed(2) + '%</b> <small>한도</small>' : '<b>-' + lv.p + '%</b>';
-      body += '<tr class="' + (over ? 'over ' : '') + (lv.lim ? 'lim' : '') + '"><td>' + label + '</td><td class="tot neg">' + fmtS(tot) + '</td>' +
-        (totalAsset > 0 ? '<td class="neg">' + pct(tot / totalAsset * 100) + '</td>' : '') + cells + '</tr>';
+      ok.forEach(function (x) {
+        // 현재 줄은 균일 하락이 아니라 종목별 실제 손익(현재가 기준) + 지금 팔 때의 비용
+        var l = lv.now ? -(x.q * (x.a - x.p) + x.q * x.p * rateOf(x)) : -lossOf(x, lv.p);
+        tot += l; cells += '<td class="' + cls(l) + '">' + fmtS(l) + '</td>';
+      });
+      var over = lv.now ? (limit > 0 && -tot >= limit) : (limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9);
+      var label = lv.now ? '<b>-' + lv.p.toFixed(2) + '%</b> <small>현재</small>'
+        : lv.lim ? '<b>-' + lv.p.toFixed(2) + '%</b> <small>한도</small>' : '<b>-' + lv.p + '%</b>';
+      body += '<tr class="' + (over ? 'over ' : '') + (lv.lim ? 'lim ' : '') + (lv.now ? 'now' : '') + '"><td>' + label + '</td><td class="tot ' + cls(tot) + '">' + fmtS(tot) + '</td>' +
+        (totalAsset > 0 ? '<td class="' + cls(tot) + '">' + pct(tot / totalAsset * 100) + '</td>' : '') + cells + '</tr>';
     });
     $('tbl').innerHTML = '<div class="tbl-wrap"><table>' + head + body + '</table></div>' +
       (S.costOn ? '<div class="note">매도 비용 포함 (거래세 ' + (num(S.tax) || 0) + '% + 수수료 ' + (num(S.fee) || 0) + '%, ETF는 거래세 제외)</div>' : '<div class="note">매도 비용 제외 (가격 하락분만)</div>') +
+      (nowRow ? '<div class="note">파란 테두리 "현재" 줄이 지금 평단 대비 손실 위치입니다(종목별 실제 손익 기준, 지금 팔 때의 비용 포함).</div>' : '') +
       (limit > 0 && isFinite(ps) ? '<div class="note">굵은 "한도" 줄이 손실 ' + fmt(limit) + '원에 정확히 닿는 하락률이고, 붉은 줄은 그 이상 구간입니다.</div>' : '');
 
     // 비중
