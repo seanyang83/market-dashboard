@@ -61,7 +61,8 @@
   .hold-name { font-weight: 700; font-size: 15px; }
   .hold-name small { font-weight: 400; color: var(--sub); font-size: 12px; margin-left: 6px; }
   .hold-head .x { border: none; background: none; color: var(--sub); font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
-  .plan-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  .plan-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .plan-row .btns { display: flex; gap: 6px; flex-wrap: wrap; }
   .btn.sm { padding: 5px 10px; font-size: 12px; }
   label.inc { display: flex; align-items: center; gap: 5px; margin: 0; font-size: 12px; color: var(--sub); cursor: pointer; }
   label.inc input { width: auto; margin: 0; }
@@ -258,7 +259,7 @@
   function load() {
     try {
       var d = JSON.parse(localStorage.getItem(KEY) || '{}');
-      S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false, plan: !!h.plan, budget: h.budget || '', entry: h.entry || '', include: h.include !== false }; });
+      S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false, plan: !!h.plan, budget: h.budget || '', entry: h.entry || '', include: h.include !== false, add: !!h.add, addBudget: h.addBudget || '', addEntry: h.addEntry || '' }; });
       S.total = d.total || ''; S.limit = d.limit || ''; S.basis = d.basis === 'cur' ? 'cur' : 'avg';
       S.sel = d.sel || ''; S.costOn = d.costOn !== false; if (d.tax != null) S.tax = d.tax; if (d.fee != null) S.fee = (d.fee === '0.015' ? S.fee : d.fee);   // 예전 기본값(0.015) 그대로면 새 기본값으로
     } catch (e) { }
@@ -266,7 +267,7 @@
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
-        holdings: S.holdings.map(function (h) { return { code: h.code, name: h.name, market: h.market, qty: h.qty, avg: h.avg, plan: !!h.plan, budget: h.budget || '', entry: h.entry || '', include: h.include !== false }; }),
+        holdings: S.holdings.map(function (h) { return { code: h.code, name: h.name, market: h.market, qty: h.qty, avg: h.avg, plan: !!h.plan, budget: h.budget || '', entry: h.entry || '', include: h.include !== false, add: !!h.add, addBudget: h.addBudget || '', addEntry: h.addEntry || '' }; }),
         total: S.total, limit: S.limit, basis: S.basis, costOn: S.costOn, tax: S.tax, fee: S.fee, sel: S.sel
       }));
     } catch (e) { }
@@ -324,7 +325,7 @@
   function addHolding(it) {
     $('q').value = ''; $('results').innerHTML = '';
     if (S.holdings.some(function (h) { return h.code === it.code; })) return;
-    S.holdings.push({ code: it.code, name: it.name, market: it.market || 'kospi', qty: '', avg: '', price: NaN, priceManual: false, plan: false, budget: '', entry: '', include: true });
+    S.holdings.push({ code: it.code, name: it.name, market: it.market || 'kospi', qty: '', avg: '', price: NaN, priceManual: false, plan: false, budget: '', entry: '', include: true, add: false, addBudget: '', addEntry: '' });
     S.sel = it.code; calcManual = false; calcPref = 'p';       // 새로 넣은 종목이 하락률 계산기에 바로 연동
     save(); renderHolds(); renderAll(); loadPrices([it.code]);
   }
@@ -376,8 +377,11 @@
         '<div><label>평단가 (원)</label><input data-f="avg" inputmode="decimal" value="' + esc(h.avg) + '"></div>' +
         '<div><label>현재가 (원)</label><input data-f="price" id="pr-' + esc(h.code) + '" inputmode="decimal" value="' + (isFinite(h.price) ? fmt(h.price) : '') + '"></div>' +
         '</div>' +
-        '<div class="plan-row"><button class="btn sm" data-f="plan">' + (h.plan ? '투입금액 계산 끄기' : '투입금액으로 계산') + '</button>' +
+        '<div class="plan-row"><span class="btns"><button class="btn sm" data-f="plan">' + (h.plan ? '투입금액 계산 끄기' : '투입금액으로 계산') + '</button>' +
+        (h.plan ? '' : '<button class="btn sm" data-f="add">' + (h.add ? '추가 매수 끄기' : '추가 매수 가정') + '</button>') + '</span>' +
         '<label class="inc"><input type="checkbox" data-f="include"' + (h.include !== false ? ' checked' : '') + '> 계산에 포함</label></div>' +
+        (h.add && !h.plan ? '<div class="grid2 plan-box"><div><label>추가 투입금액 (원)</label><input data-f="addBudget" inputmode="numeric" placeholder="예: 3,000,000" value="' + esc(h.addBudget) + '"></div>' +
+          '<div><label>추가 매수가 (비우면 현재가)</label><input data-f="addEntry" inputmode="decimal" value="' + esc(h.addEntry) + '"></div></div>' : '') +
         (h.plan ? '<div class="grid2 plan-box"><div><label>투입금액 (원)</label><input data-f="budget" inputmode="numeric" placeholder="예: 5,000,000" value="' + esc(h.budget) + '"></div>' +
           '<div><label>매수 예정가 (비우면 현재가)</label><input data-f="entry" inputmode="decimal" value="' + esc(h.entry) + '"></div></div>' : '') +
         '<div class="hold-meta" id="hm-' + esc(h.code) + '"></div></div>';
@@ -399,9 +403,13 @@
           el.addEventListener('change', function () { h.market = el.value; save(); renderAll(); });
         } else if (f === 'plan') {
           el.addEventListener('click', function () {
-            h.plan = !h.plan; if (h.plan) applyPlan(h);
+            h.plan = !h.plan; if (h.plan) { applyPlan(h); h.add = false; }
             save(); renderHolds(); renderAll();
           });
+        } else if (f === 'add') {
+          el.addEventListener('click', function () { h.add = !h.add; save(); renderHolds(); renderAll(); });
+        } else if (f === 'addBudget' || f === 'addEntry') {
+          el.addEventListener('input', function () { commaInput(el); h[f] = el.value; save(); renderAll(); });
         } else if (f === 'include') {
           el.addEventListener('change', function () { h.include = el.checked; save(); renderAll(); });
         } else if (f === 'budget' || f === 'entry') {
@@ -446,7 +454,17 @@
         var pl = q * (p - a), r = (p / a - 1) * 100;
         parts.push('평가손익 <b class="' + cls(pl) + '">' + fmtS(pl) + '원 (' + pct(r) + ')</b>');
       }
-      el.innerHTML = parts.join(' · ');
+      var addHtml = '';
+      if (h.add) {
+        var ai = addInfo(h);
+        if (ai) {
+          var need = function (av) { return p > 0 ? (av > p ? '+' + ((av / p - 1) * 100).toFixed(1) + '%' : '평단 위') : '-'; };
+          addHtml = '<br>추가 매수: ' + fmt(ai.aq) + '주 × ' + fmt(ai.e) + '원 = ' + fmt(ai.cost) + '원 → 총 ' + fmt(ai.qn) + '주, 새 평단 <b>' + fmt(ai.an) + '원</b>' +
+            (ai.q0 > 0 && ai.a0 > 0 ? ' (' + pct((ai.an / ai.a0 - 1) * 100, 1) + ') · 본전 필요 상승률 ' + need(ai.a0) + ' → <b>' + need(ai.an) + '</b>' : '') +
+            ' · 총 투입 ' + fmt(ai.qn * ai.an) + '원';
+        } else addHtml = '<br>추가 투입금액을 입력하세요 (현재가나 추가 매수가가 있어야 계산됩니다)';
+      }
+      el.innerHTML = parts.join(' · ') + addHtml;
     });
   }
 
@@ -483,10 +501,23 @@
     ok.forEach(function (x) { var A = x.q * x.base, r = rateOf(x); a0 += A * r; a1 += A * (1 - r); });
     return a1 > 0 ? (limit - a0) / a1 * 100 : NaN;
   }
-  function items() {
+  // 추가 매수 가정: 추가 수량 = floor(추가 투입금액 ÷ 추가 매수가(비우면 현재가)), 새 평단 = (기존 매입금 + 추가 매입금) ÷ 합친 수량. 원래 값은 건드리지 않는다.
+  function addInfo(h) {
+    if (!h.add || h.plan) return null;
+    var b = num(h.addBudget), e = num(h.addEntry) > 0 ? num(h.addEntry) : h.price;
+    var q0 = num(h.qty) || 0, a0 = num(h.avg) || 0;
+    if (!(b > 0 && e > 0) || (q0 > 0 && !(a0 > 0))) return null;
+    var aq = Math.floor(b / e);
+    if (aq <= 0) return null;
+    var qn = q0 + aq;
+    return { aq: aq, e: e, cost: aq * e, qn: qn, an: (q0 * a0 + aq * e) / qn, q0: q0, a0: a0 };
+  }
+  function items(useAdd) {
+    if (useAdd === undefined) useAdd = true;
     return S.holdings.filter(function (h) { return h.include !== false; }).map(function (h) {
-      var q = num(h.qty), a = num(h.avg), base = S.basis === 'avg' ? a : h.price;
-      return { h: h, q: q, a: a, p: h.price, base: base, ok: q > 0 && base > 0 };
+      var q0 = num(h.qty), a0 = num(h.avg), ai = useAdd ? addInfo(h) : null;
+      var q = ai ? ai.qn : q0, a = ai ? ai.an : a0, base = S.basis === 'avg' ? a : h.price;
+      return { h: h, q: q, a: a, q0: q0, a0: a0, ai: ai, p: h.price, base: base, ok: q > 0 && base > 0 };
     });
   }
   function renderAll() {
@@ -509,8 +540,9 @@
     var cost = 0, mv = 0, allPrice = true, planCost = 0;
     its.forEach(function (x) {
       if (x.h.plan) { if (x.q > 0 && x.a > 0) planCost += x.q * x.a; return; }
-      if (x.q > 0 && x.a > 0) cost += x.q * x.a;
-      if (x.q > 0 && x.p > 0) mv += x.q * x.p; else if (x.q > 0) allPrice = false;
+      if (x.ai) planCost += x.ai.cost;
+      if (x.q0 > 0 && x.a0 > 0) cost += x.q0 * x.a0;
+      if (x.q0 > 0 && x.p > 0) mv += x.q0 * x.p; else if (x.q0 > 0) allPrice = false;
     });
     var sumParts = [];
     if (cost > 0) {
@@ -545,10 +577,10 @@
     }
     // 현재 손실 위치: 평단 기준이고 모든 종목의 현재가가 있으며 합계가 손실일 때, 지금 평단 대비 손실률 줄을 끼워 넣는다.
     var nowRow = null;
-    var real = ok.filter(function (x) { return !x.h.plan; });      // 아직 사지 않은 예상 종목은 현재 손실에서 뺀다
+    var real = ok.filter(function (x) { return !x.h.plan && x.q0 > 0 && x.a0 > 0; });      // 아직 사지 않은 예상 종목은 현재 손실에서 뺀다
     if (S.basis === 'avg' && real.length && real.every(function (x) { return x.p > 0; })) {
-      var cost0 = real.reduce(function (t, x) { return t + x.q * x.a; }, 0);
-      var mv0 = real.reduce(function (t, x) { return t + x.q * x.p; }, 0);
+      var cost0 = real.reduce(function (t, x) { return t + x.q0 * x.a0; }, 0);
+      var mv0 = real.reduce(function (t, x) { return t + x.q0 * x.p; }, 0);
       var pNow = (1 - mv0 / cost0) * 100;
       if (pNow > 0 && pNow < 100) {
         nowRow = { p: pNow, now: true };
@@ -560,7 +592,7 @@
       var tot = 0, cells = '';
       ok.forEach(function (x) {
         // 현재 줄은 균일 하락이 아니라 종목별 실제 손익(현재가 기준) + 지금 팔 때의 비용
-        var l = lv.now ? (x.h.plan ? 0 : -(x.q * (x.a - x.p) + x.q * x.p * rateOf(x))) : -lossOf(x, lv.p);
+        var l = lv.now ? ((x.h.plan || !(x.q0 > 0 && x.a0 > 0)) ? 0 : -(x.q0 * (x.a0 - x.p) + x.q0 * x.p * rateOf(x))) : -lossOf(x, lv.p);
         tot += l; cells += '<td class="' + cls(l) + '">' + fmtS(l) + '</td>';
       });
       var over = lv.now ? (limit > 0 && -tot >= limit) : (limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9);
@@ -571,6 +603,7 @@
     });
     $('tbl').innerHTML = '<div class="tbl-wrap"><table>' + head + body + '</table></div>' +
       (S.costOn ? '<div class="note">매도 비용 포함 (거래세 ' + (num(S.tax) || 0) + '% + 수수료 ' + (num(S.fee) || 0) + '%, ETF는 거래세 제외)</div>' : '<div class="note">매도 비용 제외 (가격 하락분만)</div>') +
+      (ok.some(function (x) { return x.ai; }) ? '<div class="note">추가 매수 가정 반영: ' + ok.filter(function (x) { return x.ai; }).map(function (x) { return esc(x.h.name) + ' +' + fmt(x.ai.aq) + '주 → 새 평단 ' + fmt(x.ai.an) + '원'; }).join(', ') + '</div>' : '') +
       (nowRow ? '<div class="note">파란 테두리 "현재" 줄이 지금 평단 대비 손실 위치입니다(종목별 실제 손익 기준, 지금 팔 때의 비용 포함).</div>' : '') +
       (limit > 0 && isFinite(ps) ? '<div class="note">굵은 "한도" 줄이 손실 ' + fmt(limit) + '원에 정확히 닿는 하락률이고, 붉은 줄은 그 이상 구간입니다.</div>' : '');
 
@@ -581,12 +614,17 @@
       return '<div class="bar-row"><span class="nm">' + esc(x.h.name) + '</span><span class="bar"><i style="width:' + r.toFixed(1) + '%"></i></span><span class="pc">' + r.toFixed(1) + '%</span></div>';
     }).join('');
 
-    renderLimit(ok, limit, totalAsset, ps);
+    var ps0 = NaN;                                              // 추가 매수 반영 전 한도 하락률(비교용)
+    if (limit > 0 && ok.some(function (x) { return x.ai; })) {
+      var ok0 = items(false).filter(function (x) { return x.ok; });
+      if (ok0.length) { ps0 = solveP(ok0, limit); if (!(ps0 > 0 && ps0 < 100)) ps0 = NaN; }
+    }
+    renderLimit(ok, limit, totalAsset, ps, ps0);
     renderPicker(true);
     renderCalc();
   }
 
-  function renderLimit(ok, limit, totalAsset, ps) {
+  function renderLimit(ok, limit, totalAsset, ps, ps0) {
     var el = $('limitOut');
     if (!(limit > 0) || !ok.length) {
       el.className = 'note';
@@ -601,7 +639,8 @@
         : '한도 ' + fmt(limit) + '원은 전 종목이 0원이 되어도(-100%) 닿지 않는 금액입니다.';
       return;
     }
-    var html = '<div class="sub">전 종목이 -' + ps.toFixed(2) + '% 빠질 때(표의 "한도" 줄) 손실 ' + fmt(limit) + '원' + (totalAsset > 0 ? ' (자산의 ' + (limit / totalAsset * 100).toFixed(2) + '%)' : '') + '에 닿습니다' + (S.costOn ? '(매도 비용 포함)' : '') + '. 아래 손절가는 손실이 한도를 넘지 않도록 호가단위로 올림한 값입니다.</div>' +
+    var html = (isFinite(ps0) ? '<div class="sub"><b>추가 매수 반영</b>: 한도에 닿는 하락률 <b>-' + ps0.toFixed(2) + '% → -' + ps.toFixed(2) + '%</b></div>' : '') +
+      '<div class="sub">전 종목이 -' + ps.toFixed(2) + '% 빠질 때(표의 "한도" 줄) 손실 ' + fmt(limit) + '원' + (totalAsset > 0 ? ' (자산의 ' + (limit / totalAsset * 100).toFixed(2) + '%)' : '') + '에 닿습니다' + (S.costOn ? '(매도 비용 포함)' : '') + '. 아래 손절가는 손실이 한도를 넘지 않도록 호가단위로 올림한 값입니다.</div>' +
       '<div class="tbl-wrap"><table><tr><th>종목</th><th>손절가</th><th>종목 손실</th><th>매입가 대비</th></tr>';
     ok.forEach(function (x) {
       var stop = roundTick(x.base * (1 - ps / 100), x.h.market, 'ceil');
