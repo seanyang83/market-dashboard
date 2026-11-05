@@ -1,0 +1,539 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>손절 계산기</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card-bg: #ffffff; --text: #14161a; --sub: #6b7280; --border: #e5e7eb;
+    --up: #d92d20; --down: #2563eb; --accent: #2563eb; --warn-bg: #fef2f2; --warn: #b42318;
+    --ok: #16a34a; --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10; --card-bg: #15181d; --text: #f2f3f5; --sub: #9aa1ac; --border: #262a31;
+      --up: #f87171; --down: #60a5fa; --accent: #60a5fa; --warn-bg: #2a1214; --warn: #fca5a5;
+      --ok: #4ade80; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; padding: 22px 14px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Apple SD Gothic Neo", Roboto, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  .sub { font-size: 12px; color: var(--sub); line-height: 1.55; }
+  .seg { display: flex; gap: 6px; margin-bottom: 4px; }
+  .seg button {
+    flex: 1; padding: 10px 8px; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card-bg); color: var(--sub); border-radius: 10px;
+  }
+  .seg button.on { border-color: var(--accent); color: var(--accent); }
+  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); margin-top: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 4px; }
+  input, select {
+    width: 100%; padding: 10px 11px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 16px; font-family: inherit; min-width: 0;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label { display: block; font-size: 11.5px; color: var(--sub); margin-bottom: 4px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .grid3 { display: grid; grid-template-columns: .8fr 1.1fr 1.1fr; gap: 6px; }
+  .grid3 input { font-size: 15px; padding: 9px 7px; }
+  .btn {
+    border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font-size: 12.5px;
+    padding: 7px 12px; border-radius: 999px; cursor: pointer; font-family: inherit;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn.danger:hover { border-color: var(--up); color: var(--up); }
+  .results { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+  .results button {
+    text-align: left; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 14px; cursor: pointer; font-family: inherit;
+  }
+  .results button span { color: var(--sub); font-size: 12px; margin-left: 6px; }
+  .hold { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-top: 10px; }
+  .hold-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .hold-name { font-weight: 700; font-size: 15px; }
+  .hold-name small { font-weight: 400; color: var(--sub); font-size: 12px; margin-left: 6px; }
+  .hold-head .x { border: none; background: none; color: var(--sub); font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
+  .hold-meta { font-size: 12px; color: var(--sub); margin-top: 8px; line-height: 1.6; font-variant-numeric: tabular-nums; }
+  .hold select.mk { width: auto; font-size: 12px; padding: 3px 6px; }
+  .toggle { display: flex; gap: 6px; margin-top: 8px; }
+  .toggle button {
+    flex: 1; padding: 9px 6px; font-size: 13px; font-family: inherit; cursor: pointer; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--sub); font-weight: 600;
+  }
+  .toggle button.on { border-color: var(--accent); color: var(--accent); }
+  .tbl-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--border); background: var(--card-bg); }
+  tr:last-child td { border-bottom: none; }
+  th { font-size: 11.5px; color: var(--sub); font-weight: 600; }
+  th:first-child, td:first-child { position: sticky; left: 0; text-align: left; z-index: 1; border-right: 1px solid var(--border); }
+  td.tot { font-weight: 700; }
+  td.neg, .neg { color: var(--down); }
+  td.pos, .pos { color: var(--up); }
+  tr.over td { background: var(--warn-bg); }
+  tr.over td.tot { color: var(--warn); }
+  .note { font-size: 12px; color: var(--sub); line-height: 1.6; margin-top: 8px; }
+  .warn { font-size: 12.5px; color: var(--warn); line-height: 1.6; margin-top: 8px; }
+  .big { font-size: 22px; font-weight: 800; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+  .bar-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; }
+  .bar-row .nm { width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bar-row .bar { flex: 1; height: 10px; background: var(--bg); border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+  .bar-row .bar i { display: block; height: 100%; background: var(--accent); }
+  .bar-row .pc { width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: var(--sub); }
+  .stat { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .stat:last-child { border-bottom: none; }
+  .stat b { font-weight: 700; }
+  .hidden { display: none; }
+  #stat { font-size: 12px; color: var(--sub); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>손절 계산기</h1>
+    <span class="sub">수량·평단은 이 기기 브라우저에만 저장되고 서버로 보내지 않습니다</span>
+  </header>
+
+  <div class="seg">
+    <button data-tab="sim" class="on">손실 시뮬레이터</button>
+    <button data-tab="calc">하락률 계산기</button>
+  </div>
+
+  <!-- ===== 손실 시뮬레이터 ===== -->
+  <section id="tab-sim">
+    <div class="card">
+      <h2>보유 종목</h2>
+      <div class="sub">종목명이나 6자리 코드를 검색해 추가하고, 수량과 평단을 한 번 입력하면 폰에 저장됩니다. 현재가는 자동으로 채워집니다.</div>
+      <div style="margin-top:10px"><input id="q" type="search" inputmode="search" placeholder="종목명 또는 코드 (예: 삼성전자, 005930)" autocomplete="off"></div>
+      <div id="results" class="results"></div>
+      <div id="holds"></div>
+      <div style="display:flex; gap:8px; align-items:center; justify-content:space-between; margin-top:12px; flex-wrap:wrap">
+        <span id="stat"></span>
+        <span style="display:flex; gap:6px">
+          <button class="btn" id="refresh">현재가 새로고침</button>
+          <button class="btn danger" id="clear">전체 지우기</button>
+        </span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>기준 설정</h2>
+      <div class="toggle" id="basis">
+        <button data-b="avg" class="on">평단 기준</button>
+        <button data-b="cur">현재가 기준</button>
+      </div>
+      <div class="note" id="basisNote"></div>
+      <div class="grid2" style="margin-top:12px">
+        <div><label for="total">총 자산 (선택, 원)</label><input id="total" inputmode="numeric" placeholder="예: 50,000,000"></div>
+        <div><label for="limit">감당 가능한 손실금 (선택, 원)</label><input id="limit" inputmode="numeric" placeholder="예: 2,000,000"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>하락률별 손실금</h2>
+      <div id="sum" class="note"></div>
+      <div id="tbl"></div>
+      <div id="warns"></div>
+    </div>
+
+    <div class="card" id="limitCard">
+      <h2>손실 한도로 거꾸로 계산</h2>
+      <div id="limitOut" class="note">위에서 "감당 가능한 손실금"을 입력하면, 전 종목이 같은 비율로 빠질 때 몇 %에서 한도에 닿는지와 종목별 손절가를 보여 줍니다.</div>
+    </div>
+
+    <div class="card">
+      <h2>종목별 비중</h2>
+      <div class="sub">모든 종목이 같은 비율로 빠지면 손실금 비중도 이 비중과 같습니다. 큰 막대가 손실을 키우는 종목입니다.</div>
+      <div id="bars"></div>
+    </div>
+  </section>
+
+  <!-- ===== 하락률 계산기 ===== -->
+  <section id="tab-calc" class="hidden">
+    <div class="card">
+      <h2>기준가</h2>
+      <div class="grid2" style="margin-top:8px">
+        <div><label for="cpick">불러오기</label><select id="cpick"></select></div>
+        <div><label for="cbase">기준가 (원)</label><input id="cbase" inputmode="decimal" placeholder="예: 1,000"></div>
+      </div>
+      <div style="margin-top:10px"><label for="cmk">시장 (호가단위 계산용)</label>
+        <select id="cmk"><option value="kospi">코스피</option><option value="kosdaq">코스닥</option><option value="etf">ETF</option></select></div>
+    </div>
+
+    <div class="card">
+      <h2>가격 → 하락률</h2>
+      <div class="sub">이 가격까지 내려가면 기준가에서 몇 % 빠진 걸까?</div>
+      <div style="margin-top:10px"><label for="cprice">비교 가격 (원)</label><input id="cprice" inputmode="decimal" placeholder="예: 850"></div>
+      <div id="cout1"></div>
+    </div>
+
+    <div class="card">
+      <h2>하락률 → 가격</h2>
+      <div class="sub">몇 % 빠지면 얼마일까? (호가단위로 반올림)</div>
+      <div style="margin-top:10px"><label for="cpct">하락률 (%, 예: 10 또는 -10)</label><input id="cpct" inputmode="decimal" placeholder="예: 10"></div>
+      <div id="cout2"></div>
+    </div>
+
+    <div class="card">
+      <h2>한눈에 보기</h2>
+      <div class="sub">본전으로 돌아오려면 얼마나 올라야 하는지 같이 봅니다. 많이 빠질수록 복구에 필요한 상승률은 훨씬 커집니다.</div>
+      <div id="quick"></div>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var KEY = 'risk.v1';
+  var S = { holdings: [], total: '', limit: '', basis: 'avg' };
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---------- 유틸 ----------
+  function num(s) { var v = parseFloat(String(s == null ? '' : s).replace(/,/g, '')); return isFinite(v) ? v : NaN; }
+  function fmt(n) { return Math.round(n).toLocaleString('ko-KR'); }
+  function fmtS(n) { var r = Math.round(n); return (r > 0 ? '+' : r < 0 ? '-' : '') + Math.abs(r).toLocaleString('ko-KR'); }
+  function pct(n, d) { return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(n).toFixed(d == null ? 2 : d) + '%'; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function cls(n) { return n > 0 ? 'pos' : n < 0 ? 'neg' : ''; }
+  function commaInput(el) {            // 입력하는 동안 천 단위 쉼표
+    var raw = el.value.replace(/[^0-9.]/g, '');
+    if (raw === '') { el.value = ''; return; }
+    var parts = raw.split('.');
+    parts[0] = Number(parts[0]).toLocaleString('ko-KR');
+    el.value = parts.length > 1 ? parts[0] + '.' + parts[1].slice(0, 2) : parts[0];
+  }
+
+  // 호가단위 (2023년 개편 기준: 코스피 / 코스닥 / ETF)
+  function tick(p, m) {
+    if (m === 'etf') return p < 2000 ? 1 : 5;
+    if (m === 'kosdaq') return p < 2000 ? 1 : p < 5000 ? 5 : p < 20000 ? 10 : p < 50000 ? 50 : 100;
+    return p < 2000 ? 1 : p < 5000 ? 5 : p < 20000 ? 10 : p < 50000 ? 50 : p < 200000 ? 100 : p < 500000 ? 500 : 1000;
+  }
+  function roundTick(p, m, mode) {
+    var t = tick(p, m), v = p / t;
+    v = mode === 'ceil' ? Math.ceil(v - 1e-9) : mode === 'floor' ? Math.floor(v + 1e-9) : Math.round(v);
+    return v * t;
+  }
+  function guessMarket(t) { t = String(t || '').toLowerCase(); return t.indexOf('kosdaq') >= 0 || t.indexOf('코스닥') >= 0 ? 'kosdaq' : 'kospi'; }
+  var MK = { kospi: '코스피', kosdaq: '코스닥', etf: 'ETF' };
+
+  // ---------- 저장 ----------
+  function load() {
+    try {
+      var d = JSON.parse(localStorage.getItem(KEY) || '{}');
+      S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false }; });
+      S.total = d.total || ''; S.limit = d.limit || ''; S.basis = d.basis === 'cur' ? 'cur' : 'avg';
+    } catch (e) { }
+  }
+  function save() {
+    try {
+      localStorage.setItem(KEY, JSON.stringify({
+        holdings: S.holdings.map(function (h) { return { code: h.code, name: h.name, market: h.market, qty: h.qty, avg: h.avg }; }),
+        total: S.total, limit: S.limit, basis: S.basis
+      }));
+    } catch (e) { }
+  }
+
+  // ---------- 탭 ----------
+  document.querySelectorAll('.seg button').forEach(function (b) {
+    b.addEventListener('click', function () {
+      document.querySelectorAll('.seg button').forEach(function (x) { x.classList.toggle('on', x === b); });
+      $('tab-sim').classList.toggle('hidden', b.dataset.tab !== 'sim');
+      $('tab-calc').classList.toggle('hidden', b.dataset.tab !== 'calc');
+      if (b.dataset.tab === 'calc') renderPicker();
+    });
+  });
+
+  // ---------- 종목 검색/추가 ----------
+  var searchTimer = null;
+  $('q').addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    var q = this.value.trim();
+    if (!q) { $('results').innerHTML = ''; return; }
+    searchTimer = setTimeout(function () { doSearch(q); }, 280);
+  });
+  $('q').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') {
+      var q = this.value.trim().toUpperCase();
+      if (/^[0-9A-Z]{6}$/.test(q)) addByCode(q);
+    }
+  });
+  function apiGet(path) {
+    return fetch(path, { credentials: 'same-origin' }).then(function (r) {
+      if (r.status === 401) { location.href = '/login'; throw new Error('로그인이 필요합니다'); }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; });
+    });
+  }
+  function doSearch(q) {
+    apiGet('/api/stock/search?q=' + encodeURIComponent(q)).then(function (d) {
+      var items = d.items || [];
+      $('results').innerHTML = items.length ? items.map(function (it, i) {
+        return '<button data-i="' + i + '">' + esc(it.name) + '<span>' + esc(it.code) + ' · ' + esc(it.market || '') + '</span></button>';
+      }).join('') : '<div class="note">검색 결과가 없습니다</div>';
+      $('results').querySelectorAll('button').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var it = items[+b.dataset.i];
+          addHolding({ code: it.code, name: it.name, market: guessMarket(it.market) });
+        });
+      });
+    }).catch(function (e) { $('results').innerHTML = '<div class="warn">검색 실패: ' + esc(e.message) + '</div>'; });
+  }
+  function addByCode(code) {
+    apiGet('/api/stock/quote?code=' + code).then(function (d) {
+      addHolding({ code: code, name: d.name || code, market: 'kospi' });
+    }).catch(function (e) { $('results').innerHTML = '<div class="warn">코드를 찾지 못했습니다: ' + esc(e.message) + '</div>'; });
+  }
+  function addHolding(it) {
+    $('q').value = ''; $('results').innerHTML = '';
+    if (S.holdings.some(function (h) { return h.code === it.code; })) return;
+    S.holdings.push({ code: it.code, name: it.name, market: it.market || 'kospi', qty: '', avg: '', price: NaN, priceManual: false });
+    save(); renderHolds(); renderAll(); loadPrices([it.code]);
+  }
+
+  // ---------- 현재가 ----------
+  function loadPrices(only) {
+    var list = S.holdings.filter(function (h) { return !only || only.indexOf(h.code) >= 0; });
+    if (!list.length) { $('stat').textContent = ''; return; }
+    $('stat').textContent = '현재가 불러오는 중…';
+    var latest = '', status = '', fails = 0;
+    Promise.all(list.map(function (h) {
+      return apiGet('/api/stock/quote?code=' + h.code).then(function (d) {
+        if (!h.priceManual && isFinite(d.price)) {
+          h.price = d.price;
+          var el = $('pr-' + h.code); if (el) el.value = fmt(d.price);
+        }
+        if (d.time && String(d.time) > latest) latest = String(d.time);
+        if (d.marketStatus) status = d.marketStatus;
+      }).catch(function () { fails++; });
+    })).then(function () {
+      var t = latest ? new Date(+latest * 1000).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+      var st = { OPEN: '장중', CLOSE: '장 마감', PRE: '장 시작 전' }[status] || '';
+      $('stat').textContent = '현재가 ' + (t ? t + ' 기준' : '갱신') + (st ? ' (' + st + ')' : '') + (fails ? ' · ' + fails + '종목 실패' : '');
+      renderAll();
+    });
+  }
+  $('refresh').addEventListener('click', function () {
+    S.holdings.forEach(function (h) { h.priceManual = false; });
+    loadPrices();
+  });
+  $('clear').addEventListener('click', function () {
+    if (!S.holdings.length && !S.total && !S.limit) return;
+    if (!confirm('저장된 종목·수량·평단을 모두 지울까요?')) return;
+    S.holdings = []; S.total = ''; S.limit = '';
+    $('total').value = ''; $('limit').value = '';
+    save(); renderHolds(); renderAll();
+  });
+
+  // ---------- 보유 종목 카드 ----------
+  function renderHolds() {
+    $('holds').innerHTML = S.holdings.map(function (h) {
+      return '<div class="hold" data-code="' + esc(h.code) + '">' +
+        '<div class="hold-head"><div class="hold-name">' + esc(h.name) + '<small>' + esc(h.code) + '</small> ' +
+        '<select class="mk" data-f="market">' + Object.keys(MK).map(function (k) { return '<option value="' + k + '"' + (h.market === k ? ' selected' : '') + '>' + MK[k] + '</option>'; }).join('') + '</select></div>' +
+        '<button class="x" data-f="del" aria-label="삭제">×</button></div>' +
+        '<div class="grid3">' +
+        '<div><label>수량 (주)</label><input data-f="qty" inputmode="numeric" value="' + esc(h.qty) + '"></div>' +
+        '<div><label>평단가 (원)</label><input data-f="avg" inputmode="decimal" value="' + esc(h.avg) + '"></div>' +
+        '<div><label>현재가 (원)</label><input data-f="price" id="pr-' + esc(h.code) + '" inputmode="decimal" value="' + (isFinite(h.price) ? fmt(h.price) : '') + '"></div>' +
+        '</div><div class="hold-meta" id="hm-' + esc(h.code) + '"></div></div>';
+    }).join('');
+    $('holds').querySelectorAll('.hold').forEach(function (card) {
+      var h = S.holdings.filter(function (x) { return x.code === card.dataset.code; })[0];
+      card.querySelectorAll('[data-f]').forEach(function (el) {
+        var f = el.dataset.f;
+        if (f === 'del') {
+          el.addEventListener('click', function () {
+            S.holdings = S.holdings.filter(function (x) { return x !== h; });
+            save(); renderHolds(); renderAll();
+          });
+        } else if (f === 'market') {
+          el.addEventListener('change', function () { h.market = el.value; save(); renderAll(); });
+        } else {
+          el.addEventListener('input', function () {
+            commaInput(el);
+            if (f === 'price') { h.price = num(el.value); h.priceManual = true; } else { h[f] = el.value; save(); }
+            renderAll();
+          });
+        }
+      });
+    });
+  }
+  function holdMeta() {
+    S.holdings.forEach(function (h) {
+      var el = $('hm-' + h.code); if (!el) return;
+      var q = num(h.qty), a = num(h.avg), p = h.price;
+      var parts = [];
+      if (q > 0 && a > 0) parts.push('매입금 ' + fmt(q * a) + '원');
+      if (q > 0 && p > 0) parts.push('평가금 ' + fmt(q * p) + '원');
+      if (q > 0 && a > 0 && p > 0) {
+        var pl = q * (p - a), r = (p / a - 1) * 100;
+        parts.push('평가손익 <b class="' + cls(pl) + '">' + fmtS(pl) + '원 (' + pct(r) + ')</b>');
+      }
+      el.innerHTML = parts.join(' · ');
+    });
+  }
+
+  // ---------- 설정 ----------
+  $('basis').querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () { S.basis = b.dataset.b; save(); renderAll(); });
+  });
+  ['total', 'limit'].forEach(function (id) {
+    $(id).addEventListener('input', function () { commaInput(this); S[id] = this.value; save(); renderAll(); });
+  });
+
+  // ---------- 계산 ----------
+  function items() {
+    return S.holdings.map(function (h) {
+      var q = num(h.qty), a = num(h.avg), base = S.basis === 'avg' ? a : h.price;
+      return { h: h, q: q, a: a, p: h.price, base: base, ok: q > 0 && base > 0 };
+    });
+  }
+  function renderAll() {
+    holdMeta();
+    document.querySelectorAll('#basis button').forEach(function (b) { b.classList.toggle('on', b.dataset.b === S.basis); });
+    $('basisNote').textContent = S.basis === 'avg'
+      ? '평단가에서 -N%가 됐을 때의 평가손실입니다. (매수가 대비 손실, 현재 손익과 무관)'
+      : '지금 현재가에서 -N% 더 빠질 때 추가로 늘어나는 손실입니다. (이미 난 손익은 포함하지 않음)';
+
+    var its = items(), ok = its.filter(function (x) { return x.ok; });
+    var totalAsset = num(S.total), limit = num(S.limit);
+
+    // 요약
+    var cost = 0, mv = 0, allPrice = true;
+    its.forEach(function (x) { if (x.q > 0 && x.a > 0) cost += x.q * x.a; if (x.q > 0 && x.p > 0) mv += x.q * x.p; else if (x.q > 0) allPrice = false; });
+    $('sum').innerHTML = its.length
+      ? '매입금 합계 <b>' + fmt(cost) + '원</b>' + (mv ? ' · 평가금 합계 <b>' + fmt(mv) + '원</b>' + (cost && allPrice ? ' · 평가손익 <b class="' + cls(mv - cost) + '">' + fmtS(mv - cost) + '원 (' + pct((mv / cost - 1) * 100) + ')</b>' : '') : '')
+      : '위에서 종목을 추가하면 표가 나타납니다.';
+
+    // 경고
+    var w = [];
+    its.forEach(function (x) {
+      if (!(x.q > 0)) w.push(esc(x.h.name) + ': 수량을 입력하세요');
+      else if (S.basis === 'avg' && !(x.a > 0)) w.push(esc(x.h.name) + ': 평단가를 입력하세요');
+      else if (S.basis === 'cur' && !(x.p > 0)) w.push(esc(x.h.name) + ': 현재가가 없어 합계에서 빠졌습니다');
+    });
+    $('warns').innerHTML = w.length ? '<div class="warn">' + w.join('<br>') + '</div>' : '';
+
+    // 표
+    if (!ok.length) { $('tbl').innerHTML = ''; $('bars').innerHTML = ''; renderLimit(ok, limit, totalAsset); renderPicker(true); renderCalc(); return; }
+    var head = '<tr><th>하락률</th><th>합계</th>' + (totalAsset > 0 ? '<th>자산 대비</th>' : '') + ok.map(function (x) { return '<th>' + esc(x.h.name) + '</th>'; }).join('') + '</tr>';
+    var body = '';
+    for (var p = 1; p <= 10; p++) {
+      var tot = 0, cells = '';
+      ok.forEach(function (x) { var l = -x.q * x.base * p / 100; tot += l; cells += '<td class="neg">' + fmtS(l) + '</td>'; });
+      var over = limit > 0 && -tot >= limit;
+      body += '<tr' + (over ? ' class="over"' : '') + '><td><b>-' + p + '%</b></td><td class="tot neg">' + fmtS(tot) + '</td>' +
+        (totalAsset > 0 ? '<td class="neg">' + pct(tot / totalAsset * 100) + '</td>' : '') + cells + '</tr>';
+    }
+    $('tbl').innerHTML = '<div class="tbl-wrap"><table>' + head + body + '</table></div>' +
+      (limit > 0 ? '<div class="note">붉은 줄은 손실이 한도(' + fmt(limit) + '원) 이상인 구간입니다.</div>' : '');
+
+    // 비중
+    var sumExp = ok.reduce(function (s, x) { return s + x.q * x.base; }, 0);
+    $('bars').innerHTML = ok.slice().sort(function (a, b) { return b.q * b.base - a.q * a.base; }).map(function (x) {
+      var r = x.q * x.base / sumExp * 100;
+      return '<div class="bar-row"><span class="nm">' + esc(x.h.name) + '</span><span class="bar"><i style="width:' + r.toFixed(1) + '%"></i></span><span class="pc">' + r.toFixed(1) + '%</span></div>';
+    }).join('');
+
+    renderLimit(ok, limit, totalAsset);
+    renderPicker(true);
+    renderCalc();
+  }
+
+  function renderLimit(ok, limit, totalAsset) {
+    var el = $('limitOut');
+    if (!(limit > 0) || !ok.length) {
+      el.className = 'note';
+      el.innerHTML = '위에서 "감당 가능한 손실금"을 입력하면, 전 종목이 같은 비율로 빠질 때 몇 %에서 한도에 닿는지와 종목별 손절가를 보여 줍니다.';
+      return;
+    }
+    var exp = ok.reduce(function (s, x) { return s + x.q * x.base; }, 0);
+    var ps = limit / exp * 100;
+    if (ps >= 100) {
+      el.className = 'note';
+      el.innerHTML = '한도 ' + fmt(limit) + '원은 전 종목이 0원이 되어도(-100%) 닿지 않는 금액입니다.';
+      return;
+    }
+    var html = '<div class="sub">전 종목이 같은 비율로 빠진다고 가정할 때</div>' +
+      '<div class="big neg">-' + ps.toFixed(2) + '%</div>' +
+      '<div class="sub">에서 손실 ' + fmt(limit) + '원' + (totalAsset > 0 ? ' (자산의 ' + (limit / totalAsset * 100).toFixed(2) + '%)' : '') + '에 닿습니다. 아래 손절가는 손실이 한도를 넘지 않도록 호가단위로 올림한 값입니다.</div>' +
+      '<div class="tbl-wrap"><table><tr><th>종목</th><th>손절가</th><th>종목 손실</th><th>매입가 대비</th></tr>';
+    ok.forEach(function (x) {
+      var stop = roundTick(x.base * (1 - ps / 100), x.h.market, 'ceil');
+      var lossHere = x.q * (x.base - stop);
+      var vsAvg = x.a > 0 ? (stop / x.a - 1) * 100 : NaN;
+      html += '<tr><td>' + esc(x.h.name) + '</td><td>' + fmt(stop) + '</td><td class="neg">' + fmtS(-lossHere) + '</td><td class="' + cls(vsAvg) + '">' + (isFinite(vsAvg) ? pct(vsAvg) : '-') + '</td></tr>';
+    });
+    html += '</table></div>';
+    if (S.basis === 'cur') html += '<div class="note">현재가 기준이라 "종목 손실"은 지금부터 더 잃는 금액이고, "매입가 대비"는 그 손절가가 평단에서 몇 %인지입니다.</div>';
+    el.className = ''; el.innerHTML = html;
+  }
+
+  // ---------- 하락률 계산기 ----------
+  function renderPicker(keep) {
+    var sel = $('cpick'), cur = sel.value, opts = '<option value="">직접 입력</option>';
+    S.holdings.forEach(function (h) {
+      if (h.price > 0) opts += '<option value="p:' + esc(h.code) + '">' + esc(h.name) + ' 현재가</option>';
+      if (num(h.avg) > 0) opts += '<option value="a:' + esc(h.code) + '">' + esc(h.name) + ' 평단</option>';
+    });
+    if (sel.innerHTML !== opts) { sel.innerHTML = opts; if (cur) sel.value = cur; if (sel.value !== cur) sel.value = ''; }
+  }
+  $('cpick').addEventListener('change', function () {
+    var v = this.value; if (!v) return;
+    var h = S.holdings.filter(function (x) { return x.code === v.slice(2); })[0]; if (!h) return;
+    var val = v[0] === 'p' ? h.price : num(h.avg);
+    $('cbase').value = fmt(val); $('cmk').value = h.market; renderCalc();
+  });
+  $('cbase').addEventListener('input', function () { commaInput(this); $('cpick').value = ''; renderCalc(); });
+  $('cprice').addEventListener('input', function () { commaInput(this); renderCalc(); });
+  $('cpct').addEventListener('input', function () { this.value = this.value.replace(/[^0-9.\-]/g, ''); renderCalc(); });
+  $('cmk').addEventListener('change', renderCalc);
+
+  function renderCalc() {
+    var base = num($('cbase').value), m = $('cmk').value;
+    var o1 = '', o2 = '', q = '';
+    if (base > 0) {
+      var pr = num($('cprice').value);
+      if (pr >= 0) {
+        var ch = (pr / base - 1) * 100;
+        o1 = '<div class="big ' + cls(ch) + '">' + pct(ch) + '</div><div class="stat"><span>차이</span><b class="' + cls(ch) + '">' + fmtS(pr - base) + '원</b></div>';
+        if (ch < 0) o1 += '<div class="stat"><span>본전 복구에 필요한 상승률</span><b class="pos">' + pct((base / pr - 1) * 100, 1) + '</b></div>';
+      }
+      var pc = num($('cpct').value);
+      if (isFinite(pc) && pc !== 0) {
+        var d = -Math.abs(pc), raw = base * (1 + d / 100);
+        if (raw > 0) {
+          var rp = roundTick(raw, m, 'nearest'), real = (rp / base - 1) * 100;
+          o2 = '<div class="big neg">' + fmt(rp) + '원</div><div class="stat"><span>정확히 계산한 값</span><b>' + raw.toFixed(1) + '원</b></div>' +
+            '<div class="stat"><span>호가 반올림 시 실제 하락률</span><b class="neg">' + pct(real) + '</b></div>' +
+            '<div class="stat"><span>복구에 필요한 상승률</span><b class="pos">' + pct((base / rp - 1) * 100, 1) + '</b></div>';
+        }
+      }
+      q = '<div class="tbl-wrap"><table><tr><th>하락률</th><th>가격</th><th>복구 필요</th></tr>' +
+        [3, 5, 7, 10, 15, 20, 30, 40, 50].map(function (x) {
+          var p = roundTick(base * (1 - x / 100), m, 'nearest');
+          return '<tr><td><b>-' + x + '%</b></td><td>' + fmt(p) + '원</td><td class="pos">' + pct((base / p - 1) * 100, 1) + '</td></tr>';
+        }).join('') + '</table></div>';
+    } else {
+      o1 = o2 = '<div class="note">위에서 기준가를 먼저 입력하세요.</div>';
+    }
+    $('cout1').innerHTML = o1; $('cout2').innerHTML = o2; $('quick').innerHTML = q;
+  }
+
+  // ---------- 시작 ----------
+  load();
+  $('total').value = S.total; $('limit').value = S.limit;
+  renderHolds(); renderAll(); renderCalc();
+  if (S.holdings.length) loadPrices();
+})();
+</script>
+</body>
+</html>

@@ -1954,6 +1954,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif urllib.parse.urlparse(self.path).path in ("/leader", "/leader.html"):
             self.path = "/leader.html"
             super().do_GET()
+        elif urllib.parse.urlparse(self.path).path in ("/risk", "/risk.html"):
+            # 손절 계산기: 보유 수량·평단은 브라우저(localStorage)에만 저장, 서버엔 종목코드만 간다. 로그인 쿠키 필요(위 _authorized).
+            self.path = "/risk.html"
+            super().do_GET()
         elif urllib.parse.urlparse(self.path).path in ("/", "/index.html"):
             super().do_GET()
         else:
