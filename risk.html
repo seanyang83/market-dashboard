@@ -559,10 +559,8 @@
         var ai = addInfo(h);
         if (ai) {
           var need = function (av) { return p > 0 ? (av > p ? '+' + ((av / p - 1) * 100).toFixed(1) + '%' : '평단 위') : '-'; };
-          addHtml = (ai.steps.length > 1 ? '<br>' + ai.steps.map(function (st) { return st.n + '차 ' + fmt(st.aq) + '주 × ' + fmt(st.e) + '원 = ' + fmt(st.cost) + '원 (평단 ' + fmt(st.an) + '원)'; }).join('<br>') : '') +
-            '<br>' + (ai.steps.length > 1 ? '<b>합계</b>: 추가 ' + fmt(ai.aq) + '주' : '추가 매수: ' + fmt(ai.aq) + '주 × ' + fmt(ai.steps[0].e) + '원 = ' + fmt(ai.cost) + '원') + ' → 총 ' + fmt(ai.qn) + '주, 새 평단 <b>' + fmt(ai.an) + '원</b>' +
-            (ai.q0 > 0 && ai.a0 > 0 ? ' (' + pct((ai.an / ai.a0 - 1) * 100, 1) + ') · 본전 필요 상승률 ' + need(ai.a0) + ' → <b>' + need(ai.an) + '</b>' : '') +
-            ' · 총 투입 ' + fmt(ai.qn * ai.an) + '원';
+          // 간단히: 추가금 포함 총 투입금 · 총 평단가 · 본전 필요 상승률
+          addHtml = '<br><b>추가 반영</b> · 총 투입 <b>' + fmt(ai.qn * ai.an) + '원</b> · 총 평단 <b>' + fmt(ai.an) + '원</b> · 본전 필요 상승률 <b>' + need(ai.an) + '</b>';
         } else addHtml = '<br>선택한 차수에 추가 투입금액을 입력하세요 (현재가나 매수가가 있어야 계산됩니다)';
       }
       el.innerHTML = parts.join(' · ') + addHtml;
