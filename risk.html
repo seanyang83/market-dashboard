@@ -67,6 +67,9 @@
   label.inc { display: flex; align-items: center; gap: 5px; margin: 0; font-size: 12px; color: var(--sub); cursor: pointer; }
   label.inc input { width: auto; margin: 0; }
   .plan-box { margin-top: 8px; }
+  details.vol { margin-top: 8px; }
+  details.vol summary { font-size: 12px; color: var(--sub); cursor: pointer; padding: 2px 0; }
+  details.vol[open] summary { color: var(--accent); }
   .hold-meta { font-size: 12px; color: var(--sub); margin-top: 8px; line-height: 1.6; font-variant-numeric: tabular-nums; }
   .hold select.mk { width: auto; font-size: 12px; padding: 3px 6px; }
   .toggle { display: flex; gap: 6px; margin-top: 8px; }
@@ -327,7 +330,7 @@
     if (S.holdings.some(function (h) { return h.code === it.code; })) return;
     S.holdings.push({ code: it.code, name: it.name, market: it.market || 'kospi', qty: '', avg: '', price: NaN, priceManual: false, plan: false, budget: '', entry: '', include: true, add: false, addBudget: '', addEntry: '' });
     S.sel = it.code; calcManual = false; calcPref = 'p';       // 새로 넣은 종목이 하락률 계산기에 바로 연동
-    save(); renderHolds(); renderAll(); loadPrices([it.code]);
+    save(); renderHolds(); renderAll(); loadPrices([it.code]); loadVol(S.holdings[S.holdings.length - 1]);
   }
 
   // ---------- 현재가 ----------
@@ -356,6 +359,7 @@
   $('refresh').addEventListener('click', function () {
     S.holdings.forEach(function (h) { h.priceManual = false; });
     loadPrices();
+    S.holdings.forEach(loadVol);
   });
   $('clear').addEventListener('click', function () {
     if (!S.holdings.length && !S.total && !S.limit) return;
@@ -384,7 +388,8 @@
           '<div><label>추가 매수가 (비우면 현재가)</label><input data-f="addEntry" inputmode="decimal" value="' + esc(h.addEntry) + '"></div></div>' : '') +
         (h.plan ? '<div class="grid2 plan-box"><div><label>투입금액 (원)</label><input data-f="budget" inputmode="numeric" placeholder="예: 5,000,000" value="' + esc(h.budget) + '"></div>' +
           '<div><label>매수 예정가 (비우면 현재가)</label><input data-f="entry" inputmode="decimal" value="' + esc(h.entry) + '"></div></div>' : '') +
-        '<div class="hold-meta" id="hm-' + esc(h.code) + '"></div></div>';
+        '<div class="hold-meta" id="hm-' + esc(h.code) + '"></div>' +
+        '<details class="vol"><summary id="vs-' + esc(h.code) + '">변동성 불러오는 중…</summary><div class="hold-meta" id="vb-' + esc(h.code) + '"></div></details></div>';
     }).join('');
     $('holds').querySelectorAll('.hold').forEach(function (card) {
       var h = S.holdings.filter(function (x) { return x.code === card.dataset.code; })[0];
@@ -435,6 +440,56 @@
       if (qi) qi.value = h.qty; if (ai) ai.value = h.avg;
     }
     save();
+  }
+  // ---------- 변동성 (과거 통계: 종목코드만 서버로 보내 일별 고가·저가·종가를 받아 이 기기에서 계산) ----------
+  function volStats(rows) {
+    // 장중에는 오늘의 미완성 봉을 뺀다 (평일 15:40 전)
+    var k = new Date(Date.now() + 9 * 3600 * 1000), today = k.toISOString().slice(0, 10), mins = k.getUTCHours() * 60 + k.getUTCMinutes();
+    rows = rows.filter(function (r) { return r.close > 0; });
+    if (rows.length && rows[rows.length - 1].date === today && k.getUTCDay() % 6 !== 0 && mins < 15 * 60 + 40) rows = rows.slice(0, -1);
+    if (rows.length < 22) return null;
+    var tr = [], chg = [];
+    for (var i = 1; i < rows.length; i++) {
+      var prev = rows[i - 1].close, r = rows[i];
+      chg.push((r.close / prev - 1) * 100);
+      tr.push(r.high > 0 && r.low > 0 ? (r.high - r.low) / prev * 100 : NaN);
+    }
+    function avg(a, n) { var t = a.slice(-n).filter(isFinite); return t.length ? t.reduce(function (x, y) { return x + y; }, 0) / t.length : NaN; }
+    var abs = chg.map(Math.abs), last60 = rows.slice(-60);
+    return {
+      rng20: avg(tr, 20), rng60: avg(tr, 60), mv20: avg(abs, 20), mv60: avg(abs, 60),
+      down20: Math.min.apply(null, chg.slice(-20)), down60: Math.min.apply(null, chg.slice(-60)),
+      hi60: Math.max.apply(null, last60.map(function (r) { return r.high > 0 ? r.high : r.close; })),
+      last: rows[rows.length - 1].close, date: rows[rows.length - 1].date
+    };
+  }
+  function loadVol(h) {
+    apiGet('/api/stock/history?code=' + h.code).then(function (d) {
+      h.vol = volStats(d.closes || []) || { none: true };
+    }).catch(function () { h.vol = { none: true }; }).then(function () { renderVol(h); });
+  }
+  function renderVol(h) {
+    var sm = $('vs-' + h.code), bd = $('vb-' + h.code); if (!sm || !bd) return;
+    var v = h.vol;
+    if (!v) { sm.textContent = '변동성 불러오는 중…'; bd.innerHTML = ''; return; }
+    if (v.none) { sm.textContent = '변동성 정보를 가져오지 못했습니다'; bd.innerHTML = ''; return; }
+    var f1 = function (n) { return isFinite(n) ? n.toFixed(1) + '%' : '-'; };
+    sm.textContent = '변동성: 최근 20일 하루 평균 진폭 ' + f1(v.rng20) + ' (탭해서 자세히)';
+    var p = h.price > 0 ? h.price : v.last, a = num(h.avg), ai = addInfo(h), lines = [];
+    lines.push('하루 평균 진폭(고가-저가): 20일 <b>' + f1(v.rng20) + '</b> · 60일 ' + f1(v.rng60));
+    lines.push('하루 평균 등락(종가 기준): 20일 ' + f1(v.mv20) + ' · 60일 ' + f1(v.mv60));
+    lines.push('하루 최대 하락(종가 기준): 20일 ' + pct(v.down20, 1) + ' · 60일 ' + pct(v.down60, 1));
+    if (v.hi60 > 0 && p > 0) lines.push('60일 고점 대비 현재 ' + pct((p / v.hi60 - 1) * 100, 1));
+    if (a > 0 && p > 0 && isFinite(v.rng20) && v.rng20 > 0) {
+      var d = (p / a - 1) * 100;
+      lines.push('현재가는 평단 대비 <b class="' + cls(d) + '">' + pct(d, 1) + '</b> (평균 진폭의 ' + (Math.abs(d) / v.rng20).toFixed(1) + '배)');
+    }
+    if (ai && p > 0 && isFinite(v.rng20) && v.rng20 > 0 && Math.abs(ai.e - p) > 0.5) {
+      var e = (ai.e / p - 1) * 100;
+      lines.push('추가 매수가는 현재가 대비 <b class="' + cls(e) + '">' + pct(e, 1) + '</b> (평균 진폭의 ' + (Math.abs(e) / v.rng20).toFixed(1) + '배)');
+    }
+    lines.push('<span style="opacity:.8">' + esc(v.date) + ' 종가까지의 과거 통계이며 앞으로를 보장하지 않습니다. 매매 판단은 직접 하세요.</span>');
+    bd.innerHTML = lines.join('<br>');
   }
   function holdMeta() {
     S.holdings.forEach(function (h) {
@@ -522,6 +577,7 @@
   }
   function renderAll() {
     holdMeta();
+    S.holdings.forEach(renderVol);
     document.querySelectorAll('#basis button').forEach(function (b) { b.classList.toggle('on', b.dataset.b === S.basis); });
     $('basisNote').textContent = S.basis === 'avg'
       ? '평단가에서 -N%일 때의 손실 (매수가 대비)'
@@ -721,7 +777,7 @@
   load();
   $('total').value = S.total; $('limit').value = S.limit;
   renderHolds(); renderAll(); renderCalc();
-  if (S.holdings.length) loadPrices();
+  if (S.holdings.length) { loadPrices(); S.holdings.forEach(loadVol); }
 })();
 </script>
 </body>

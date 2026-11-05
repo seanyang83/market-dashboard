@@ -569,10 +569,18 @@ def naver_daily_closes(symbol):
     closes = []
     for r in rows[1:]:
         date_str = str(r[0])
-        closes.append({
+        item = {
             "date": f"{date_str[0:4]}-{date_str[4:6]}-{date_str[6:8]}",
             "close": float(r[4]),
-        })
+        }
+        # 고가·저가는 같은 응답에 이미 들어 있다(추가 요청 없음). /risk 변동성 표시용 — 기존 호출자는 close만 쓴다.
+        try:
+            hi, lo = float(r[2]), float(r[3])
+            if hi > 0 and lo > 0:
+                item["high"], item["low"] = hi, lo
+        except (ValueError, TypeError, IndexError):
+            pass
+        closes.append(item)
     if len(closes) < 20:
         raise ValueError("insufficient history rows")
 
