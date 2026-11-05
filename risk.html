@@ -8,13 +8,13 @@
 <style>
   :root {
     --bg: #f4f5f7; --card-bg: #ffffff; --text: #14161a; --sub: #6b7280; --border: #e5e7eb;
-    --up: #d92d20; --down: #2563eb; --accent: #2563eb; --warn-bg: #fef2f2; --warn: #b42318;
+    --up: #d92d20; --down: #475569; --accent: #059669; --warn-bg: #fef2f2; --warn: #b42318;
     --ok: #16a34a; --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #0b0d10; --card-bg: #15181d; --text: #f2f3f5; --sub: #9aa1ac; --border: #262a31;
-      --up: #f87171; --down: #60a5fa; --accent: #60a5fa; --warn-bg: #2a1214; --warn: #fca5a5;
+      --up: #f87171; --down: #cbd5e1; --accent: #34d399; --warn-bg: #1d1517; --warn: #fca5a5;
       --ok: #4ade80; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
     }
   }
@@ -100,6 +100,7 @@
   td.pos, .pos { color: var(--up); }
   tr.over td { background: var(--warn-bg); }
   tr.over td.tot { color: var(--warn); }
+  tr.safe td.tot { color: var(--ok); }
   tr.lim td { font-weight: 700; border-top: 2px solid var(--warn); border-bottom: 2px solid var(--warn); }
   tr.lim td small { font-weight: 600; color: var(--warn); }
   tr.now td { font-weight: 700; border-top: 2px solid var(--accent); border-bottom: 2px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--card-bg)); }
@@ -708,13 +709,14 @@
       var over = lv.now ? (limit > 0 && -tot >= limit) : (limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9);
       var label = lv.now ? '<b>-' + lv.p.toFixed(2) + '%</b><small class="tg">현재</small>'
         : lv.lim ? '<b>-' + lv.p.toFixed(2) + '%</b><small class="tg">한도</small>' : '<b>-' + lv.p + '%</b>';
-      body += '<tr class="' + (over ? 'over ' : '') + (lv.lim ? 'lim ' : '') + (lv.now ? 'now' : '') + '"><td>' + label + '</td><td class="tot ' + cls(tot) + '">' + fmtS(tot) + (totalAsset > 0 ? '<small class="px c">' + pct(tot / totalAsset * 100) + '</small>' : '') + '</td>' + cells + '</tr>';
+      var safe = limit > 0 && isFinite(ps) && !over;           // 한도 안쪽(감당 범위)이면 합계를 초록으로
+      body += '<tr class="' + (over ? 'over ' : '') + (safe ? 'safe ' : '') + (lv.lim ? 'lim ' : '') + (lv.now ? 'now' : '') + '"><td>' + label + '</td><td class="tot ' + cls(tot) + '">' + fmtS(tot) + (totalAsset > 0 ? '<small class="px c">' + pct(tot / totalAsset * 100) + '</small>' : '') + '</td>' + cells + '</tr>';
     });
     $('tbl').innerHTML = '<div class="tbl-wrap"><table>' + head + body + '</table></div>' +
       '<div class="note">종목 칸 아래 작은 숫자는 그 하락률일 때의 주가입니다(호가단위 반올림).</div>' +
       (S.costOn ? '<div class="note">매도 비용 포함 (거래세 ' + (num(S.tax) || 0) + '% + 수수료 ' + (num(S.fee) || 0) + '%, ETF는 거래세 제외)</div>' : '<div class="note">매도 비용 제외 (가격 하락분만)</div>') +
       (ok.some(function (x) { return x.ai; }) ? '<div class="note">추가 매수 가정 반영: ' + ok.filter(function (x) { return x.ai; }).map(function (x) { return esc(x.h.name) + ' +' + fmt(x.ai.aq) + '주(' + x.ai.steps.map(function (st) { return st.n + '차'; }).join('·') + ') → 새 평단 ' + fmt(x.ai.an) + '원'; }).join(', ') + '</div>' : '') +
-      (nowRow ? '<div class="note">파란 테두리 "현재" 줄이 지금 평단 대비 손실 위치입니다(종목별 실제 손익 기준, 지금 팔 때의 비용 포함).</div>' : '') +
+      (nowRow ? '<div class="note">초록 테두리 "현재" 줄이 지금 평단 대비 손실 위치입니다(종목별 실제 손익 기준, 지금 팔 때의 비용 포함).</div>' : '') +
       (limit > 0 && isFinite(ps) ? '<div class="note">굵은 "한도" 줄이 손실 ' + fmt(limit) + '원에 정확히 닿는 하락률이고, 붉은 줄은 그 이상 구간입니다.</div>' : '');
 
     // 비중
