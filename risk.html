@@ -61,6 +61,11 @@
   .hold-name { font-weight: 700; font-size: 15px; }
   .hold-name small { font-weight: 400; color: var(--sub); font-size: 12px; margin-left: 6px; }
   .hold-head .x { border: none; background: none; color: var(--sub); font-size: 20px; cursor: pointer; padding: 0 4px; line-height: 1; }
+  .plan-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 10px; }
+  .btn.sm { padding: 5px 10px; font-size: 12px; }
+  label.inc { display: flex; align-items: center; gap: 5px; margin: 0; font-size: 12px; color: var(--sub); cursor: pointer; }
+  label.inc input { width: auto; margin: 0; }
+  .plan-box { margin-top: 8px; }
   .hold-meta { font-size: 12px; color: var(--sub); margin-top: 8px; line-height: 1.6; font-variant-numeric: tabular-nums; }
   .hold select.mk { width: auto; font-size: 12px; padding: 3px 6px; }
   .toggle { display: flex; gap: 6px; margin-top: 8px; }
@@ -253,7 +258,7 @@
   function load() {
     try {
       var d = JSON.parse(localStorage.getItem(KEY) || '{}');
-      S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false }; });
+      S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false, plan: !!h.plan, budget: h.budget || '', entry: h.entry || '', include: h.include !== false }; });
       S.total = d.total || ''; S.limit = d.limit || ''; S.basis = d.basis === 'cur' ? 'cur' : 'avg';
       S.sel = d.sel || ''; S.costOn = d.costOn !== false; if (d.tax != null) S.tax = d.tax; if (d.fee != null) S.fee = (d.fee === '0.015' ? S.fee : d.fee);   // 예전 기본값(0.015) 그대로면 새 기본값으로
     } catch (e) { }
@@ -261,7 +266,7 @@
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
-        holdings: S.holdings.map(function (h) { return { code: h.code, name: h.name, market: h.market, qty: h.qty, avg: h.avg }; }),
+        holdings: S.holdings.map(function (h) { return { code: h.code, name: h.name, market: h.market, qty: h.qty, avg: h.avg, plan: !!h.plan, budget: h.budget || '', entry: h.entry || '', include: h.include !== false }; }),
         total: S.total, limit: S.limit, basis: S.basis, costOn: S.costOn, tax: S.tax, fee: S.fee, sel: S.sel
       }));
     } catch (e) { }
@@ -319,7 +324,7 @@
   function addHolding(it) {
     $('q').value = ''; $('results').innerHTML = '';
     if (S.holdings.some(function (h) { return h.code === it.code; })) return;
-    S.holdings.push({ code: it.code, name: it.name, market: it.market || 'kospi', qty: '', avg: '', price: NaN, priceManual: false });
+    S.holdings.push({ code: it.code, name: it.name, market: it.market || 'kospi', qty: '', avg: '', price: NaN, priceManual: false, plan: false, budget: '', entry: '', include: true });
     S.sel = it.code; calcManual = false; calcPref = 'p';       // 새로 넣은 종목이 하락률 계산기에 바로 연동
     save(); renderHolds(); renderAll(); loadPrices([it.code]);
   }
@@ -334,6 +339,7 @@
       return apiGet('/api/stock/quote?code=' + h.code).then(function (d) {
         if (!h.priceManual && isFinite(d.price)) {
           h.price = d.price;
+          if (h.plan && !(num(h.entry) > 0)) applyPlan(h);
           var el = $('pr-' + h.code); if (el) el.value = fmt(d.price);
         }
         if (d.time && String(d.time) > latest) latest = String(d.time);
@@ -369,7 +375,12 @@
         '<div><label>수량 (주)</label><input data-f="qty" inputmode="numeric" value="' + esc(h.qty) + '"></div>' +
         '<div><label>평단가 (원)</label><input data-f="avg" inputmode="decimal" value="' + esc(h.avg) + '"></div>' +
         '<div><label>현재가 (원)</label><input data-f="price" id="pr-' + esc(h.code) + '" inputmode="decimal" value="' + (isFinite(h.price) ? fmt(h.price) : '') + '"></div>' +
-        '</div><div class="hold-meta" id="hm-' + esc(h.code) + '"></div></div>';
+        '</div>' +
+        '<div class="plan-row"><button class="btn sm" data-f="plan">' + (h.plan ? '투입금액 계산 끄기' : '투입금액으로 계산') + '</button>' +
+        '<label class="inc"><input type="checkbox" data-f="include"' + (h.include !== false ? ' checked' : '') + '> 계산에 포함</label></div>' +
+        (h.plan ? '<div class="grid2 plan-box"><div><label>투입금액 (원)</label><input data-f="budget" inputmode="numeric" placeholder="예: 5,000,000" value="' + esc(h.budget) + '"></div>' +
+          '<div><label>매수 예정가 (비우면 현재가)</label><input data-f="entry" inputmode="decimal" value="' + esc(h.entry) + '"></div></div>' : '') +
+        '<div class="hold-meta" id="hm-' + esc(h.code) + '"></div></div>';
     }).join('');
     $('holds').querySelectorAll('.hold').forEach(function (card) {
       var h = S.holdings.filter(function (x) { return x.code === card.dataset.code; })[0];
@@ -386,21 +397,49 @@
           });
         } else if (f === 'market') {
           el.addEventListener('change', function () { h.market = el.value; save(); renderAll(); });
+        } else if (f === 'plan') {
+          el.addEventListener('click', function () {
+            h.plan = !h.plan; if (h.plan) applyPlan(h);
+            save(); renderHolds(); renderAll();
+          });
+        } else if (f === 'include') {
+          el.addEventListener('change', function () { h.include = el.checked; save(); renderAll(); });
+        } else if (f === 'budget' || f === 'entry') {
+          el.addEventListener('input', function () { commaInput(el); h[f] = el.value; applyPlan(h); save(); renderAll(); });
         } else {
           el.addEventListener('input', function () {
             commaInput(el);
-            if (f === 'price') { h.price = num(el.value); h.priceManual = true; } else { h[f] = el.value; save(); }
+            if (f === 'price') { h.price = num(el.value); h.priceManual = true; if (h.plan && !(num(h.entry) > 0)) applyPlan(h); } else { h[f] = el.value; save(); }
             renderAll();
           });
         }
       });
     });
   }
+  // 투입금액으로 계산: 수량 = floor(투입금액 ÷ 매수가), 평단 = 매수가(비우면 현재가). 수량·평단 칸을 같이 채워 이후엔 보통 종목처럼 계산한다.
+  function applyPlan(h) {
+    var b = num(h.budget), e = num(h.entry) > 0 ? num(h.entry) : h.price;
+    if (!(b > 0 && e > 0)) return;
+    h.qty = String(Math.floor(b / e)); h.avg = fmt(e);
+    var card = document.querySelector('.hold[data-code="' + h.code + '"]');
+    if (card) {
+      var qi = card.querySelector('[data-f=qty]'), ai = card.querySelector('[data-f=avg]');
+      if (qi) qi.value = h.qty; if (ai) ai.value = h.avg;
+    }
+    save();
+  }
   function holdMeta() {
     S.holdings.forEach(function (h) {
       var el = $('hm-' + h.code); if (!el) return;
       var q = num(h.qty), a = num(h.avg), p = h.price;
       var parts = [];
+      if (h.plan) {
+        var b = num(h.budget);
+        if (q > 0 && a > 0) parts.push('예상 매수: ' + fmt(q) + '주 × ' + fmt(a) + '원 = <b>' + fmt(q * a) + '원</b>' + (b > 0 ? ' (남는 돈 ' + fmt(b - q * a) + '원)' : ''));
+        else parts.push('투입금액을 입력하세요 (현재가나 매수 예정가가 있어야 수량이 계산됩니다)');
+        el.innerHTML = parts.join(' · ');
+        return;
+      }
       if (q > 0 && a > 0) parts.push('매입금 ' + fmt(q * a) + '원');
       if (q > 0 && p > 0) parts.push('평가금 ' + fmt(q * p) + '원');
       if (q > 0 && a > 0 && p > 0) {
@@ -445,7 +484,7 @@
     return a1 > 0 ? (limit - a0) / a1 * 100 : NaN;
   }
   function items() {
-    return S.holdings.map(function (h) {
+    return S.holdings.filter(function (h) { return h.include !== false; }).map(function (h) {
       var q = num(h.qty), a = num(h.avg), base = S.basis === 'avg' ? a : h.price;
       return { h: h, q: q, a: a, p: h.price, base: base, ok: q > 0 && base > 0 };
     });
@@ -466,17 +505,28 @@
     var its = items(), ok = its.filter(function (x) { return x.ok; });
     var totalAsset = num(S.total), limit = num(S.limit);
 
-    // 요약
-    var cost = 0, mv = 0, allPrice = true;
-    its.forEach(function (x) { if (x.q > 0 && x.a > 0) cost += x.q * x.a; if (x.q > 0 && x.p > 0) mv += x.q * x.p; else if (x.q > 0) allPrice = false; });
-    $('sum').innerHTML = its.length
-      ? '매입금 합계 <b>' + fmt(cost) + '원</b>' + (mv ? ' · 평가금 합계 <b>' + fmt(mv) + '원</b>' + (cost && allPrice ? ' · 평가손익 <b class="' + cls(mv - cost) + '">' + fmtS(mv - cost) + '원 (' + pct((mv / cost - 1) * 100) + ')</b>' : '') : '')
-      : '위에서 종목을 추가하면 표가 나타납니다.';
+    // 요약 (실제 보유만. 투입금액으로 계산한 예상 종목은 따로 표시)
+    var cost = 0, mv = 0, allPrice = true, planCost = 0;
+    its.forEach(function (x) {
+      if (x.h.plan) { if (x.q > 0 && x.a > 0) planCost += x.q * x.a; return; }
+      if (x.q > 0 && x.a > 0) cost += x.q * x.a;
+      if (x.q > 0 && x.p > 0) mv += x.q * x.p; else if (x.q > 0) allPrice = false;
+    });
+    var sumParts = [];
+    if (cost > 0) {
+      sumParts.push('매입금 합계 <b>' + fmt(cost) + '원</b>');
+      if (mv) {
+        sumParts.push('평가금 합계 <b>' + fmt(mv) + '원</b>');
+        if (allPrice) sumParts.push('평가손익 <b class="' + cls(mv - cost) + '">' + fmtS(mv - cost) + '원 (' + pct((mv / cost - 1) * 100) + ')</b>');
+      }
+    }
+    if (planCost > 0) sumParts.push('예상 투입 <b>' + fmt(planCost) + '원</b>');
+    $('sum').innerHTML = its.length ? sumParts.join(' · ') : '위에서 종목을 추가하면 표가 나타납니다.';
 
     // 경고
     var w = [];
     its.forEach(function (x) {
-      if (!(x.q > 0)) w.push(esc(x.h.name) + ': 수량을 입력하세요');
+      if (!(x.q > 0)) w.push(esc(x.h.name) + (x.h.plan ? ': 투입금액을 입력하세요 (현재가가 있어야 수량이 계산됩니다)' : ': 수량을 입력하세요'));
       else if (S.basis === 'avg' && !(x.a > 0)) w.push(esc(x.h.name) + ': 평단가를 입력하세요');
       else if (S.basis === 'cur' && !(x.p > 0)) w.push(esc(x.h.name) + ': 현재가가 없어 합계에서 빠졌습니다');
     });
@@ -495,9 +545,10 @@
     }
     // 현재 손실 위치: 평단 기준이고 모든 종목의 현재가가 있으며 합계가 손실일 때, 지금 평단 대비 손실률 줄을 끼워 넣는다.
     var nowRow = null;
-    if (S.basis === 'avg' && ok.every(function (x) { return x.p > 0; })) {
-      var cost0 = ok.reduce(function (t, x) { return t + x.q * x.a; }, 0);
-      var mv0 = ok.reduce(function (t, x) { return t + x.q * x.p; }, 0);
+    var real = ok.filter(function (x) { return !x.h.plan; });      // 아직 사지 않은 예상 종목은 현재 손실에서 뺀다
+    if (S.basis === 'avg' && real.length && real.every(function (x) { return x.p > 0; })) {
+      var cost0 = real.reduce(function (t, x) { return t + x.q * x.a; }, 0);
+      var mv0 = real.reduce(function (t, x) { return t + x.q * x.p; }, 0);
       var pNow = (1 - mv0 / cost0) * 100;
       if (pNow > 0 && pNow < 100) {
         nowRow = { p: pNow, now: true };
@@ -509,7 +560,7 @@
       var tot = 0, cells = '';
       ok.forEach(function (x) {
         // 현재 줄은 균일 하락이 아니라 종목별 실제 손익(현재가 기준) + 지금 팔 때의 비용
-        var l = lv.now ? -(x.q * (x.a - x.p) + x.q * x.p * rateOf(x)) : -lossOf(x, lv.p);
+        var l = lv.now ? (x.h.plan ? 0 : -(x.q * (x.a - x.p) + x.q * x.p * rateOf(x))) : -lossOf(x, lv.p);
         tot += l; cells += '<td class="' + cls(l) + '">' + fmtS(l) + '</td>';
       });
       var over = lv.now ? (limit > 0 && -tot >= limit) : (limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9);
