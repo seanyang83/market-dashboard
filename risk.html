@@ -133,6 +133,17 @@
         <button data-b="cur">현재가 기준</button>
       </div>
       <div class="note" id="basisNote"></div>
+      <div class="toggle" id="costTog" style="margin-top:12px">
+        <button data-c="on" class="on">매도 비용 포함</button>
+        <button data-c="off">제외</button>
+      </div>
+      <div id="costBox">
+        <div class="grid2" style="margin-top:10px">
+          <div><label for="tax">증권거래세 (농특세 포함, %)</label><input id="tax" inputmode="decimal"></div>
+          <div><label for="fee">매도 수수료 (%)</label><input id="fee" inputmode="decimal"></div>
+        </div>
+        <div class="note">손실금 = 가격 하락분 + 그 가격에 팔 때의 비용(매도대금 × 세율). 세율·수수료율은 직접 입력하는 값이라 개편되거나 우대수수료가 달라도 바로 맞출 수 있습니다. ETF로 지정한 종목은 거래세를 뺍니다. 현재가 기준에서도 매도 비용은 그 가격에 팔 때 드는 전체 비용을 더합니다.</div>
+      </div>
       <div class="grid2" style="margin-top:12px">
         <div><label for="total">총 자산 (선택, 원)</label><input id="total" inputmode="numeric" placeholder="예: 50,000,000"></div>
         <div><label for="limit">감당 가능한 손실금 (선택, 원)</label><input id="limit" inputmode="numeric" placeholder="예: 2,000,000"></div>
@@ -195,7 +206,7 @@
 <script>
 (function () {
   var KEY = 'risk.v1';
-  var S = { holdings: [], total: '', limit: '', basis: 'avg' };
+  var S = { holdings: [], total: '', limit: '', basis: 'avg', costOn: true, tax: '0.20', fee: '0.015' };
   var $ = function (id) { return document.getElementById(id); };
 
   // ---------- 유틸 ----------
@@ -233,13 +244,14 @@
       var d = JSON.parse(localStorage.getItem(KEY) || '{}');
       S.holdings = (d.holdings || []).map(function (h) { return { code: h.code, name: h.name, market: h.market || 'kospi', qty: h.qty || '', avg: h.avg || '', price: NaN, priceManual: false }; });
       S.total = d.total || ''; S.limit = d.limit || ''; S.basis = d.basis === 'cur' ? 'cur' : 'avg';
+      S.costOn = d.costOn !== false; if (d.tax != null) S.tax = d.tax; if (d.fee != null) S.fee = d.fee;
     } catch (e) { }
   }
   function save() {
     try {
       localStorage.setItem(KEY, JSON.stringify({
         holdings: S.holdings.map(function (h) { return { code: h.code, name: h.name, market: h.market, qty: h.qty, avg: h.avg }; }),
-        total: S.total, limit: S.limit, basis: S.basis
+        total: S.total, limit: S.limit, basis: S.basis, costOn: S.costOn, tax: S.tax, fee: S.fee
       }));
     } catch (e) { }
   }
@@ -391,7 +403,31 @@
     $(id).addEventListener('input', function () { commaInput(this); S[id] = this.value; save(); renderAll(); });
   });
 
+  $('costTog').querySelectorAll('button').forEach(function (b) {
+    b.addEventListener('click', function () { S.costOn = b.dataset.c === 'on'; save(); renderAll(); });
+  });
+  ['tax', 'fee'].forEach(function (id) {
+    $(id).addEventListener('input', function () { this.value = this.value.replace(/[^0-9.]/g, ''); S[id] = this.value; save(); renderAll(); });
+  });
+
   // ---------- 계산 ----------
+  // 매도 비용률(소수): 거래세(ETF는 0) + 수수료. 비용 제외면 0.
+  function rateOf(x) {
+    if (!S.costOn) return 0;
+    var tax = x.h.market === 'etf' ? 0 : (num(S.tax) || 0);
+    return (tax + (num(S.fee) || 0)) / 100;
+  }
+  // 기준가에서 p% 하락한 가격에 전량 매도할 때의 손실금(양수) = 가격 하락분 + 매도 비용
+  function lossOf(x, p) {
+    var A = x.q * x.base;
+    return A * p / 100 + A * (1 - p / 100) * rateOf(x);
+  }
+  // 합계 손실이 limit이 되는 하락률(%). 비용 때문에 한도가 0%에서도 넘으면 0 이하가 나온다.
+  function solveP(ok, limit) {
+    var a0 = 0, a1 = 0;
+    ok.forEach(function (x) { var A = x.q * x.base, r = rateOf(x); a0 += A * r; a1 += A * (1 - r); });
+    return a1 > 0 ? (limit - a0) / a1 * 100 : NaN;
+  }
   function items() {
     return S.holdings.map(function (h) {
       var q = num(h.qty), a = num(h.avg), base = S.basis === 'avg' ? a : h.price;
@@ -404,6 +440,11 @@
     $('basisNote').textContent = S.basis === 'avg'
       ? '평단가에서 -N%가 됐을 때의 평가손실입니다. (매수가 대비 손실, 현재 손익과 무관)'
       : '지금 현재가에서 -N% 더 빠질 때 추가로 늘어나는 손실입니다. (이미 난 손익은 포함하지 않음)';
+
+    document.querySelectorAll('#costTog button').forEach(function (b) { b.classList.toggle('on', (b.dataset.c === 'on') === S.costOn); });
+    $('costBox').classList.toggle('hidden', !S.costOn);
+    if (document.activeElement !== $('tax')) $('tax').value = S.tax;
+    if (document.activeElement !== $('fee')) $('fee').value = S.fee;
 
     var its = items(), ok = its.filter(function (x) { return x.ok; });
     var totalAsset = num(S.total), limit = num(S.limit);
@@ -425,26 +466,27 @@
     $('warns').innerHTML = w.length ? '<div class="warn">' + w.join('<br>') + '</div>' : '';
 
     // 표
-    if (!ok.length) { $('tbl').innerHTML = ''; $('bars').innerHTML = ''; renderLimit(ok, limit, totalAsset); renderPicker(true); renderCalc(); return; }
+    if (!ok.length) { $('tbl').innerHTML = ''; $('bars').innerHTML = ''; renderLimit(ok, limit, totalAsset, NaN); renderPicker(true); renderCalc(); return; }
     var head = '<tr><th>하락률</th><th>합계</th>' + (totalAsset > 0 ? '<th>자산 대비</th>' : '') + ok.map(function (x) { return '<th>' + esc(x.h.name) + '</th>'; }).join('') + '</tr>';
     var body = '';
-    var expAll = ok.reduce(function (s, x) { return s + x.q * x.base; }, 0);
-    var ps = limit > 0 ? limit / expAll * 100 : NaN;          // 한도에 닿는 하락률(%)
+    var ps = limit > 0 ? solveP(ok, limit) : NaN;             // 한도에 닿는 하락률(%)
+    if (!(ps > 0 && ps < 100)) ps = NaN;
     var levels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(function (v) { return { p: v, lim: false }; });
-    if (isFinite(ps) && ps < 100) {                            // 한도 줄을 하락률 순서에 맞게 끼워 넣는다
+    if (isFinite(ps)) {                                        // 한도 줄을 하락률 순서에 맞게 끼워 넣는다
       var at = levels.filter(function (l) { return l.p < ps; }).length;
       levels.splice(at, 0, { p: ps, lim: true });
     }
     levels.forEach(function (lv) {
       var tot = 0, cells = '';
-      ok.forEach(function (x) { var l = -x.q * x.base * lv.p / 100; tot += l; cells += '<td class="neg">' + fmtS(l) + '</td>'; });
+      ok.forEach(function (x) { var l = -lossOf(x, lv.p); tot += l; cells += '<td class="neg">' + fmtS(l) + '</td>'; });
       var over = limit > 0 && isFinite(ps) && lv.p >= ps - 1e-9;
       var label = lv.lim ? '<b>-' + lv.p.toFixed(2) + '%</b> <small>한도</small>' : '<b>-' + lv.p + '%</b>';
       body += '<tr class="' + (over ? 'over ' : '') + (lv.lim ? 'lim' : '') + '"><td>' + label + '</td><td class="tot neg">' + fmtS(tot) + '</td>' +
         (totalAsset > 0 ? '<td class="neg">' + pct(tot / totalAsset * 100) + '</td>' : '') + cells + '</tr>';
     });
     $('tbl').innerHTML = '<div class="tbl-wrap"><table>' + head + body + '</table></div>' +
-      (limit > 0 ? '<div class="note">굵은 "한도" 줄이 손실 ' + fmt(limit) + '원에 정확히 닿는 하락률이고, 붉은 줄은 그 이상 구간입니다.</div>' : '');
+      (S.costOn ? '<div class="note">매도 비용 포함 (거래세 ' + (num(S.tax) || 0) + '% + 수수료 ' + (num(S.fee) || 0) + '%, ETF는 거래세 제외)</div>' : '<div class="note">매도 비용 제외 (가격 하락분만)</div>') +
+      (limit > 0 && isFinite(ps) ? '<div class="note">굵은 "한도" 줄이 손실 ' + fmt(limit) + '원에 정확히 닿는 하락률이고, 붉은 줄은 그 이상 구간입니다.</div>' : '');
 
     // 비중
     var sumExp = ok.reduce(function (s, x) { return s + x.q * x.base; }, 0);
@@ -453,30 +495,31 @@
       return '<div class="bar-row"><span class="nm">' + esc(x.h.name) + '</span><span class="bar"><i style="width:' + r.toFixed(1) + '%"></i></span><span class="pc">' + r.toFixed(1) + '%</span></div>';
     }).join('');
 
-    renderLimit(ok, limit, totalAsset);
+    renderLimit(ok, limit, totalAsset, ps);
     renderPicker(true);
     renderCalc();
   }
 
-  function renderLimit(ok, limit, totalAsset) {
+  function renderLimit(ok, limit, totalAsset, ps) {
     var el = $('limitOut');
     if (!(limit > 0) || !ok.length) {
       el.className = 'note';
       el.innerHTML = '위에서 "감당 가능한 손실금"을 입력하면, 한도에 닿는 하락률이 위 표에 한 줄로 들어가고 종목별 손절가가 여기에 나옵니다.';
       return;
     }
-    var exp = ok.reduce(function (s, x) { return s + x.q * x.base; }, 0);
-    var ps = limit / exp * 100;
-    if (ps >= 100) {
+    if (!isFinite(ps)) {
+      var raw = solveP(ok, limit);
       el.className = 'note';
-      el.innerHTML = '한도 ' + fmt(limit) + '원은 전 종목이 0원이 되어도(-100%) 닿지 않는 금액입니다.';
+      el.innerHTML = raw <= 0
+        ? '한도 ' + fmt(limit) + '원은 매도 비용만으로도 넘는 금액입니다. 한도를 늘리거나 비용 설정을 확인하세요.'
+        : '한도 ' + fmt(limit) + '원은 전 종목이 0원이 되어도(-100%) 닿지 않는 금액입니다.';
       return;
     }
-    var html = '<div class="sub">전 종목이 -' + ps.toFixed(2) + '% 빠질 때(표의 "한도" 줄) 손실 ' + fmt(limit) + '원' + (totalAsset > 0 ? ' (자산의 ' + (limit / totalAsset * 100).toFixed(2) + '%)' : '') + '에 닿습니다. 아래 손절가는 손실이 한도를 넘지 않도록 호가단위로 올림한 값입니다.</div>' +
+    var html = '<div class="sub">전 종목이 -' + ps.toFixed(2) + '% 빠질 때(표의 "한도" 줄) 손실 ' + fmt(limit) + '원' + (totalAsset > 0 ? ' (자산의 ' + (limit / totalAsset * 100).toFixed(2) + '%)' : '') + '에 닿습니다' + (S.costOn ? '(매도 비용 포함)' : '') + '. 아래 손절가는 손실이 한도를 넘지 않도록 호가단위로 올림한 값입니다.</div>' +
       '<div class="tbl-wrap"><table><tr><th>종목</th><th>손절가</th><th>종목 손실</th><th>매입가 대비</th></tr>';
     ok.forEach(function (x) {
       var stop = roundTick(x.base * (1 - ps / 100), x.h.market, 'ceil');
-      var lossHere = x.q * (x.base - stop);
+      var lossHere = x.q * (x.base - stop) + x.q * stop * rateOf(x);
       var vsAvg = x.a > 0 ? (stop / x.a - 1) * 100 : NaN;
       html += '<tr><td>' + esc(x.h.name) + '</td><td>' + fmt(stop) + '</td><td class="neg">' + fmtS(-lossHere) + '</td><td class="' + cls(vsAvg) + '">' + (isFinite(vsAvg) ? pct(vsAvg) : '-') + '</td></tr>';
     });
