@@ -63,6 +63,16 @@
   details summary { cursor: pointer; font-size: 12.5px; color: var(--sub); margin-top: 10px; }
   .muted { color: var(--sub); }
   #err { margin-top: 14px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .lg { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--card-bg); color: var(--text); cursor: pointer; font-family: inherit; }
+  .lg i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .lg.on { border-color: var(--text); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--sub); font-size: 12px; padding: 6px 11px; cursor: pointer; font-family: inherit; }
+  .seg button.on { background: var(--text); color: var(--card-bg); font-weight: 700; }
+  svg.ch { width: 100%; height: auto; display: block; margin-top: 8px; }
+  svg.ch text { fill: var(--sub); font-size: 9.5px; font-family: inherit; }
+  tr.now td { font-weight: 700; background: var(--note-bg); }
 </style>
 </head>
 <body>
@@ -75,6 +85,7 @@
   <div id="err"></div>
   <div id="pos"></div>
   <div id="chk"></div>
+  <div id="hist"></div>
   <div id="cred"></div>
   <div id="scn"></div>
   <div class="sub" style="margin-top:18px">자료: 코스피 일봉(네이버), 미국 신용 스프레드(FRED, 하루 1회 갱신·미국 영업일 기준 하루 늦음). 보유 종목은 이 기기의 손절 계산기 입력값을 읽으며 서버로 보내지 않습니다.</div>
@@ -141,6 +152,82 @@
       '<div class="note"><b>20일선 (백테스트 보통)</b>: "신저점 없이 10거래일 + 종가가 20일선 위"인 날은 이후 60일 안에 신저점을 다시 만든 비율이 19%(묶음 기준 21%)였고, 20일선 아래인 날은 47%(묶음 73%)였습니다. 그런데 이후 최대 추가 낙폭 중앙값은 -11%로 거의 같았습니다. 신저점 재발 확률은 낮추지만 -10% 안팎의 흔들림은 막지 못합니다. 20일선을 막 돌파한 날만 따로 뽑아도 19%로 같아서, 돌파라는 사건보다 "20일선 위에서 신저점 없이 10일"이라는 상태가 구분력을 가졌습니다.</div>' +
       '<div class="note"><b>2차 저점 지지 (검증 결과 약함)</b>: 진행 중 저점이 직전 저점 -3% 이내이고 10거래일 신저점이 없었던 날의 60일 내 신저점 재발은 32%(묶음 40%), 3% 넘게 이탈한 날은 76%(묶음 71%)였습니다. 다만 독립 표본이 7~10건뿐이고, "신저점 없이 10일 경과"만 만족한 대조군(34%)과 지지 쪽이 같아서 지지가 따로 알려 주는 건 없고, 이탈이 나쁜 신호에 가깝습니다. 기준을 20일로 늘리면 차이가 사라집니다.</div>' +
       '<div class="note"><b>신용 스프레드 꺾임 (검증 결과 약함)</b>: 아래 신용 스프레드 칸의 설명을 보세요.</div></details></div>';
+  }
+
+
+  // ---------- 2-2. 과거 위기 겹쳐 보기 ----------
+  var HIST = null, hMode = 'peak', hHl = null;
+  var HCOL = ['#3b82f6', '#a855f7', '#14b8a6', '#eab308', '#ec4899', '#84cc16', '#06b6d4', '#f97316', '#94a3b8'];
+  function hLabel(e) { var t = e.troughDate; return "'" + t.slice(2, 4) + '.' + t.slice(5, 7) + (e.name ? ' ' + e.name : ''); }
+  function curNow() {
+    // 지금 위기를 과거 위기와 같은 모양으로: 고점 후 일수, -30% 도달 일수, -30% 이후 진행 중 저점
+    var c = D.curve, n = c.length, d30 = D.speed['30'] ? D.speed['30'].days : null, low = 0, lowI = 0;
+    for (var i = 0; i < n; i++) if (c[i] < c[lowI]) lowI = i;
+    var o = { curve: c, days: n - 1, d30: d30, troughDd: c[lowI], daysToTrough: lowI };
+    if (d30 != null) {
+      var mi = d30; for (var j = d30; j < n; j++) if (c[j] < c[mi]) mi = j;
+      o.after30Days = mi - d30; o.extra = ((1 + c[mi] / 100) / (1 + c[d30] / 100) - 1) * 100; o.since30 = n - 1 - d30;
+    }
+    return o;
+  }
+  function median(a) { var b = a.slice().sort(function (x, y) { return x - y; }), m = b.length >> 1; return b.length % 2 ? b[m] : (b[m - 1] + b[m]) / 2; }
+  function renderHist() {
+    if (!HIST) { $('hist').innerHTML = ''; return; }
+    var eps = HIST.episodes, now = curNow(), W = 360, Ht = 250, L = 34, R = 8, T = 10, B = 26;
+    var xmax = hMode === 'peak' ? 330 : 300, ymax = hMode === 'peak' ? 0 : -20, ymin = -70;
+    var X = function (k) { return L + k / xmax * (W - L - R); };
+    var Y = function (v) { return T + (ymax - v) / (ymax - ymin) * (Ht - T - B); };
+    var g = '';
+    for (var yv = ymax === 0 ? 0 : -30; yv >= ymin; yv -= 10) g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(yv) + '" y2="' + Y(yv) + '" stroke="var(--border)" stroke-width="1"/><text x="' + (L - 4) + '" y="' + (Y(yv) + 3) + '" text-anchor="end">' + yv + '%</text>';
+    for (var xv = 0; xv <= xmax; xv += 60) g += '<text x="' + X(xv) + '" y="' + (Ht - 10) + '" text-anchor="middle">' + xv + '</text>';
+    g += '<text x="' + (W - R) + '" y="' + (Ht - 1) + '" text-anchor="end">' + (hMode === 'peak' ? '고점 후 거래일' : '-30% 도달 후 거래일') + '</text>';
+    if (hMode === 'd30') g += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(-30) + '" y2="' + Y(-30) + '" stroke="var(--sub)" stroke-dasharray="3 3" stroke-width="1"/>';
+    var path = function (curve, off) {
+      var pts = [];
+      for (var i = 0; i < curve.length; i++) { var k = i - off; if (k < 0 || k > xmax) continue; pts.push(X(k).toFixed(1) + ',' + Y(curve[i]).toFixed(1)); }
+      return pts.length > 1 ? 'M' + pts.join('L') : '';
+    };
+    var dim = function (id) { return hHl && hHl !== id ? 0.15 : 1; };
+    g += '<clipPath id="hc"><rect x="' + L + '" y="' + T + '" width="' + (W - L - R) + '" height="' + (Ht - T - B) + '"/></clipPath><g clip-path="url(#hc)">';
+    eps.forEach(function (e, i) {
+      var off = hMode === 'peak' ? 0 : e.daysTo30, pd = path(e.curve, off);
+      if (!pd) return;
+      var col = HCOL[i % HCOL.length], tk = (hMode === 'peak' ? e.daysToTrough : e.daysFrom30ToTrough);
+      g += '<path d="' + pd + '" fill="none" stroke="' + col + '" stroke-width="' + (hHl === e.id ? 2.4 : 1.4) + '" opacity="' + dim(e.id) + '"/>';
+      if (tk <= xmax) g += '<circle cx="' + X(tk) + '" cy="' + Y(Math.max(ymin, e.troughDd)) + '" r="2.6" fill="' + col + '" opacity="' + dim(e.id) + '"/>';
+    });
+    var nowOff = hMode === 'peak' ? 0 : now.d30;
+    if (hMode === 'peak' || now.d30 != null) {
+      var pn = path(now.curve, nowOff);
+      var ex = hMode === 'peak' ? now.days : now.since30;
+      g += '<path d="' + pn + '" fill="none" stroke="var(--text)" stroke-width="3" opacity="' + dim('now') + '"/>' +
+           '<circle cx="' + X(ex) + '" cy="' + Y(Math.max(ymin, now.curve[now.curve.length - 1])) + '" r="4" fill="var(--text)" stroke="var(--card-bg)" stroke-width="1.5"/>';
+    }
+    g += '</g>';
+    var legend = eps.map(function (e, i) {
+      return '<button class="lg' + (hHl === e.id ? ' on' : '') + '" data-id="' + e.id + '"><i style="background:' + HCOL[i % HCOL.length] + '"></i>' + esc(hLabel(e)) + '</button>';
+    }).join('') + '<button class="lg' + (hHl === 'now' ? ' on' : '') + '" data-id="now"><i style="background:var(--text)"></i>지금</button>';
+    // 표
+    var rows = eps.map(function (e) {
+      return '<tr><td>' + esc(hLabel(e)) + '<br><span class="muted">고점 ' + e.peakDate.slice(2, 7).replace('-', '.') + '</span></td><td class="neg">' + pct(e.troughDd) + '</td><td>' + e.daysTo30 + '일</td><td>' + e.daysFrom30ToTrough + '일 · ' + pct(e.extraAfter30, 0) + '</td><td>' + (e.recoveryDays == null ? '미회복' : e.recoveryDays + '일') + '</td></tr>';
+    }).join('');
+    rows += '<tr class="now"><td>지금<br><span class="muted">고점 ' + D.peak.date.slice(2, 7).replace('-', '.') + '</span></td><td class="neg">' + pct(now.troughDd) + '</td><td>' + (now.d30 == null ? '미도달' : now.d30 + '일') + '</td><td>' + (now.d30 == null ? '-' : now.after30Days + '일 · ' + pct(now.extra, 0) + ' 진행') + '</td><td>-</td></tr>';
+    // 사실 요약
+    var ext = eps.map(function (e) { return e.extraAfter30; }), deeper = eps.filter(function (e) { return e.troughDd < now.troughDd; }).length;
+    var fast = eps.map(function (e) { return e.daysTo30; }), faster = fast.filter(function (v) { return v <= (now.d30 == null ? 1e9 : now.d30); }).length;
+    var sum = '<div class="note"><b>사실만 요약</b><br>' +
+      '· 지금까지 최대 낙폭 ' + pct(now.troughDd) + '보다 더 깊이 빠진 과거 위기: <b>' + deeper + '/' + eps.length + '건</b><br>' +
+      (now.d30 == null ? '' :
+        '· 고점에서 -30%까지 <b>' + now.d30 + '거래일</b> (과거 ' + Math.min.apply(null, fast) + '~' + Math.max.apply(null, fast) + '일, 이만큼 빠르거나 더 빨랐던 위기 ' + faster + '건)<br>' +
+        '· -30% 이후 추가 낙폭: 과거 ' + pct(Math.max.apply(null, ext), 0) + ' ~ ' + pct(Math.min.apply(null, ext), 0) + ' (중앙 ' + pct(median(ext), 0) + '), 이번은 지금까지 <b>' + pct(now.extra, 0) + '</b> (-30% 도달 후 ' + now.since30 + '거래일째)') + '</div>';
+    $('hist').innerHTML = '<div class="card"><h2>과거 위기와 겹쳐 보기<small>코스피 1990~ · ' + eps.length + '건</small></h2>' +
+      '<div class="seg" id="hseg"><button data-m="peak" class="' + (hMode === 'peak' ? 'on' : '') + '">고점부터</button><button data-m="d30" class="' + (hMode === 'd30' ? 'on' : '') + '">-30% 도달부터</button></div>' +
+      '<svg class="ch" viewBox="0 0 ' + W + ' ' + Ht + '" role="img" aria-label="과거 위기 낙폭 곡선 겹쳐 보기">' + g + '</svg>' +
+      '<div class="legend" id="hlg">' + legend + '</div>' +
+      '<table><thead><tr><th>위기(저점)</th><th>최대 낙폭</th><th>-30%까지</th><th>-30% 이후</th><th>회복</th></tr></thead><tbody>' + rows + '</tbody></table>' + sum +
+      '<div class="note">위기마다 원인·속도가 달라 같은 경과일에 같은 모양이 되지 않습니다. 이 그림은 과거 모양을 보여 줄 뿐 이번 저점을 알려 주지 않습니다. "-30% 이후"는 -30%를 처음 찍은 날부터 저점까지의 거래일과 추가 낙폭, "회복"은 저점부터 고점 종가를 되찾기까지 거래일입니다. 고점은 그날 기준 직전 400일 최고 종가이고, 지금 위기의 진행 중인 저점은 더 내려가면 바뀝니다. 1990년 위기는 일봉이 1990-01-04부터라 고점이 실제보다 낮을 수 있습니다.</div></div>';
+    Array.prototype.forEach.call(document.querySelectorAll('#hseg button'), function (b) { b.addEventListener('click', function () { hMode = b.getAttribute('data-m'); renderHist(); }); });
+    Array.prototype.forEach.call(document.querySelectorAll('#hlg .lg'), function (b) { b.addEventListener('click', function () { var id = b.getAttribute('data-id'); hHl = hHl === id ? null : id; renderHist(); }); });
   }
 
   // ---------- 3. 신용 스프레드 ----------
@@ -243,6 +330,7 @@
     $('err').innerHTML = '';
     apiGet('/api/crisis').then(function (d) {
       D = d; renderPos(); renderChk(); renderCred();
+      apiGet('/api/crisis/history').then(function (h) { HIST = h; renderHist(); }).catch(function () { HIST = null; $('hist').innerHTML = ''; });
       var H = holdings();
       renderScn();
       loadPrices(H.list).then(renderScn);

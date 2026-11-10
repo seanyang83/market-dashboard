@@ -1104,6 +1104,7 @@ def build_crisis_status(closes, spreads, today):
         hit = next((i for i in range(pi + 1, n) if vals[i] <= peak * (1 - pct / 100)), None)
         speed[str(pct)] = None if hit is None else {"days": hit - pi, "date": iso(dates[hit])}
     out["speed"] = speed
+    out["curve"] = [round((vals[i] / peak - 1) * 100, 1) for i in range(pi, n)]  # 고점일부터 오늘까지 고점 대비 낙폭(%)
     # 저점 차수: 15% 반등으로 확정된 저점들 + 진행 중인 저점
     lows = []
     mode, lo, hi = "down", (pi, peak), (pi, peak)
@@ -2176,6 +2177,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_breadth()
         elif self.path.startswith("/api/ops/snapshot"):
             self.handle_ops_snapshot()
+        elif urllib.parse.urlparse(self.path).path == "/api/crisis/history":
+            self.handle_crisis_history()
         elif self.path.startswith("/api/crisis"):
             self.handle_crisis()
         elif self.path.startswith("/api/ops/score-snapshot"):
@@ -2734,6 +2737,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(400, {"error": str(e)})
         except Exception as e:
             self.send_json(502, {"error": str(e)[:200]})
+
+    def handle_crisis_history(self):
+        """과거 코스피 위기(-30% 이하) 곡선·요약. build_crisis_history.py 가 만든 crisis_history.json 을 그대로 준다."""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crisis_history.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                self.send_json(200, json.load(f))
+        except (OSError, ValueError):
+            self.send_json(503, {"error": "crisis_history.json 을 읽지 못했습니다"})
 
     def handle_crisis(self):
         try:
