@@ -1875,6 +1875,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_stock_theme()
         elif self.path.startswith("/api/stock/investor-live"):
             self.handle_stock_investor_live()
+        elif self.path.startswith("/api/stock/investor-debug"):
+            self.handle_stock_investor_debug()
         elif self.path.startswith("/api/stock/program-trade"):
             self.handle_stock_program_trade()
         elif self.path.startswith("/api/telegram/send-summary"):
@@ -2278,6 +2280,40 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             })
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_stock_investor_debug(self):
+        """장중 수급 소스 점검용(로그인 필요): 한투 수급 TR 원본 앞부분을 그대로 돌려준다. 키움과 값이 다를 때 어느 TR이
+        장중에 통합 오늘 값을 주는지 확인하려고 둔 임시 진단(2026-11-10)."""
+        code = self.require_stock_code()
+        if not code:
+            return
+        if not KIS_APP_KEY or not KIS_APP_SECRET:
+            self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
+            return
+        out = {"kstNow": (datetime.now(timezone.utc) + timedelta(hours=9)).strftime("%Y-%m-%d %H:%M:%S")}
+        keep = ("stck_bsop_date", "bsop_hour_gb", "frgn_ntby_qty", "orgn_ntby_qty", "prsn_ntby_qty", "frgn_fake_ntby_qty",
+                "orgn_fake_ntby_qty", "sum_fake_ntby_qty", "frgn_ntby_tr_pbmn", "orgn_ntby_tr_pbmn", "stck_clpr")
+
+        def grab(name, path, tr, params, keys=("output2", "output")):
+            try:
+                data = kis_get(path, tr, params)
+                rows = next((data[k] for k in keys if isinstance(data.get(k), list)), None)
+                if rows is None:
+                    rows = [data.get("output") or data.get("output1") or data]
+                out[name] = [{k: r.get(k) for k in keep if k in r} or r for r in rows[:6]]
+            except Exception as e:
+                out[name] = f"error: {e}"
+
+        grab("estimate", "/uapi/domestic-stock/v1/quotations/investor-trend-estimate", "HHPTJ04160200",
+             {"MKSC_SHRN_ISCD": code})
+        for mk in ("UN", "J"):
+            grab(f"daily_{mk}", "/uapi/domestic-stock/v1/quotations/investor-trade-by-stock-daily", "FHPTJ04160001",
+                 {"FID_COND_MRKT_DIV_CODE": mk, "FID_INPUT_ISCD": code, "FID_INPUT_DATE_1": "",
+                  "FID_ORG_ADJ_PRC": "", "FID_ETC_CLS_CODE": ""})
+        for mk in ("J", "UN"):
+            grab(f"inquire_investor_{mk}", "/uapi/domestic-stock/v1/quotations/inquire-investor", "FHKST01010900",
+                 {"FID_COND_MRKT_DIV_CODE": mk, "FID_INPUT_ISCD": code})
+        self.send_json(200, out)
 
     def handle_stock_program_trade(self):
         code = self.require_stock_code()
