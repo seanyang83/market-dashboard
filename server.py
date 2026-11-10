@@ -374,6 +374,35 @@ def _fetch_credit_ytd(year, end):
     return out
 
 
+_credit_win_cache = {"data": None, "ts": 0}
+
+
+def _fetch_credit_window(days=430):
+    """{YYYYMMDD: {"kospi": 원, "kosdaq": 원}} - 최근 days 달력일 신용융자 잔고(금투협 FreeSIS, 90일씩 나눠 병렬, 30분 캐시)."""
+    now = time.time()
+    with _market_extra_lock:
+        c = _credit_win_cache
+        if c["data"] and now - c["ts"] < CREDIT_YTD_CACHE_TTL:
+            return c["data"]
+    end = datetime.now(timezone.utc) + timedelta(hours=9)
+    end = datetime(end.year, end.month, end.day)
+    ranges, st = [], end - timedelta(days=days)
+    while st <= end:
+        e = min(st + timedelta(days=89), end)
+        ranges.append((st, e))
+        st = e + timedelta(days=1)
+    with ThreadPoolExecutor(max_workers=len(ranges)) as ex:
+        parts = list(ex.map(lambda r: _kofia_credit_range(*r), ranges))
+    out = {}
+    for part in parts:
+        out.update(part)
+    if not out:
+        raise ValueError("신용융자 잔고 데이터가 비어 있습니다")
+    with _market_extra_lock:
+        _credit_win_cache.update(data=out, ts=now)
+    return out
+
+
 def _drawdown_series(dates, values):
     """values: {YYYYMMDD: 값}. dates(전체 날짜축)에 맞춘 낙폭% 리스트(값 없는 날 None)와 요약."""
     dd, peak, peak_d, mdd, mdd_d, mdd_peak_d, last = [], None, None, 0.0, None, None, None
@@ -1081,8 +1110,40 @@ def _series_brief(rows):
             "chg20": round(ch20, 2) if ch20 is not None else None}
 
 
-def build_crisis_status(closes, spreads, today):
-    """closes: {YYYYMMDD: 종가}, spreads: {"BAA10Y": rows, "BAMLH0A0HYM2": rows, "BAMLC0A0CM": rows} (없으면 None), today: YYYYMMDD(KST)."""
+def _margin_state(closes, credit, peak_date):
+    """신용융자 잔고 낙폭(MDD). 잔고 고점 = 최근 400일 최고, 낙폭 = 그날까지의 고점 대비. 지수와 같은 날짜축(지수 고점일~)으로 비교용 시계열도 준다.
+    closes: {YYYYMMDD: 코스피 종가}, credit: {YYYYMMDD: {"kospi": 원, "kosdaq": 원}}, peak_date: 지수 고점 YYYYMMDD."""
+    if not credit:
+        return None
+    cd = sorted(credit)
+    cutoff = (datetime.strptime(cd[-1], "%Y%m%d") - timedelta(days=400)).strftime("%Y%m%d")
+    out = {"asOf": "%s-%s-%s" % (cd[-1][:4], cd[-1][4:6], cd[-1][6:])}
+    idx_dates = [d for d in sorted(closes) if d >= peak_date]
+    base = closes.get(peak_date)
+    for mk in ("kospi", "kosdaq"):
+        vals = {d: credit[d][mk] for d in cd if d >= cutoff and credit[d].get(mk)}
+        if len(vals) < 20:
+            out[mk] = None
+            continue
+        dates = sorted(vals)
+        dd = _drawdown_series(dates, vals)
+        pk_d = dd["peakDate"]
+        iso = lambda d: d and "%s-%s-%s" % (d[:4], d[4:6], d[6:])
+        row = {"peakDate": iso(pk_d), "peakWon": vals[pk_d], "lastDate": iso(dd["lastDate"]), "lastWon": vals[dd["lastDate"]],
+               "now": dd["now"], "mdd": dd["mdd"], "mddDate": iso(dd["mddDate"])}
+        if mk == "kospi" and base:
+            # 지수 고점일부터의 비교 시계열: 지수 낙폭 vs 신용잔고 낙폭(잔고는 자기 고점 대비)
+            sd = [d for d in idx_dates if d >= dates[0]]
+            cdd = dict(zip(dates, dd["dd"]))
+            row["series"] = {"dates": [iso(d) for d in sd],
+                             "index": [round((closes[d] / base - 1) * 100, 1) for d in sd],
+                             "credit": [cdd.get(d) for d in sd]}
+        out[mk] = row
+    return out
+
+
+def build_crisis_status(closes, spreads, today, credit_bal=None):
+    """closes: {YYYYMMDD: 종가}, credit_bal: 신용융자 잔고 {YYYYMMDD: {"kospi","kosdaq"}}(없으면 생략), spreads: {"BAA10Y": rows, "BAMLH0A0HYM2": rows, "BAMLC0A0CM": rows} (없으면 None), today: YYYYMMDD(KST)."""
     pts = sorted(closes.items())
     if len(pts) < 130:
         raise ValueError("코스피 일봉이 부족합니다")
@@ -1153,6 +1214,11 @@ def build_crisis_status(closes, spreads, today):
     credit["hy"] = _series_brief(spreads.get("BAMLH0A0HYM2"))
     credit["ig"] = _series_brief(spreads.get("BAMLC0A0CM"))
     out["credit"] = credit
+    try:
+        out["margin"] = _margin_state(closes, credit_bal, dates[pi])
+    except Exception:
+        out["margin"] = None
+    out["disparity"] = {k: round((cur / out["ma"][k] - 1) * 100, 1) for k in ("ma20", "ma60", "ma120")}
     # 체크리스트. 20일선·2차 저점 항목은 코스피 1990~ 위기일(고점 대비 -25% 이하)로 검증한 규칙이다(HANDOFF 35 참고).
     d_since = out["lowestClose"]["tradingDaysSince"]
     # 2차 저점 지지: 직전 확정 저점(1차)이 있고 아래로 새 저점을 만드는 중일 때, 그 저점이 1차 저점 -3% 이내이고 10거래일 신저점이 없으면 지지
@@ -2756,9 +2822,16 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 except Exception:
                     return sid, None
             from concurrent.futures import ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=3) as ex:
+            def bal():
+                try:
+                    return _fetch_credit_window()
+                except Exception:
+                    return None
+            with ThreadPoolExecutor(max_workers=4) as ex:
+                f_bal = ex.submit(bal)
                 spreads = dict(ex.map(one, ("BAA10Y", "BAMLH0A0HYM2", "BAMLC0A0CM")))
-            self.send_json(200, build_crisis_status(closes, spreads, _kst_now().strftime("%Y%m%d")))
+                credit_bal = f_bal.result()
+            self.send_json(200, build_crisis_status(closes, spreads, _kst_now().strftime("%Y%m%d"), credit_bal))
         except Exception as e:
             self.send_json(502, {"error": str(e)[:200]})
 

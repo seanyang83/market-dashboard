@@ -39,6 +39,60 @@ def load_rows(argv):
     return sorted(server._fetch_index_closes("KOSPI", 16000).items())
 
 
+DISP_CRISIS = -0.25        # 이격도 통계 대상: 직전 400일 고점 대비 -25% 이하인 날
+DISP_QUANT = (1, 2, 3, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 95)
+DISP_TH = (-8, -10, -12, -15)   # 20일 이격도 기준(%)
+
+
+def _median(a):
+    b = sorted(a)
+    m = len(b) // 2
+    return b[m] if len(b) % 2 else (b[m - 1] + b[m]) / 2
+
+
+def disparity_stats(dates, vals, pk, dd):
+    """위기일(-25% 이하)에서 이평선 이격도 분포와, 20일 이격도가 크게 벌어졌을 때 이후 5·10·20거래일 성과."""
+    n = len(vals)
+
+    def disp(t, k):
+        return None if t < k - 1 else vals[t] / (sum(vals[t - k + 1:t + 1]) / k) - 1
+
+    crisis = [t for t in range(260, n) if dd[t] <= DISP_CRISIS]
+    out = {"crisisDays": len(crisis), "crisisDef": "직전 400일 고점 대비 -25% 이하", "quantiles": {}, "stats20": []}
+    for k in (20, 60, 120):
+        d = sorted(disp(t, k) * 100 for t in crisis if disp(t, k) is not None)
+        out["quantiles"][str(k)] = [[q, round(d[min(len(d) - 1, int(len(d) * q / 100))], 1)] for q in DISP_QUANT]
+
+    def clusters(ts, gap=10):
+        cl = []
+        for t in ts:
+            if not cl or t - cl[-1][-1] > gap:
+                cl.append([t])
+            else:
+                cl[-1].append(t)
+        return cl
+
+    def row(label, ts):
+        ts = [t for t in ts if t + 20 < n]
+        if not ts:
+            return None
+        fw = lambda t, h: vals[t + h] / vals[t] - 1
+        newlow = lambda t: min(vals[t + 1:t + 21]) < min(vals[pk[t]:t + 1])
+        first = [c[0] for c in clusters(ts)]
+        pc = lambda xs: round(100 * sum(xs) / len(xs))
+        return {"label": label, "days": len(ts), "clusters": len(first),
+                "up5": pc([fw(t, 5) > 0 for t in ts]), "up10": pc([fw(t, 10) > 0 for t in ts]),
+                "med5": round(_median([fw(t, 5) for t in ts]) * 100, 1), "med10": round(_median([fw(t, 10) for t in ts]) * 100, 1),
+                "newLow20": pc([newlow(t) for t in ts]),
+                "cUp5": sum(fw(t, 5) > 0 for t in first), "cUp10": sum(fw(t, 10) > 0 for t in first),
+                "cNewLow20": sum(newlow(t) for t in first)}
+
+    out["stats20"].append(row("전체", crisis))
+    for th in DISP_TH:
+        out["stats20"].append(dict(row("%d%% 이하" % th, [t for t in crisis if disp(t, 20) is not None and disp(t, 20) <= th / 100]), th=th))
+    return out
+
+
 def build(rows):
     dates = [d for d, _ in rows]
     vals = [v for _, v in rows]
@@ -81,7 +135,8 @@ def build(rows):
             "recoveryDays": None if rec is None else rec - tr,
             "curve": [round((vals[i] / vals[p] - 1) * 100, 1) for i in range(p, end + 1)],
         })
-    return {"asOf": iso(dates[-1]), "threshold": int(THRESH * 100), "peakWindowDays": PEAK_DAYS, "curveLen": CURVE_LEN,
+    disparity = disparity_stats(dates, vals, pk, dd)
+    return {"asOf": iso(dates[-1]), "threshold": int(THRESH * 100), "disparity": disparity, "peakWindowDays": PEAK_DAYS, "curveLen": CURVE_LEN,
             "note": "1990-01-04 이전 일봉이 없어 1990년 위기의 고점은 실제보다 낮을 수 있음", "episodes": eps}
 
 
