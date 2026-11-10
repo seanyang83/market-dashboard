@@ -1152,8 +1152,21 @@ def build_crisis_status(closes, spreads, today):
     credit["hy"] = _series_brief(spreads.get("BAMLH0A0HYM2"))
     credit["ig"] = _series_brief(spreads.get("BAMLC0A0CM"))
     out["credit"] = credit
-    # 체크리스트 (③ 2차 저점 지지, ④ 20일선 회복은 과거 검증 전이라 넣지 않는다)
+    # 체크리스트. 20일선·2차 저점 항목은 코스피 1990~ 위기일(고점 대비 -25% 이하)로 검증한 규칙이다(HANDOFF 35 참고).
     d_since = out["lowestClose"]["tradingDaysSince"]
+    # 2차 저점 지지: 직전 확정 저점(1차)이 있고 아래로 새 저점을 만드는 중일 때, 그 저점이 1차 저점 -3% 이내이고 10거래일 신저점이 없으면 지지
+    if mode == "down" and lows:
+        l1v, l2v, l2d = lows[-1]["v"], lo[1], n - 1 - lo[0]
+        gap = (l2v / l1v - 1) * 100
+        if gap >= -3:
+            c4 = {"status": "ok" if l2d >= 10 else "no",
+                  "text": "진행 중 저점이 직전 저점 대비 %+.1f%% (지지 범위), 신저점 없이 %d거래일 (10 필요)" % (gap, l2d)}
+        else:
+            c4 = {"status": "no", "text": "진행 중 저점이 직전 저점보다 %.1f%% 낮음 (이탈), 신저점 없이 %d거래일" % (-gap, l2d)}
+    elif mode == "down":
+        c4 = {"status": "na", "text": "아직 1차 저점이 확정되지 않았습니다 (15% 반등 전)"}
+    else:
+        c4 = {"status": "na", "text": "저점 확정 뒤 반등 중이라 해당 없음 (다시 내려가 새 저점을 만들면 표시)"}
     cs = credit["baa10y"]
     if cs is None:
         c5 = {"status": "na", "text": "신용 스프레드 데이터를 불러오지 못했습니다"}
@@ -1168,6 +1181,11 @@ def build_crisis_status(closes, spreads, today):
          "text": "최저 종가 이후 %d거래일 경과 (60 필요)" % d_since, "evidence": "backtest"},
         {"key": "aboveMa60", "title": "종가가 60일선 위", "status": "ok" if cur > out["ma"]["ma60"] else "no",
          "text": "현재 %s / 60일선 %s" % (format(round(cur), ","), format(round(out["ma"]["ma60"]), ",")), "evidence": "backtest"},
+        {"key": "ma20Reclaim", "title": "20일선 회복 (신저점 없이 10거래일 + 종가가 20일선 위)",
+         "status": "ok" if (d_since >= 10 and cur > out["ma"]["ma20"]) else "no",
+         "text": "신저점 없이 %d거래일 (10 필요) / 현재 %s, 20일선 %s" % (d_since, format(round(cur), ","), format(round(out["ma"]["ma20"]), ",")),
+         "evidence": "backtest2"},
+        {"key": "secondLowHold", "title": "2차 저점 지지 (직전 저점 -3% 이내 + 신저점 없이 10거래일)", **c4, "evidence": "weak"},
         {"key": "creditTurn", "title": "신용 스프레드 정점 이후 꺾임", **c5, "evidence": "weak"},
     ]
     return out
