@@ -924,6 +924,68 @@ def _fetch_volume_rank_flows():
     return data
 
 
+# --- 장중 가집계 수급 정확도 검증용 기록 (2026-11-10) ---
+# 종베의 장중 외국인·기관 수급(한투 가집계, KRX 정규장 기준)이 키움(통합)·확정값과 얼마나 맞는지 쌓아 보려고,
+# 15:10(est: 가집계)·15:50(post: 일별 통합 오늘 행)·20:10(final: NXT 마감 뒤 같은 행)에 거래대금 상위 10종목 +
+# NXT 거래가 큰 하이닉스·삼성전자의 외국인·기관 순매수 수량을 한 줄씩 돌려준다. 저장은 GitHub Actions
+# (flow-check-log.yml)가 data 브랜치 data/flow_check.csv에 붙인다(Render 무료 서버는 파일이 사라짐).
+FLOW_CHECK_EXTRA = (("000660", "SK하이닉스"), ("005930", "삼성전자"))
+FLOW_CHECK_SLOTS = ("est", "post", "final")
+
+
+def _flow_estimate_row(code):
+    """한투 가집계의 가장 늦은 구간 -> (외국인, 기관, 구간번호). 없으면 None."""
+    data = kis_get("/uapi/domestic-stock/v1/quotations/investor-trend-estimate", "HHPTJ04160200",
+                   {"MKSC_SHRN_ISCD": code})
+    rows = data.get("output2") or []
+    if not rows:
+        return None
+    latest = max(rows, key=lambda r: int(r.get("bsop_hour_gb", 0) or 0))
+    return (int(latest.get("frgn_fake_ntby_qty", 0)), int(latest.get("orgn_fake_ntby_qty", 0)),
+            str(latest.get("bsop_hour_gb")))
+
+
+def build_flow_check_rows(slot, codes=None):
+    """-> {"date","time","rows":[{slot,code,name,foreign,inst,checkpoint}]}. codes 없으면 현재 거래대금 TOP10+기본 2종목.
+    한 종목이 실패하면 그 줄은 foreign/inst를 비워 둔다(나중에 '값 없음'으로 따로 센다)."""
+    if slot not in FLOW_CHECK_SLOTS:
+        raise ValueError("slot must be est|post|final")
+    names = {}
+    if not codes:
+        rank = _fetch_volume_rank()
+        codes = [r["code"] for r in rank]
+        names = {r["code"]: r.get("name") for r in rank}
+    for c, n in FLOW_CHECK_EXTRA:
+        if c not in codes:
+            codes = list(codes) + [c]
+        names.setdefault(c, n)
+
+    def one(code):
+        row = {"slot": slot, "code": code, "name": names.get(code) or "", "foreign": "", "inst": "", "checkpoint": ""}
+        try:
+            if slot == "est":
+                got = _flow_estimate_row(code)
+                if got:
+                    row["foreign"], row["inst"], row["checkpoint"] = got
+            else:
+                today = _kst_now().strftime("%Y%m%d")
+                entry = _investor_today_fetch(code)   # 캐시를 거치지 않고 새로 받는다
+                r = entry["row"]
+                if r and entry["date"] == today:
+                    row["foreign"] = int(r.get("frgn_ntby_qty", 0))
+                    row["inst"] = int(r.get("orgn_ntby_qty", 0))
+                    row["checkpoint"] = "daily"
+        except Exception as e:
+            row["checkpoint"] = "error:" + str(e)[:40].replace(",", " ")
+        return row
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=5) as ex:
+        rows = list(ex.map(one, codes))
+    now = _kst_now()
+    return {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M:%S"), "rows": rows}
+
+
 # --- 대시보드 접근 비밀번호 ---
 # DASHBOARD_PASSWORD(Render 환경변수)를 설정하면 페이지와 /api/* 전부 로그인이
 # 필요해진다. 한 번 로그인하면 쿠키를 30일간 기억해서 휴대폰에서도 매번 칠
@@ -1911,6 +1973,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_snapshot()
         elif self.path.startswith("/api/ops/score-snapshot"):
             self.handle_ops_score_snapshot()
+        elif self.path.startswith("/api/ops/flow-check"):
+            self.handle_ops_flow_check()
         elif self.path.startswith("/api/ops/stock-flow"):
             self.handle_ops_stock_flow()
         elif self.path.startswith("/api/ops/regime"):
@@ -2438,6 +2502,27 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"ok": True, "row": row})
         except Exception as e:
             self.send_json(502, {"error": str(e)})
+
+    def handle_ops_flow_check(self):
+        # 장중 가집계 수급 정확도 기록용(GitHub Actions flow-check-log.yml이 호출). ?slot=est|post|final[&codes=000660,005930]
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        if not is_krx_trading_day():
+            self.send_json(200, {"ok": True, "skipped": "market_holiday"})
+            return
+        if not KIS_APP_KEY or not KIS_APP_SECRET:
+            self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
+            return
+        try:
+            slot = self.query_param("slot") or ""
+            raw = self.query_param("codes") or ""
+            codes = [c for c in raw.split(",") if re.fullmatch(r"[0-9A-Z]{6}", c)] or None
+            self.send_json(200, {"ok": True, **build_flow_check_rows(slot, codes)})
+        except ValueError as e:
+            self.send_json(400, {"error": str(e)})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
 
     def handle_ops_snapshot(self):
         # 일지 시트용 하루 스냅샷(Apps Script가 호출). TELEGRAM_SUMMARY_KEY로 보호.

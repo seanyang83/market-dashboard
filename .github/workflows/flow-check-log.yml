@@ -1,0 +1,122 @@
+name: Log flow check
+
+# 장중 가집계 수급 정확도 검증(2026-11-10~): 거래일 15:10(est 가집계)·15:50(post 일별 통합 오늘 행)·20:10(final NXT 마감 뒤)
+# KST에 거래대금 TOP10(+하이닉스·삼성전자)의 외국인·기관 순매수 수량을 받아 data 브랜치 data/flow_check.csv 에 붙인다.
+# 비교·집계는 저장소의 flowcheck_report.py 로 한다. main 이 아니라 data 브랜치에 커밋하므로 Render 자동 배포는 없다.
+on:
+  schedule:
+    # cron 은 UTC, KST = UTC+9. 시각이 늦게 돌아도 아래에서 cron 문자열로 slot 을 정하므로 slot 이 뒤바뀌지 않는다.
+    - cron: "10 6 * * 1-5"    # 15:10 KST  est
+    - cron: "50 6 * * 1-5"    # 15:50 KST  post
+    - cron: "10 11 * * 1-5"   # 20:10 KST  final
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "est / post / final (수동 실행은 같은 날짜+slot 줄을 덮어쓴다)"
+        default: est
+        type: choice
+        options: [est, post, final]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: flow-check-log
+  cancel-in-progress: false
+
+jobs:
+  log:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide slot
+        id: slot
+        run: |
+          IN="${{ github.event.inputs.slot }}"
+          SCH="${{ github.event.schedule }}"
+          if [ -n "$IN" ]; then S="$IN"
+          elif [ "$SCH" = "10 6 * * 1-5" ]; then S=est
+          elif [ "$SCH" = "50 6 * * 1-5" ]; then S=post
+          else S=final; fi
+          echo "slot=$S" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+
+      - name: Load today's codes from data branch
+        id: codes
+        run: |
+          # post/final 은 est 때 기록한 종목 목록을 그대로 다시 조회한다(순위가 바뀌어도 같은 종목끼리 비교).
+          CODES=""
+          if git ls-remote --exit-code --heads origin data >/dev/null 2>&1; then
+            git fetch origin data
+            if [ "${{ steps.slot.outputs.slot }}" != "est" ]; then
+              CODES=$(git show origin/data:data/flow_check.csv 2>/dev/null | TODAY=$(TZ=Asia/Seoul date +%F) python3 -c "
+          import csv, os, sys
+          codes = []
+          for r in csv.DictReader(sys.stdin):
+              if r['date'] == os.environ['TODAY'] and r['slot'] == 'est' and r['code'] not in codes:
+                  codes.append(r['code'])
+          print(','.join(codes))
+          " || true)
+            fi
+          fi
+          echo "codes=$CODES" >> "$GITHUB_OUTPUT"
+          echo "codes: $CODES"
+
+      - name: Fetch flow check
+        run: |
+          # 무료 Render 서버는 잠들어 있으면 깨어나는 데 ~1분 걸려서 타임아웃/재시도를 넉넉히 둔다.
+          curl -sf -m 120 --retry 3 --retry-delay 20 --retry-all-errors \
+            "https://market-dashboard-gqxq.onrender.com/api/ops/flow-check?key=${{ secrets.TELEGRAM_SUMMARY_KEY }}&slot=${{ steps.slot.outputs.slot }}&codes=${{ steps.codes.outputs.codes }}" \
+            -o "$RUNNER_TEMP/flow.json"
+          python3 -c "import json,os; d=json.load(open(os.environ['RUNNER_TEMP']+'/flow.json')); print({k:v for k,v in d.items() if k!='rows'}, len(d.get('rows') or []))"
+
+      - name: Append to data branch
+        run: |
+          python3 - <<'PY'
+          import csv, json, os, subprocess, sys
+          snap = json.load(open(os.environ["RUNNER_TEMP"] + "/flow.json"))
+          rows = snap.get("rows")
+          if not rows:
+              print("건너뜀:", snap.get("skipped", "rows 없음"))
+              sys.exit(0)
+
+          def sh(*a, check=True):
+              return subprocess.run(a, check=check, capture_output=True, text=True)
+
+          sh("git", "config", "user.name", "flow-check[bot]")
+          sh("git", "config", "user.email", "flow-check@users.noreply.github.com")
+          have = sh("git", "ls-remote", "--exit-code", "--heads", "origin", "data", check=False).returncode == 0
+          if have:
+              sh("git", "fetch", "origin", "data")
+              sh("git", "checkout", "-B", "data", "origin/data")
+          else:
+              sh("git", "checkout", "--orphan", "data")
+              sh("git", "rm", "-rf", ".", check=False)
+
+          cols = ["date", "slot", "time", "code", "name", "foreign", "inst", "checkpoint"]
+          path = "data/flow_check.csv"
+          os.makedirs("data", exist_ok=True)
+          old = []
+          if os.path.exists(path):
+              old = list(csv.DictReader(open(path, encoding="utf-8")))
+          new = [{"date": snap["date"], "time": snap["time"], **{k: r.get(k, "") for k in ("slot", "code", "name", "foreign", "inst", "checkpoint")}}
+                 for r in rows]
+          # 같은 날짜+slot+종목은 덮어쓴다(수동 재실행/지연 중복 방지).
+          key = lambda r: (r["date"], r["slot"], r["code"])
+          newkeys = {key(r) for r in new}
+          merged = [r for r in old if key(r) not in newkeys] + new
+          order = {"est": 0, "post": 1, "final": 2}
+          merged.sort(key=lambda r: (r["date"], order.get(r["slot"], 9), r["code"]))
+          with open(path, "w", encoding="utf-8", newline="") as f:
+              w = csv.DictWriter(f, fieldnames=cols)
+              w.writeheader()
+              w.writerows({c: r.get(c, "") for c in cols} for r in merged)
+
+          sh("git", "add", "data/flow_check.csv")
+          if sh("git", "diff", "--cached", "--quiet", check=False).returncode == 0:
+              print("변경 없음")
+              sys.exit(0)
+          sh("git", "commit", "-m", f"flow-check {snap['date']} {rows[0].get('slot')} ({len(rows)}종목)")
+          sh("git", "push", "origin", "data")
+          print("기록 완료", snap["date"], rows[0].get("slot"), len(rows))
+          PY
