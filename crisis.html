@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>위기 상황판</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card-bg: #ffffff; --text: #14161a; --sub: #6b7280; --border: #e5e7eb;
+    --up: #d92d20; --down: #475569; --accent: #059669; --warn-bg: #fef2f2; --warn: #b42318;
+    --ok: #16a34a; --pend: #d97706; --na: #9ca3af; --note-bg: #f8fafc;
+    --shadow: 0 1px 2px rgba(16,24,40,.04), 0 1px 3px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b0d10; --card-bg: #15181d; --text: #f2f3f5; --sub: #9aa1ac; --border: #262a31;
+      --up: #f87171; --down: #cbd5e1; --accent: #34d399; --warn-bg: #1d1517; --warn: #fca5a5;
+      --ok: #4ade80; --pend: #fbbf24; --na: #6b7280; --note-bg: #12151a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; padding: 22px 14px 60px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Apple SD Gothic Neo", Roboto, sans-serif;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; }
+  .sub { font-size: 12px; color: var(--sub); line-height: 1.55; }
+  a { color: var(--accent); }
+  .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 16px; box-shadow: var(--shadow); margin-top: 14px; }
+  .card h2 { font-size: 14px; margin: 0 0 8px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .card h2 small { font-size: 11px; color: var(--sub); font-weight: 400; }
+  .btn { border: 1px solid var(--border); background: var(--card-bg); color: var(--text); font-size: 12.5px; padding: 7px 12px; border-radius: 999px; cursor: pointer; font-family: inherit; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .big { font-size: 34px; font-weight: 800; letter-spacing: -.5px; line-height: 1.1; }
+  .neg { color: var(--down); } .pos { color: var(--up); }
+  .row { display: flex; gap: 6px 14px; flex-wrap: wrap; margin-top: 8px; font-size: 13px; }
+  .row span b { font-weight: 700; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .chip { font-size: 12px; padding: 4px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--sub); }
+  .chip b { color: var(--text); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 10px; }
+  th, td { padding: 7px 3px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { font-size: 11.5px; color: var(--sub); font-weight: 600; }
+  th:first-child, td:first-child { text-align: left; white-space: normal; line-height: 1.3; }
+  tr:last-child td { border-bottom: none; }
+  .nm { white-space: normal; line-height: 1.3; }
+  .note { margin-top: 10px; padding: 10px 12px; border-radius: 10px; background: var(--note-bg); border: 1px solid var(--border); font-size: 12px; color: var(--sub); line-height: 1.6; }
+  .note.warn { background: var(--warn-bg); border-color: transparent; color: var(--text); }
+  .check { display: flex; gap: 10px; padding: 11px 0; border-bottom: 1px solid var(--border); align-items: flex-start; }
+  .check:last-of-type { border-bottom: none; }
+  .dot { flex: none; width: 12px; height: 12px; border-radius: 50%; margin-top: 4px; background: var(--na); }
+  .dot.ok { background: var(--ok); } .dot.no { background: var(--pend); } .dot.na { background: var(--na); }
+  .check .t { font-size: 14px; font-weight: 600; }
+  .check .d { font-size: 12.5px; color: var(--sub); margin-top: 2px; line-height: 1.5; }
+  .tag { font-size: 10.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; color: var(--sub); margin-left: 6px; font-weight: 400; white-space: nowrap; }
+  .st-ok { color: var(--ok); } .st-no { color: var(--pend); } .st-na { color: var(--sub); }
+  input { width: 64px; padding: 6px 7px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 15px; font-family: inherit; text-align: right; }
+  .over { color: var(--up); font-weight: 700; } .under { color: var(--ok); }
+  details summary { cursor: pointer; font-size: 12.5px; color: var(--sub); margin-top: 10px; }
+  .muted { color: var(--sub); }
+  #err { margin-top: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>위기 상황판</h1>
+    <button class="btn" id="refresh">새로고침</button>
+  </header>
+  <div class="sub">코스피가 지금 위기의 어디쯤인지 보여 주는 상태판입니다. 사실 계산과 과거 검증 결과만 표시하고, 매수·매도를 권하지 않습니다. 손절 계산기는 <a href="/risk">/risk</a></div>
+  <div id="err"></div>
+  <div id="pos"></div>
+  <div id="chk"></div>
+  <div id="cred"></div>
+  <div id="scn"></div>
+  <div class="sub" style="margin-top:18px">자료: 코스피 일봉(네이버), 미국 신용 스프레드(FRED, 하루 1회 갱신·미국 영업일 기준 하루 늦음). 보유 종목은 이 기기의 손절 계산기 입력값을 읽으며 서버로 보내지 않습니다.</div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function fmt(n, d) { return Number(n).toLocaleString('ko-KR', { minimumFractionDigits: d || 0, maximumFractionDigits: d || 0 }); }
+  function pct(n, d) { d = d == null ? 1 : d; return (n > 0 ? '+' : n < 0 ? '-' : '') + Math.abs(n).toFixed(d) + '%'; }
+  function md(s) { return s ? s.slice(5) : ''; }
+  function num(s) { var v = parseFloat(String(s == null ? '' : s).replace(/,/g, '')); return isFinite(v) ? v : NaN; }
+  var D = null;               // /api/crisis 응답
+  var prices = {};            // code -> 현재가 (보유 종목)
+
+  function apiGet(path) {
+    return fetch(path, { credentials: 'same-origin' }).then(function (r) {
+      if (r.status === 401) { location.href = '/login'; throw new Error('로그인이 필요합니다'); }
+      return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.status); return j; });
+    });
+  }
+
+  // ---------- 1. 현재 위치 ----------
+  function renderPos() {
+    var d = D, sp = d.speed;
+    function spChip(k) {
+      var v = sp[k];
+      return '<span class="chip">-' + k + '% <b>' + (v ? v.days + '거래일' : '미도달') + '</b></span>';
+    }
+    var rows = d.lows.map(function (l) {
+      var re = l.confirmed ? '<span class="pos">' + pct(l.reboundPct) + '</span>' : '<span class="muted">진행 중</span>';
+      return '<tr><td>' + l.n + '차' + (l.confirmed ? '' : ' <span class="tag">현재</span>') + '</td><td>' + md(l.date) + '</td><td>' + fmt(l.close, 2) + '</td><td class="neg">' + pct(l.dd) + '</td><td>' + re + '</td></tr>';
+    }).join('');
+    var low = d.lowestClose, ma = d.ma, cur = d.last.close;
+    var maRow = ['ma20', 'ma60', 'ma120'].map(function (k) {
+      var g = (cur / ma[k] - 1) * 100;
+      return '<span>' + k.replace('ma', '') + '일선 <b>' + fmt(ma[k]) + '</b> <span class="' + (g >= 0 ? 'pos' : 'neg') + '">(' + pct(g) + ')</span></span>';
+    }).join('');
+    var since = low.newLowToday ? '<b>오늘 신저점</b>' : '최저 종가(' + md(low.date) + ') 이후 <b>' + low.tradingDaysSince + '거래일</b>';
+    var vs = d.vsPrevLow ? '<span>' + (d.lows[d.lows.length - 1].n) + '차 저점은 ' + d.vsPrevLow.prevN + '차 저점 대비 <b class="' + (d.vsPrevLow.pct < 0 ? 'neg' : 'pos') + '">' + pct(d.vsPrevLow.pct) + '</b></span>' : '';
+    var reb = d.mode === 'up' ? '<span>직전 저점에서 <b class="pos">' + pct(d.reboundFromLow) + '</b> 반등 중</span>' : '';
+    $('pos').innerHTML = '<div class="card"><h2>현재 위치<small>' + esc(d.last.date) + (d.liveToday ? ' 장중 현재가' : ' 종가') + '</small></h2>' +
+      '<div class="big neg">' + pct(d.drawdown, 1) + '</div>' +
+      '<div class="row"><span>고점 <b>' + fmt(d.peak.close, 2) + '</b> (' + md(d.peak.date) + ')</span><span>현재 <b>' + fmt(cur, 2) + '</b></span><span>고점 후 ' + d.tradingDaysSincePeak + '거래일</span></div>' +
+      '<div class="chips">' + spChip('20') + spChip('30') + spChip('40') + '</div>' +
+      '<table><tr><th>저점</th><th>날짜</th><th>종가</th><th>고점 대비</th><th>이후 반등</th></tr>' + rows + '</table>' +
+      '<div class="row">' + vs + reb + '<span>' + since + '</span></div>' +
+      '<div class="row">' + maRow + '</div>' +
+      '<div class="note">저점은 15% 반등으로 확정한 지그재그 기준입니다. 진행 중인 저점은 더 내려가면 바뀝니다. 장중에는 오늘 값이 현재가라서 종가와 다를 수 있습니다.</div></div>';
+  }
+
+  // ---------- 2. 반등 확인 체크리스트 ----------
+  var EVI = { backtest: '앞서 백테스트', weak: '검증 결과 약함' };
+  function renderChk() {
+    var items = D.checklist, ok = items.filter(function (c) { return c.status === 'ok'; }).length, na = items.filter(function (c) { return c.status === 'na'; }).length;
+    var st = { ok: '충족', no: '미충족', na: '해당 없음' };
+    var rows = items.map(function (c) {
+      return '<div class="check"><span class="dot ' + c.status + '"></span><div><div class="t">' + esc(c.title) + ' <span class="st-' + c.status + '">' + st[c.status] + '</span><span class="tag">' + esc(EVI[c.evidence] || '') + '</span></div><div class="d">' + esc(c.text) + '</div></div></div>';
+    }).join('');
+    $('chk').innerHTML = '<div class="card"><h2>반등 확인 체크리스트<small>' + ok + '/' + (items.length - na) + ' 충족</small></h2>' + rows +
+      '<div class="note">앞의 두 항목은 "60거래일 신저점 없음 + 종가가 60일선 위"로 코스피 과거 위기를 백테스트한 규칙이고, 신용 항목은 아래 신용 스프레드 칸의 검증 결과처럼 확인용으로만 쓸 수 있습니다. 2차 저점 지지와 20일선 회복은 과거 검증을 마친 뒤 추가합니다. 모든 칸이 켜져도 확정이 아니라 확률이 올라간다는 뜻입니다.</div></div>';
+  }
+
+  // ---------- 3. 신용 스프레드 ----------
+  function renderCred() {
+    var c = D.credit, b = c.baa10y, hy = c.hy, ig = c.ig;
+    if (!b) { $('cred').innerHTML = '<div class="card"><h2>미국 신용 스프레드</h2><div class="note warn">데이터를 불러오지 못했습니다.</div></div>'; return; }
+    var spread = b.spreading ? '<b class="st-no">확산 중</b>' : '<b class="st-na">확산 아님</b>';
+    var turn = !b.episode ? '<span class="muted">해당 없음 (확산 이력 없음)</span>' : (b.turned ? '<b class="st-ok">꺾임</b> (정점 ' + md(b.episode.peakDate) + ', 되돌림 ' + Math.round(b.retrace * 100) + '%)' : '<b class="st-no">아직</b> (정점 ' + md(b.episode.peakDate) + ', 되돌림 ' + Math.round((b.retrace || 0) * 100) + '%)');
+    var ref = function (name, s) { return s ? '<tr><td>' + name + '</td><td>' + s.value.toFixed(2) + '</td><td>' + s.yearHigh.toFixed(2) + ' <span class="muted">(' + md(s.yearHighDate) + ')</span></td><td>' + (s.chg20 == null ? '-' : (s.chg20 > 0 ? '+' : '') + s.chg20.toFixed(2)) + '</td></tr>' : ''; };
+    $('cred').innerHTML = '<div class="card"><h2>미국 신용 스프레드<small>' + esc(b.asOf) + ' 기준</small></h2>' +
+      '<div class="check"><span class="dot ' + (b.spreading ? 'no' : 'na') + '"></span><div><div class="t">확산 여부 ' + spread + '</div><div class="d">Baa 회사채 − 국채 10년: <b>' + b.value.toFixed(2) + '%p</b>, 최근 65거래일 최저(' + b.base65.toFixed(2) + ') 대비 <b>' + (b.rise >= 0 ? '+' : '') + b.rise.toFixed(2) + '</b> (확산 기준 +0.60)</div></div></div>' +
+      '<div class="check"><span class="dot ' + (b.turned ? 'ok' : b.episode ? 'no' : 'na') + '"></span><div><div class="t">정점 이후 꺾임</div><div class="d">' + turn + '</div></div></div>' +
+      '<table><tr><th>참고(최근 3년만 제공)</th><th>현재</th><th>올해 고점</th><th>20일 변화</th></tr>' + ref('하이일드', hy) + ref('투자등급', ig) + '</table>' +
+      '<div class="note warn"><b>이 지표로 알 수 있는 것과 없는 것</b><br>' +
+      '• 벌어지면: 미국발·글로벌 신용 위기로 번지는 근거입니다. 과거 5번(2000, 2001~02, 2008, 2011, 2020) 모두 +0.8 이상 벌어졌습니다.<br>' +
+      '• 안 벌어졌다고 안전하다는 근거는 없습니다. 1997~98년(코스피 -56%, -51%)에는 거의 안 움직였습니다.<br>' +
+      '• 낙폭의 깊이와는 무관했고, 코스피 저점과 거의 같은 때(선행이 아님) 정점이었습니다.<br>' +
+      '• "정점 이후 꺾임"(확산분 50% 되돌림)은 과거 12번 중 9번 이후 120일 상승했지만, 3번은 -12~-16% 더 빠졌고 신호도 늦게 켜집니다. 확인용으로만 보세요.</div>' +
+      '<div class="note">검증은 1986년부터 데이터가 있는 Baa 스프레드(BAA10Y)로 했고, 하이일드·투자등급은 FRED가 최근 3년만 제공해 같은 검증을 못 했습니다.</div></div>';
+  }
+
+  // ---------- 4. 내 포지션 시나리오 ----------
+  var SKEY = 'crisis.v1', beta = {};
+  function loadBeta() { try { beta = (JSON.parse(localStorage.getItem(SKEY) || '{}').beta) || {}; } catch (e) { beta = {}; } }
+  function saveBeta() { try { localStorage.setItem(SKEY, JSON.stringify({ beta: beta })); } catch (e) { } }
+  function defBeta(name) {
+    name = String(name || '');
+    if (/인버스/.test(name)) return /2X|곱버스/i.test(name) ? -2 : -1;
+    if (/레버리지/.test(name)) return 2;
+    return 1;
+  }
+  function holdings() {
+    try {
+      var d = JSON.parse(localStorage.getItem('risk.v1') || '{}');
+      var list = (d.holdings || []).filter(function (h) { return h.include !== false && !h.plan && num(h.qty) > 0; });
+      return { list: list, limit: num(d.limit), basis: d.basis === 'cur' ? 'cur' : 'avg' };
+    } catch (e) { return { list: [], limit: NaN, basis: 'avg' }; }
+  }
+  function loadPrices(list) {
+    return Promise.all(list.map(function (h) {
+      return apiGet('/api/stock/quote?code=' + h.code).then(function (q) { if (isFinite(q.price)) prices[h.code] = q.price; }).catch(function () { });
+    }));
+  }
+  var DROPS = [-10, -20, -30];
+  function renderScn() {
+    var H = holdings();
+    if (!H.list.length) {
+      $('scn').innerHTML = '<div class="card"><h2>내 포지션 시나리오</h2><div class="note">손절 계산기(<a href="/risk">/risk</a>)에 보유 종목의 수량·평단을 입력하면 여기서 지수가 더 빠질 때의 손실을 계산합니다. 이 기기에 저장된 입력값만 읽습니다.</div></div>';
+      return;
+    }
+    var idx = D.last.close;
+    var calc = H.list.map(function (h) {
+      var p = prices[h.code], q = num(h.qty), a = num(h.avg);
+      var b = beta[h.code] != null && isFinite(beta[h.code]) ? beta[h.code] : defBeta(h.name);
+      return { h: h, p: p, q: q, a: a, b: b, v: p > 0 ? q * p : NaN };
+    });
+    var cols = DROPS.map(function (dp) {
+      var cur = 0, vsAvg = 0, over = 0, ok = true;
+      calc.forEach(function (c) {
+        if (!(c.v > 0)) { ok = false; return; }
+        var mv = Math.max(-1, c.b * dp / 100), nv = c.v * (1 + mv);
+        cur += c.v - nv;
+        if (c.a > 0) vsAvg += c.q * c.a - nv;
+      });
+      return { dp: dp, idx: idx * (1 + dp / 100), cur: cur, vsAvg: vsAvg, ok: ok };
+    });
+    var lim = H.limit, basisTxt = H.basis === 'cur' ? '현재가 기준' : '평단 기준';
+    var rows = calc.map(function (c) {
+      var inp = '<input data-code="' + esc(c.h.code) + '" inputmode="decimal" value="' + c.b + '">';
+      return '<tr><td class="nm">' + esc(c.h.name || c.h.code) + '</td><td>' + (c.v > 0 ? fmt(c.v) : '-') + '</td><td>' + inp + '</td></tr>';
+    }).join('');
+    var head = cols.map(function (x) { return '<th>' + x.dp + '%<br><span class="muted">' + fmt(x.idx) + '</span></th>'; }).join('');
+    var lineCur = cols.map(function (x) { return '<td class="neg">' + (x.ok ? '-' + fmt(x.cur) : '-') + '</td>'; }).join('');
+    var lineAvg = cols.map(function (x) { return '<td class="' + (x.vsAvg > 0 ? 'neg' : 'pos') + '">' + (x.ok ? (x.vsAvg > 0 ? '-' + fmt(x.vsAvg) : '+' + fmt(-x.vsAvg)) : '-') + '</td>'; }).join('');
+    var lineLim = '';
+    if (isFinite(lim) && lim > 0) {
+      lineLim = '<tr><td>한도 ' + fmt(lim) + '원<br><span class="muted">(' + basisTxt + ')</span></td>' + cols.map(function (x) {
+        var loss = H.basis === 'cur' ? x.cur : Math.max(0, x.vsAvg);
+        if (!x.ok) return '<td>-</td>';
+        return '<td class="' + (loss > lim ? 'over' : 'under') + '">' + (loss > lim ? '초과<br>+' + fmt(loss - lim) : '여유<br>' + fmt(lim - loss)) + '</td>';
+      }).join('') + '</tr>';
+    }
+    $('scn').innerHTML = '<div class="card"><h2>내 포지션 시나리오<small>코스피 ' + fmt(idx, 2) + ' 기준</small></h2>' +
+      '<div class="sub">지수가 지금보다 더 내려가면 보유 종목이 얼마나 빠지는지 계산합니다. 민감도는 지수가 1% 움직일 때 종목이 움직이는 배수(직접 수정)입니다.</div>' +
+      '<table><tr><th>종목</th><th>평가금(원)</th><th>민감도(배)</th></tr>' + rows + '</table>' +
+      '<table><tr><th>지수가</th>' + head + '</tr>' +
+      '<tr><td>추가 손실<br><span class="muted">(현재가 대비)</span></td>' + lineCur + '</tr>' +
+      '<tr><td>평단 대비<br><span class="muted">손익 합계</span></td>' + lineAvg + '</tr>' + lineLim + '</table>' +
+      '<div class="note">단순 배수 계산이라 매도 비용은 빠져 있습니다. 레버리지·인버스 ETF는 일일 수익률의 배수라서 며칠에 걸친 등락에서는 단순 배수와 달라집니다(변동성 손실). 코스닥 종목·ETF는 코스피와 같이 움직이는 정도가 달라 민감도를 직접 정하세요.</div></div>';
+    $('scn').querySelectorAll('input').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var v = parseFloat(el.value.replace(',', '.'));
+        if (isFinite(v)) beta[el.dataset.code] = v; else delete beta[el.dataset.code];
+        saveBeta(); renderScn();
+      });
+    });
+  }
+
+  function load() {
+    $('err').innerHTML = '';
+    apiGet('/api/crisis').then(function (d) {
+      D = d; renderPos(); renderChk(); renderCred();
+      var H = holdings();
+      renderScn();
+      loadPrices(H.list).then(renderScn);
+    }).catch(function (e) { $('err').innerHTML = '<div class="note warn">불러오지 못했습니다: ' + esc(e.message) + '</div>'; });
+  }
+  $('refresh').addEventListener('click', load);
+  loadBeta();
+  load();
+})();
+</script>
+</body>
+</html>

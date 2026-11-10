@@ -986,6 +986,193 @@ def build_flow_check_rows(slot, codes=None):
     return {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M:%S"), "rows": rows}
 
 
+# --- 위기 상황판 (/crisis) ---
+# 코스피 낙폭 위치·저점 차수·반등 체크리스트(60거래일 신저점 없음, 60일선 위)와 미국 신용 스프레드(FRED)를 한 번에 계산해 준다.
+# 신용 스프레드는 "확산 여부 / 정점 이후 꺾임" 확인용으로만 쓴다(2026-11-10 검증: 미국발 위기 5/5 확산, 한국발(1997~98)은 0/2 —
+# 벌어지지 않았다고 안전하다는 뜻이 아니고, 낙폭 깊이와도 무관). 검증은 BAA10Y(1986~)로 했고 하이일드·투자등급(ICE BofA)은
+# FRED가 최근 3년만 줘서 참고용이다.
+FRED_CSV_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=%s&cosd=%s"
+FRED_CACHE_TTL = 6 * 3600
+_fred_cache = {}   # series -> (ts, [(date, value)])
+_fred_fail = {}    # series -> 마지막 실패 시각
+_fred_lock = threading.Lock()
+CRISIS_SPREAD_WIN = 65        # 확산 판정: 최근 65 관측 최저 대비
+CRISIS_SPREAD_RISE = 0.6      # +0.6%p 이상이면 확산 (BAA10Y 1990~ 검증값)
+CRISIS_RETRACE = 0.5          # 확산분의 50% 이상 되돌리면 "꺾임" (25%·33%는 가짜 신호가 더 많아 50% 채택)
+CRISIS_ZIGZAG = 0.15          # 저점/반등 구분: 15% 반등·15% 재하락
+
+
+def _fetch_fred_series(series, start="2025-01-01"):
+    """FRED CSV -> [(YYYY-MM-DD, value)] (결측 '.' 제외). 6시간 캐시, 실패하면 오래된 캐시라도 돌려준다."""
+    now = time.time()
+    with _fred_lock:
+        hit = _fred_cache.get(series)
+        if hit and now - hit[0] < FRED_CACHE_TTL:
+            return hit[1]
+        # 최근에 실패했으면 2분간은 다시 시도하지 않는다(요청마다 대기하지 않게). 오래된 캐시가 있으면 그걸 쓴다.
+        if now - _fred_fail.get(series, 0) < 120:
+            if hit:
+                return hit[1]
+            raise RuntimeError("FRED 조회 실패(잠시 후 재시도)")
+    try:
+        # 주의: FRED는 파이썬 요청에 임의의 User-Agent("Mozilla/5.0", "market-dashboard/1.0" 등)를 달면 응답하지 않고
+        # 붙잡는다(2026-11-10 확인). 기본 UA(Python-urllib)와 curl UA는 0.1초라서 헤더를 건드리지 않는다.
+        req = urllib.request.Request(FRED_CSV_URL % (series, start))
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+        out = []
+        for line in text.strip().splitlines()[1:]:
+            d, _, v = line.partition(",")
+            try:
+                out.append((d.strip(), float(v)))
+            except ValueError:
+                continue
+        if len(out) < 100:
+            raise ValueError("FRED rows too few")
+    except Exception:
+        with _fred_lock:
+            _fred_fail[series] = time.time()
+        if hit:
+            return hit[1]
+        raise
+    with _fred_lock:
+        _fred_cache[series] = (now, out)
+    return out
+
+
+def _spread_state(rows):
+    """[(date, value)] -> 확산·꺾임 판정. 확산 = 최근 65관측 최저 대비 +0.6%p, 꺾임 = 확산분의 50% 되돌림."""
+    if len(rows) < CRISIS_SPREAD_WIN + 5:
+        return None
+    vals = [v for _, v in rows]
+    n = len(rows)
+    last_d, last = rows[-1]
+    base_now = min(vals[n - 1 - CRISIS_SPREAD_WIN:n - 1])
+    rise = last - base_now
+    # 최근 120관측 안에서 확산이 시작된 가장 최근 시점 찾기 -> 그 확산의 정점과 되돌림
+    ep = None
+    for i in range(max(CRISIS_SPREAD_WIN, n - 120), n):
+        base = min(vals[i - CRISIS_SPREAD_WIN:i])
+        if vals[i] - base >= CRISIS_SPREAD_RISE:
+            if ep is None:
+                ep = {"start": rows[i][0], "base": base, "peak": vals[i], "peakDate": rows[i][0]}
+            if vals[i] > ep["peak"]:
+                ep["peak"], ep["peakDate"] = vals[i], rows[i][0]
+    out = {"asOf": last_d, "value": last, "base65": round(base_now, 2), "rise": round(rise, 2),
+           "spreading": rise >= CRISIS_SPREAD_RISE, "episode": None, "retrace": None, "turned": False}
+    if ep:
+        span = ep["peak"] - ep["base"]
+        retr = (ep["peak"] - last) / span if span > 0 else 0.0
+        out["episode"] = {k: (round(v, 2) if isinstance(v, float) else v) for k, v in ep.items()}
+        out["retrace"] = round(retr, 2)
+        out["turned"] = bool(retr >= CRISIS_RETRACE and ep["peakDate"] < last_d)
+    return out
+
+
+def _series_brief(rows):
+    """참고용: 최신값, 올해 고점(날짜), 20관측 변화."""
+    if not rows:
+        return None
+    last_d, last = rows[-1]
+    year = [r for r in rows if r[0][:4] == last_d[:4]] or rows
+    hi = max(year, key=lambda r: r[1])
+    ch20 = last - rows[-21][1] if len(rows) > 21 else None
+    return {"asOf": last_d, "value": last, "yearHigh": hi[1], "yearHighDate": hi[0],
+            "chg20": round(ch20, 2) if ch20 is not None else None}
+
+
+def build_crisis_status(closes, spreads, today):
+    """closes: {YYYYMMDD: 종가}, spreads: {"BAA10Y": rows, "BAMLH0A0HYM2": rows, "BAMLC0A0CM": rows} (없으면 None), today: YYYYMMDD(KST)."""
+    pts = sorted(closes.items())
+    if len(pts) < 130:
+        raise ValueError("코스피 일봉이 부족합니다")
+    iso = lambda d: f"{d[:4]}-{d[4:6]}-{d[6:]}"
+    dates = [d for d, _ in pts]
+    vals = [v for _, v in pts]
+    n = len(pts)
+    cutoff = (datetime.strptime(today, "%Y%m%d") - timedelta(days=400)).strftime("%Y%m%d")
+    cand = [i for i in range(n) if dates[i] >= cutoff]
+    pi = max(cand, key=lambda i: vals[i])
+    peak = vals[pi]
+    cur = vals[-1]
+    out = {"today": iso(today), "last": {"date": iso(dates[-1]), "close": cur},
+           "peak": {"date": iso(dates[pi]), "close": peak},
+           "drawdown": round((cur / peak - 1) * 100, 2), "tradingDaysSincePeak": n - 1 - pi}
+    # 하락 속도: 고점에서 -20/-30/-40% 처음 닿기까지 거래일
+    speed = {}
+    for pct in (20, 30, 40):
+        hit = next((i for i in range(pi + 1, n) if vals[i] <= peak * (1 - pct / 100)), None)
+        speed[str(pct)] = None if hit is None else {"days": hit - pi, "date": iso(dates[hit])}
+    out["speed"] = speed
+    # 저점 차수: 15% 반등으로 확정된 저점들 + 진행 중인 저점
+    lows = []
+    mode, lo, hi = "down", (pi, peak), (pi, peak)
+    for i in range(pi + 1, n):
+        v = vals[i]
+        if mode == "down":
+            if v < lo[1]:
+                lo = (i, v)
+            elif v >= lo[1] * (1 + CRISIS_ZIGZAG):
+                lows.append({"i": lo[0], "v": lo[1], "reboundI": i, "reboundV": v})
+                mode, hi = "up", (i, v)
+        else:
+            if v > hi[1]:
+                hi = (i, v)
+                lows[-1]["reboundI"], lows[-1]["reboundV"] = i, v
+            elif v <= hi[1] * (1 - CRISIS_ZIGZAG):
+                mode, lo = "down", (i, v)
+    legs = []
+    for k, l in enumerate(lows, start=1):
+        legs.append({"n": k, "date": iso(dates[l["i"]]), "close": l["v"], "dd": round((l["v"] / peak - 1) * 100, 2),
+                     "confirmed": True, "reboundDate": iso(dates[l["reboundI"]]), "reboundClose": l["reboundV"],
+                     "reboundPct": round((l["reboundV"] / l["v"] - 1) * 100, 1)})
+    if mode == "down":
+        legs.append({"n": len(lows) + 1, "date": iso(dates[lo[0]]), "close": lo[1], "dd": round((lo[1] / peak - 1) * 100, 2),
+                     "confirmed": False, "reboundDate": None, "reboundClose": None, "reboundPct": None})
+    out["lows"] = legs
+    out["mode"] = mode
+    if mode == "up":
+        out["reboundFromLow"] = round((cur / lows[-1]["v"] - 1) * 100, 1)
+    # 직전 저점 대비(현재 저점이 진행 중이면 그 앞 저점과 비교)
+    if len(legs) >= 2:
+        a, b = legs[-2], legs[-1]
+        out["vsPrevLow"] = {"prevN": a["n"], "pct": round((b["close"] / a["close"] - 1) * 100, 1)}
+    # 신저점 이후 경과(고점 이후 최저 종가 기준)
+    li = min(range(pi, n), key=lambda i: vals[i])
+    out["lowestClose"] = {"date": iso(dates[li]), "close": vals[li], "tradingDaysSince": n - 1 - li,
+                          "newLowToday": li == n - 1}
+    ma = lambda k: sum(vals[-k:]) / k
+    out["ma"] = {"ma20": round(ma(20), 2), "ma60": round(ma(60), 2), "ma120": round(ma(120), 2)}
+    live = dates[-1] == today and _kst_now().hour * 60 + _kst_now().minute < 15 * 60 + 40 and _kst_now().weekday() < 5
+    out["liveToday"] = bool(live)
+    # 신용
+    credit = {}
+    b = spreads.get("BAA10Y")
+    credit["baa10y"] = _spread_state(b) if b else None
+    credit["hy"] = _series_brief(spreads.get("BAMLH0A0HYM2"))
+    credit["ig"] = _series_brief(spreads.get("BAMLC0A0CM"))
+    out["credit"] = credit
+    # 체크리스트 (③ 2차 저점 지지, ④ 20일선 회복은 과거 검증 전이라 넣지 않는다)
+    d_since = out["lowestClose"]["tradingDaysSince"]
+    cs = credit["baa10y"]
+    if cs is None:
+        c5 = {"status": "na", "text": "신용 스프레드 데이터를 불러오지 못했습니다"}
+    elif cs["episode"] is None:
+        c5 = {"status": "na", "text": "확산이 없었으므로 해당 없음 (올해 확산 이력 없음)"}
+    elif cs["turned"]:
+        c5 = {"status": "ok", "text": "정점 %s 이후 확산분의 %d%% 되돌림" % (cs["episode"]["peakDate"], round(cs["retrace"] * 100))}
+    else:
+        c5 = {"status": "no", "text": "확산 후 되돌림 %d%% (50%% 필요)" % round((cs["retrace"] or 0) * 100)}
+    out["checklist"] = [
+        {"key": "noNewLow60", "title": "60거래일 신저점 없음", "status": "ok" if d_since >= 60 else "no",
+         "text": "최저 종가 이후 %d거래일 경과 (60 필요)" % d_since, "evidence": "backtest"},
+        {"key": "aboveMa60", "title": "종가가 60일선 위", "status": "ok" if cur > out["ma"]["ma60"] else "no",
+         "text": "현재 %s / 60일선 %s" % (format(round(cur), ","), format(round(out["ma"]["ma60"]), ",")), "evidence": "backtest"},
+        {"key": "creditTurn", "title": "신용 스프레드 정점 이후 꺾임", **c5, "evidence": "weak"},
+    ]
+    return out
+
+
 # --- 대시보드 접근 비밀번호 ---
 # DASHBOARD_PASSWORD(Render 환경변수)를 설정하면 페이지와 /api/* 전부 로그인이
 # 필요해진다. 한 번 로그인하면 쿠키를 30일간 기억해서 휴대폰에서도 매번 칠
@@ -1971,6 +2158,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_market_breadth()
         elif self.path.startswith("/api/ops/snapshot"):
             self.handle_ops_snapshot()
+        elif self.path.startswith("/api/crisis"):
+            self.handle_crisis()
         elif self.path.startswith("/api/ops/score-snapshot"):
             self.handle_ops_score_snapshot()
         elif self.path.startswith("/api/ops/flow-check"):
@@ -2029,6 +2218,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif urllib.parse.urlparse(self.path).path in ("/risk", "/risk.html"):
             # 손절 계산기: 보유 수량·평단은 브라우저(localStorage)에만 저장, 서버엔 종목코드만 간다. 로그인 쿠키 필요(위 _authorized).
             self.path = "/risk.html"
+            super().do_GET()
+        elif urllib.parse.urlparse(self.path).path in ("/crisis", "/crisis.html"):
+            # 위기 상황판: 코스피 낙폭 위치·반등 체크리스트·미국 신용 스프레드. 보유 종목은 /risk와 같은 localStorage에서 읽는다.
+            self.path = "/crisis.html"
             super().do_GET()
         elif urllib.parse.urlparse(self.path).path in ("/", "/index.html"):
             super().do_GET()
@@ -2521,6 +2714,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(200, {"ok": True, **build_flow_check_rows(slot, codes)})
         except ValueError as e:
             self.send_json(400, {"error": str(e)})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
+
+    def handle_crisis(self):
+        try:
+            closes = _fetch_index_closes("KOSPI", 900)
+            def one(sid):
+                try:
+                    return sid, _fetch_fred_series(sid)
+                except Exception:
+                    return sid, None
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=3) as ex:
+                spreads = dict(ex.map(one, ("BAA10Y", "BAMLH0A0HYM2", "BAMLC0A0CM")))
+            self.send_json(200, build_crisis_status(closes, spreads, _kst_now().strftime("%Y%m%d")))
         except Exception as e:
             self.send_json(502, {"error": str(e)[:200]})
 
