@@ -2230,12 +2230,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(503, {"error": "KIS API 키가 설정되지 않았습니다"})
             return
         now_kst = datetime.now(timezone.utc) + timedelta(hours=9)
-        if now_kst.weekday() < 5 and now_kst.hour * 60 + now_kst.minute >= 15 * 60 + 40:
+        # 평일엔 시간과 상관없이 통합(UN) 일별의 오늘 행을 먼저 쓴다(키움 통합 기준과 같음). 장중 가집계는 KRX 정규장만
+        # 집계해 NXT 체결이 빠지고 외국인 부호가 키움과 반대로 나오기도 한다(2026-11-10 하이닉스 장중).
+        # 오늘 행이 없거나 값이 전부 0(집계 전 자리표시)이면 예전처럼 가집계로 돌아간다.
+        if now_kst.weekday() < 5:
             try:
                 row = investor_today_row(code)
             except Exception:
                 row = None
-            if row:
+            if row and not all(int(row.get(k, 0) or 0) == 0 for k in ("frgn_ntby_qty", "orgn_ntby_qty", "prsn_ntby_qty")):
                 self.send_json(200, {
                     "source": "daily",
                     "checkpoint": "daily",
@@ -2261,6 +2264,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             institution_qty = int(latest.get("orgn_fake_ntby_qty", 0))
             sum_qty = int(latest.get("sum_fake_ntby_qty", 0))
             self.send_json(200, {
+                "source": "estimate",
                 "checkpoint": latest.get("bsop_hour_gb"),
                 "foreignQty": foreign_qty,
                 "institutionQty": institution_qty,
