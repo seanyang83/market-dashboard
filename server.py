@@ -2585,6 +2585,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_stock_search()
         elif urllib.parse.urlparse(self.path).path == "/api/ops/valuation":
             self.handle_ops_valuation()
+        elif urllib.parse.urlparse(self.path).path == "/api/ops/kisprobe":
+            self.handle_ops_kisprobe()
         elif urllib.parse.urlparse(self.path).path == "/api/stock/valuation":
             self.handle_stock_valuation()
         elif self.path.startswith("/api/stock/quote"):
@@ -3215,6 +3217,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         try:
             self.send_json(200, build_valuation(code, True))
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
+
+    def handle_ops_kisprobe(self):
+        # 임시 점검용(분석 후 제거): 한투 재무 API 원본 확인. finance/ 경로만, 키 보호.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        path, tr = self.query_param("path") or "", self.query_param("tr") or ""
+        if not path.startswith("/uapi/domestic-stock/v1/finance/") or ".." in path:
+            self.send_json(400, {"error": "path"})
+            return
+        code = self.require_stock_code()
+        if not code:
+            return
+        try:
+            self.send_json(200, kis_get(path, tr, {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
+                                                   "FID_DIV_CLS_CODE": self.query_param("div") or "0"}))
         except Exception as e:
             self.send_json(502, {"error": str(e)[:200]})
 
