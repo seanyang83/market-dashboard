@@ -187,6 +187,9 @@
   .collapse-btn:hover { border-color: var(--accent); color: var(--accent); }
   .collapse-btn.collapsed { transform: rotate(-180deg); }
   .stock-panel { margin-top: 16px; }
+  .muted-s { font-size: 10.5px; color: var(--sub); }
+  .val-table td { vertical-align: top; }
+  .val-eps { width: 84px; padding: 3px 5px; font-size: 12px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); text-align: right; font-family: inherit; }
   .stock-search-row { display: flex; gap: 8px; margin-top: 12px; }
   .stock-search-row input {
     flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--border);
@@ -667,6 +670,13 @@
           </div>
         </div>
         <div class="meta-row"><span id="stockProgramNote">-</span></div>
+      </div>
+
+      <div class="checklist-item" id="valuationItem" hidden>
+        <div class="checklist-title-row">
+          <div class="checklist-title">참고: BPS 밸류에이션 (PBR)</div>
+        </div>
+        <div id="valuationBody"></div>
       </div>
 
       <div class="error-msg" id="stockError"></div>
@@ -1732,6 +1742,66 @@ async function fetchProxyDir(kind, ref) {
   return { pct, dir: diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat" };
 }
 
+
+// ---- 참고: BPS 밸류에이션 (2026-11-11) ----
+// BPS(말) = 전년 말 BPS + EPS - 배당. 올해 말 BPS·올해 EPS·배당은 컨센서스, 내년·내후년 EPS는 한투 추정(있으면) 아니면 올해와 동일 가정, 직접 바꿀 수 있다.
+let valReqToken = 0;
+const VAL_KEY = "val.v1";
+function valLoadOverrides(code) {
+  try { return (JSON.parse(localStorage.getItem(VAL_KEY) || "{}")[code]) || {}; } catch (e) { return {}; }
+}
+function valSaveOverrides(code, o) {
+  try { const all = JSON.parse(localStorage.getItem(VAL_KEY) || "{}"); if (Object.keys(o).length) all[code] = o; else delete all[code]; localStorage.setItem(VAL_KEY, JSON.stringify(all)); } catch (e) {}
+}
+function valRender(code, price, v) {
+  const el = document.getElementById("valuationBody"), item = document.getElementById("valuationItem");
+  const f0 = (n) => Math.round(n).toLocaleString("ko-KR");
+  const ov = valLoadOverrides(code);
+  const a = v.anchor, payout = a.eps > 0 && a.dps != null ? Math.min(1, Math.max(0, a.dps / a.eps)) : 0;
+  const rows = [];
+  if (v.confirmed) rows.push({ label: "최근 확정", sub: v.confirmed.period, bps: v.confirmed.bps });
+  rows.push({ label: `올해 말(${a.year.slice(2)}E)`, sub: "컨센서스", bps: a.bps });
+  let prev = a.bps;
+  v.future.forEach((fy) => {
+    const key = "y" + fy.year;
+    const custom = ov[key] != null && isFinite(ov[key]);
+    const eps = custom ? ov[key] : fy.eps;
+    const bps = prev + eps - Math.max(0, eps) * payout;
+    prev = bps;
+    rows.push({ label: `${fy.year == String(+a.year + 1) ? "내년" : "내후년"} 말(${fy.year.slice(2)}E)`, sub: custom ? "직접 입력" : fy.source === "kis" ? "한투 추정 EPS" : "올해 EPS 동일 가정", bps, eps, key, custom });
+  });
+  const body = rows.map((r) => {
+    const pbr = r.bps > 0 ? price / r.bps : null;
+    const gap = r.bps > 0 ? (r.bps / price - 1) * 100 : null;
+    const gapTxt = gap == null ? "-" : (gap >= 0 ? "+" : "-") + Math.abs(gap).toFixed(0) + "%";
+    const epsCell = r.key ? `<br><span class="muted-s">EPS <input class="val-eps" data-key="${r.key}" type="number" inputmode="numeric" value="${Math.round(r.eps)}" /></span>` : "";
+    return `<tr><td>${r.label}<br><span class="muted-s">${r.sub}</span>${epsCell}</td><td>${f0(r.bps)}</td><td><b>${pbr == null ? "-" : pbr.toFixed(2) + "배"}</b></td><td>${gapTxt}</td></tr>`;
+  }).join("");
+  const cross = v.cross ? `<div class="meta-row"><span>참고: 전년 BPS + 올해 EPS - 배당으로 계산한 올해 말 BPS ${f0(v.cross.rollBps)}원 (컨센서스와 ${(((v.cross.rollBps / a.bps) - 1) * 100).toFixed(0)}%)</span></div>` : "";
+  const hasOv = Object.keys(ov).length > 0;
+  el.innerHTML = `<table class="flow-table val-table"><thead><tr><th>기준</th><th>BPS(원)</th><th>현재가 PBR</th><th>1배선까지</th></tr></thead><tbody>${body}</tbody></table>
+    <div class="meta-row"><span>현재가 ₩${f0(price)} · 1배선까지 = 현재가가 BPS(PBR 1배)까지 오르내려야 하는 %, 기준 ${v.asOf}${hasOv ? ' · <a href="#" id="valReset">입력 초기화</a>' : ""}</span></div>
+    <div class="meta-row"><span>내년·내후년 BPS = 전년 말 BPS + EPS - 배당(올해 배당성향 ${(payout * 100).toFixed(0)}% 유지). EPS가 바뀌면 1배선도 같이 움직이니 칸을 바꿔 보세요. ${v.kis && v.kis.unverified ? "한투 추정값이 네이버와 맞지 않아 쓰지 않았습니다. " : ""}</span></div>${cross}
+    <div class="meta-row"><span>박세익 대표(KBS 11/10)는 "내년 말 BPS의 PBR 1배"를 순자산보다 싸게 거래되는 선으로 봤지만, 이 선이 매수 근거였는지는 아직 과거 검증 전입니다. 전망(EPS)이 틀리면 선도 틀립니다.</span></div>`;
+  el.querySelectorAll(".val-eps").forEach((inp) => inp.addEventListener("change", () => {
+    const o = valLoadOverrides(code), n = parseFloat(inp.value);
+    if (isFinite(n)) o[inp.dataset.key] = n; else delete o[inp.dataset.key];
+    valSaveOverrides(code, o); valRender(code, price, v);
+  }));
+  const rs = document.getElementById("valReset");
+  if (rs) rs.addEventListener("click", (e) => { e.preventDefault(); valSaveOverrides(code, {}); valRender(code, price, v); });
+  item.hidden = false;
+}
+async function loadValuation(code, price) {
+  const token = ++valReqToken, item = document.getElementById("valuationItem");
+  item.hidden = true;
+  try {
+    const v = await fetchJson(`/api/stock/valuation?code=${code}`);
+    if (token !== valReqToken) return;
+    valRender(code, price, v);
+  } catch (e) { /* ETF·재무 없는 종목은 항목을 숨긴다 */ }
+}
+
 let currentStockCode = null;
 let currentStockName = null;
 
@@ -1764,6 +1834,7 @@ async function runStockChecklist(code, displayName, forceShow = true) {
     const signals = [];
 
     const price = quote.price, prevClose = quote.prevClose;
+    loadValuation(code, price);
     const diff = price - prevClose;
     const pct = prevClose ? (diff / prevClose) * 100 : 0;
     const dir = diff > 0.0005 ? "up" : diff < -0.0005 ? "down" : "flat";

@@ -1096,6 +1096,124 @@ def _flowcheck_scheduler():
         time.sleep(20)
 
 
+# --- 종목 BPS 밸류에이션 (종베 종목 패널 "참고: BPS 밸류에이션", 2026-11-11) ---
+# 박세익(KBS 열린토론 11/10): 내년 말 BPS x PBR 1배를 "순자산보다 싸게 거래되는 선"으로 본다. 올해 말 BPS는 네이버(FnGuide) 컨센서스에 있지만
+# 내년·내후년은 없어서 BPS(말) = 전년 말 BPS + EPS - 배당 으로 굴린다(하이닉스 실제 2024·2025 BPS 대비 계산값이 3~4% 낮았음).
+# 내년·내후년 EPS: 한투 종목추정실적(estimate-perform)이 주면 그걸 쓰고, 못 구하면 올해 컨센서스 EPS 동일로 가정(화면에서 직접 바꿀 수 있음).
+# 이 함수는 재료만 주고 PBR/1배선 계산은 화면(index.html)이 한다(사용자가 EPS를 바꿔 보게).
+VAL_CACHE_TTL = 1800
+_val_cache = {}
+_val_lock = threading.Lock()
+
+
+def _vnum(v):
+    """'569,344' / '3.48배' / '-' / '-12.5' -> float | None"""
+    if v is None:
+        return None
+    m = re.search(r"-?\d[\d,]*\.?\d*", str(v))
+    if not m or str(v).strip() in ("-", ""):
+        return None
+    try:
+        return float(m.group(0).replace(",", ""))
+    except ValueError:
+        return None
+
+
+def _kis_estimates(code):
+    """한투 종목추정실적 -> ({YYYY: {"eps","roe","ni"}}, raw). 응답 모양을 확인하기 전이라 방어적으로 읽는다(2026-11-11)."""
+    data = kis_get("/uapi/domestic-stock/v1/quotations/estimate-perform", "HHKST668300C0", {"SHT_CD": code})
+    o2, o3, o4 = data.get("output2"), data.get("output3"), data.get("output4")
+    dts = o4 if isinstance(o4, dict) else (o4[0] if isinstance(o4, list) and o4 else {})
+    years = [re.sub(r"\D", "", str(dts.get("dt%d" % i, "")))[:4] for i in range(1, 6)]
+
+    def rowvals(rows, idx):
+        if not isinstance(rows, list) or len(rows) <= idx or not isinstance(rows[idx], dict):
+            return [None] * 5
+        return [_vnum(rows[idx].get("data%d" % i)) for i in range(1, 6)]
+    eps, roe, ni = rowvals(o3, 1), rowvals(o3, 5), rowvals(o2, 4)
+    out = {}
+    for i, y in enumerate(years):
+        if y:
+            out[y] = {"eps": eps[i], "roe": roe[i], "ni": ni[i]}
+    return out, data
+
+
+def build_valuation(code, debug=False):
+    """-> {name, confirmed:{period,bps}, anchor:{year,bps,eps,dps,roe}, prior:{year,bps,eps}, future:[{year,eps,source}], kis:{...}} (PBR 계산은 화면에서)"""
+    now = time.time()
+    with _val_lock:
+        hit = _val_cache.get(code)
+        if hit and now - hit[0] < VAL_CACHE_TTL and not debug:
+            return hit[1]
+    from concurrent.futures import ThreadPoolExecutor
+    base = "https://m.stock.naver.com/api/stock/%s/" % code
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_ann = ex.submit(_naver_get_json, base + "finance/annual")
+        f_qtr = ex.submit(_naver_get_json, base + "finance/quarter")
+        f_int = ex.submit(_naver_get_json, base + "integration")
+        ann, qtr, integ = f_ann.result(), f_qtr.result(), f_int.result()
+    fi = (ann or {}).get("financeInfo") or {}
+    cols = [(t.get("key"), t.get("isConsensus") == "Y") for t in fi.get("trTitleList", [])]
+    rows = {r.get("title"): {k: _vnum(v.get("value")) for k, v in (r.get("columns") or {}).items()} for r in fi.get("rowList", [])}
+    if not cols or "BPS" not in rows:
+        raise ValueError("재무 데이터가 없는 종목입니다(ETF·신규상장 등)")
+    est_years = [k for k, est in cols if est]
+    act_years = [k for k, est in cols if not est]
+    anchor_key = est_years[0] if est_years else None
+    if anchor_key is None or rows["BPS"].get(anchor_key) is None:
+        raise ValueError("올해 BPS 컨센서스가 없습니다")
+    ay = int(anchor_key[:4])
+    prior_key = act_years[-1] if act_years else None
+    eps_a = rows["EPS"].get(anchor_key)
+    dps_a = (rows.get("주당배당금") or {}).get(anchor_key)
+    # 최근 확정 BPS: 분기 실적 중 마지막으로 값이 있는 확정 분기
+    qi = (qtr or {}).get("financeInfo") or {}
+    qcols = [(t.get("key"), t.get("isConsensus") == "Y") for t in qi.get("trTitleList", [])]
+    qrows = {r.get("title"): {k: _vnum(v.get("value")) for k, v in (r.get("columns") or {}).items()} for r in qi.get("rowList", [])}
+    confirmed = None
+    for k, est in reversed(qcols):
+        v = (qrows.get("BPS") or {}).get(k)
+        if not est and v is not None:
+            confirmed = {"period": "%s.%s" % (k[:4], k[4:6]), "bps": v}
+            break
+    if confirmed is None:
+        b = _vnum(next((t.get("value") for t in integ.get("totalInfos", []) if t.get("code") == "bps"), None))
+        if b is not None:
+            confirmed = {"period": "최근", "bps": b}
+    # 내년·내후년 EPS
+    kis, kis_raw, kis_note = {}, None, None
+    try:
+        kis, kis_raw = _kis_estimates(code)
+    except Exception as e:
+        kis_note = str(e)[:120]
+    # 한투 값을 믿어도 되는지: 네이버에 이미 있는 연도(확정·올해 추정)의 EPS와 5% 이내로 맞는지 본다
+    checked = [y for y in kis if (rows["EPS"].get(y + "12") is not None and kis[y]["eps"] is not None)]
+    kis_ok = bool(checked) and all(abs(kis[y]["eps"] / rows["EPS"][y + "12"] - 1) < 0.05 for y in checked if rows["EPS"][y + "12"])
+    future = []
+    for i in (1, 2):
+        y = str(ay + i)
+        e = (kis.get(y) or {}).get("eps") if kis_ok else None
+        future.append({"year": y, "eps": e if e is not None else eps_a, "source": "kis" if e is not None else "assumed",
+                       "roe": (kis.get(y) or {}).get("roe") if kis_ok else None})
+    out = {
+        "code": code, "name": integ.get("stockName"), "asOf": _kst_now().strftime("%Y-%m-%d %H:%M"),
+        "confirmed": confirmed,
+        "anchor": {"year": str(ay), "bps": rows["BPS"][anchor_key], "eps": eps_a, "dps": dps_a, "roe": rows.get("ROE", {}).get(anchor_key)},
+        "prior": ({"year": prior_key[:4], "bps": rows["BPS"].get(prior_key), "eps": rows["EPS"].get(prior_key)} if prior_key else None),
+        "future": future,
+        "kis": {"ok": kis_ok, "years": sorted(kis.keys()), "error": kis_note, "unverified": bool(kis) and not kis_ok},
+    }
+    if out["prior"] and out["prior"]["bps"] is not None and eps_a is not None:
+        out["cross"] = {"rollBps": out["prior"]["bps"] + eps_a - (dps_a or 0)}   # 전년 BPS + 올해 EPS - 배당 (컨센서스 BPS와 비교용)
+    if debug:
+        out["kisRaw"] = kis_raw
+        out["kisParsed"] = kis
+    else:
+        with _val_lock:
+            _val_cache[code] = (now, out)
+    return out
+
+
 # --- 위기 상황판 (/crisis) ---
 # 코스피 낙폭 위치·저점 차수·반등 체크리스트(60거래일 신저점 없음, 60일선 위)와 미국 신용 스프레드(FRED)를 한 번에 계산해 준다.
 # 신용 스프레드는 "확산 여부 / 정점 이후 꺾임" 확인용으로만 쓴다(2026-11-10 검증: 미국발 위기 5/5 확산, 한국발(1997~98)은 0/2 —
@@ -2280,6 +2398,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_kospi_history()
         elif self.path.startswith("/api/stock/search"):
             self.handle_stock_search()
+        elif urllib.parse.urlparse(self.path).path == "/api/stock/valuation":
+            self.handle_stock_valuation()
         elif self.path.startswith("/api/stock/quote"):
             self.handle_stock_quote()
         elif self.path.startswith("/api/stock/history"):
@@ -2897,6 +3017,18 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             rows = [r for r in _flowlog["rows"] if r["date"] >= since]
         self.send_json(200, {"ok": True, "rows": rows, "bootAt": _flowlog["bootAt"], "lastRun": _flowlog["lastRun"],
                              "slotTimes": {k: "%02d:%02d" % (v[0] // 60, v[0] % 60) for k, v in FLOW_SLOT_TIMES.items()}})
+
+    def handle_stock_valuation(self):
+        code = self.require_stock_code()
+        if not code:
+            return
+        try:
+            debug = self.query_param("debug") == "1"
+            self.send_json(200, build_valuation(code, debug))
+        except ValueError as e:
+            self.send_json(404, {"error": str(e)})
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
 
     def handle_crisis_history(self):
         """과거 코스피 위기(-30% 이하) 곡선·요약. build_crisis_history.py 가 만든 crisis_history.json 을 그대로 준다."""
