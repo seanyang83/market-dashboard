@@ -3229,12 +3229,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if not path.startswith("/uapi/domestic-stock/v1/finance/") or ".." in path:
             self.send_json(400, {"error": "path"})
             return
-        code = self.require_stock_code()
-        if not code:
-            return
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        params = {k: v[0] for k, v in qs.items() if k not in ("key", "path", "tr")}
         try:
-            self.send_json(200, kis_get(path, tr, {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code,
-                                                   "FID_DIV_CLS_CODE": self.query_param("div") or "0"}))
+            self.send_json(200, kis_get(path, tr, params))
         except Exception as e:
             self.send_json(502, {"error": str(e)[:200]})
 
