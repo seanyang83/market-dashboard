@@ -66,6 +66,8 @@
   header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; }
   h1 { font-size: 20px; font-weight: 700; margin: 0; }
   .status { font-size: 13px; color: var(--sub); display: flex; align-items: center; gap: 8px; }
+  .conn { display: inline-flex; align-items: center; gap: 6px; }
+  .status .refresh-btn { white-space: nowrap; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--flat); display: inline-block; }
   .dot.live { background: var(--success); box-shadow: 0 0 0 0 rgba(74,222,128,.6); animation: pulse 2s infinite; }
   .dot.err { background: var(--up); }
@@ -271,6 +273,11 @@
   .rank-table td:nth-child(2) { text-align: left; cursor: pointer; font-weight: 700; }
   .rank-table td:nth-child(2):hover { color: var(--accent); text-decoration: underline; }
   @media (max-width: 640px) {
+    /* 헤더: 연결 상태는 한 줄, 버튼 4개는 그 아래 한 줄에 균등하게(잘리거나 두 줄로 꺾이지 않게) */
+    header { gap: 10px; }
+    .status { flex-wrap: wrap; width: 100%; gap: 6px; }
+    .conn { flex: 0 0 100%; }
+    .status .refresh-btn { flex: 1 1 auto; text-align: center; padding: 7px 6px; font-size: 12px; }
     .grid { grid-template-columns: repeat(2, 1fr); }
     .rank-table { table-layout: fixed; font-size: 11.5px; }
     .rank-table th, .rank-table td { padding: 5px 3px; }
@@ -297,8 +304,7 @@
   <header>
     <h1>종가베팅 체크리스트</h1>
     <div class="status">
-      <span class="dot" id="statusDot"></span>
-      <span id="statusText">연결 중...</span>
+      <span class="conn"><span class="dot" id="statusDot"></span><span id="statusText">연결 중...</span></span>
       <a class="refresh-btn" href="/crisis" style="text-decoration:none;">위기판 →</a>
       <a class="refresh-btn" href="/leader" style="text-decoration:none;">주도주 분석 →</a>
       <a class="refresh-btn" href="/sector" style="text-decoration:none;">업종 →</a>
