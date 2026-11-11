@@ -2398,6 +2398,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_kospi_history()
         elif self.path.startswith("/api/stock/search"):
             self.handle_stock_search()
+        elif urllib.parse.urlparse(self.path).path == "/api/ops/valuation":
+            self.handle_ops_valuation()
         elif urllib.parse.urlparse(self.path).path == "/api/stock/valuation":
             self.handle_stock_valuation()
         elif self.path.startswith("/api/stock/quote"):
@@ -3017,6 +3019,19 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             rows = [r for r in _flowlog["rows"] if r["date"] >= since]
         self.send_json(200, {"ok": True, "rows": rows, "bootAt": _flowlog["bootAt"], "lastRun": _flowlog["lastRun"],
                              "slotTimes": {k: "%02d:%02d" % (v[0] // 60, v[0] % 60) for k, v in FLOW_SLOT_TIMES.items()}})
+
+    def handle_ops_valuation(self):
+        # 점검용: 한투 종목추정실적 원본 응답 확인(?code=000660). 화면 API는 로그인이 필요해서 키(TELEGRAM_SUMMARY_KEY)로 보호되는 주소를 따로 둔다.
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        code = self.require_stock_code()
+        if not code:
+            return
+        try:
+            self.send_json(200, build_valuation(code, True))
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
 
     def handle_stock_valuation(self):
         code = self.require_stock_code()
