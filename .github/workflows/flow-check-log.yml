@@ -3,12 +3,9 @@ name: Log flow check
 # 장중 가집계 수급 정확도 검증(2026-11-10~): 거래일 15:10(est 가집계)·15:50(post 일별 통합 오늘 행)·20:10(final NXT 마감 뒤)
 # KST에 거래대금 TOP10(+하이닉스·삼성전자)의 외국인·기관 순매수 수량을 받아 data 브랜치 data/flow_check.csv 에 붙인다.
 # 비교·집계는 저장소의 flowcheck_report.py 로 한다. main 이 아니라 data 브랜치에 커밋하므로 Render 자동 배포는 없다.
+# (2026-11-11) 예약 실행(schedule)은 껐다: GitHub cron 이 7~8시간 늦게 돌아 15:10 est 가 23:46에, 확정치(post/final)가 자정 뒤에 기록돼 빈 값이 됐다.
+# 정시 수집은 서버(_flowcheck_scheduler)가 하고, 저장소로 옮기는 건 flowcheck_pull.py 다. 이 워크플로는 수동 실행(workflow_dispatch)용으로만 남긴다.
 on:
-  schedule:
-    # cron 은 UTC, KST = UTC+9. 시각이 늦게 돌아도 아래에서 cron 문자열로 slot 을 정하므로 slot 이 뒤바뀌지 않는다.
-    - cron: "10 6 * * 1-5"    # 15:10 KST  est
-    - cron: "50 6 * * 1-5"    # 15:50 KST  post
-    - cron: "10 11 * * 1-5"   # 20:10 KST  final
   workflow_dispatch:
     inputs:
       slot:

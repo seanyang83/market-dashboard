@@ -1015,6 +1015,87 @@ def build_flow_check_rows(slot, codes=None):
     return {"date": now.strftime("%Y-%m-%d"), "time": now.strftime("%H:%M:%S"), "rows": rows}
 
 
+# --- 수급 점검 서버 수집 (2026-11-11) ---
+# GitHub Actions cron 이 7~8시간 늦게 돌아(11/10: 15:10 예약이 23:46에 실행, 확정치는 자정 뒤라 빈 값) 정시 기록이 불가능해서
+# 서버가 직접 15:10 est · 15:50 post · 20:10 final 에 수집한다. 결과는 메모리 + 파일(flow_check_log.json)에 쌓고
+# GET /api/ops/flow-check-log?key= 로 내려준다 — 저장소 data 브랜치로 옮기는 건 flowcheck_pull.py(사용자 PC에서 실행).
+# 주의: Render 파일은 배포·재시작 때 사라지므로 점검 기간에는 장중(15~21시) 배포를 피하고 저녁마다 flowcheck_pull.py 로 가져간다.
+FLOW_SLOT_TIMES = {"est": (15 * 60 + 10, 15 * 60 + 40), "post": (15 * 60 + 50, 17 * 60), "final": (20 * 60 + 10, 21 * 60 + 30)}  # (목표, 마감) KST 분
+FLOW_LOG_MAX_DAYS = 40
+FLOW_LOG_PATH = os.environ.get("FLOW_CHECK_LOG_PATH") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "flow_check_log.json")
+_flowlog = {"rows": [], "tries": {}, "lastRun": None, "bootAt": None}
+_flowlog_lock = threading.Lock()
+
+
+def _flowlog_load():
+    try:
+        with open(FLOW_LOG_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        with _flowlog_lock:
+            _flowlog["rows"] = list(d.get("rows") or [])
+    except (OSError, ValueError):
+        pass
+
+
+def _flowlog_save():
+    with _flowlog_lock:
+        data = {"rows": _flowlog["rows"]}
+    tmp = FLOW_LOG_PATH + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+        os.replace(tmp, FLOW_LOG_PATH)
+    except OSError as e:
+        print(f"flow log save error: {e}")
+
+
+def _flowlog_has(date, slot):
+    with _flowlog_lock:
+        return any(r["date"] == date and r["slot"] == slot and r.get("foreign") not in ("", None) for r in _flowlog["rows"])
+
+
+def _flowlog_run(slot, now):
+    """한 슬롯을 수집해 저장. 값이 하나라도 들어오면 True(= 이 슬롯은 끝), 전부 비면 False(다음 주기에 재시도)."""
+    date = now.strftime("%Y-%m-%d")
+    codes = None
+    if slot != "est":   # 순위가 바뀌어도 같은 종목끼리 비교하도록 est 때의 종목을 그대로 쓴다
+        with _flowlog_lock:
+            codes = [r["code"] for r in _flowlog["rows"] if r["date"] == date and r["slot"] == "est"] or None
+    snap = build_flow_check_rows(slot, codes)
+    rows = [{"date": snap["date"], "slot": slot, "time": snap["time"], "code": r["code"], "name": r["name"],
+             "foreign": r["foreign"], "inst": r["inst"], "checkpoint": r["checkpoint"]} for r in snap["rows"]]
+    ok = any(r["foreign"] not in ("", None) for r in rows)
+    if ok:
+        keep_from = (now - timedelta(days=FLOW_LOG_MAX_DAYS)).strftime("%Y-%m-%d")
+        with _flowlog_lock:
+            old = [r for r in _flowlog["rows"] if not (r["date"] == date and r["slot"] == slot) and r["date"] >= keep_from]
+            _flowlog["rows"] = old + rows
+        _flowlog_save()
+    return ok, len(rows)
+
+
+def _flowcheck_scheduler():
+    _flowlog["bootAt"] = _kst_now().strftime("%m-%d %H:%M")
+    while True:
+        try:
+            now = _kst_now()
+            mins = now.hour * 60 + now.minute
+            if now.weekday() < 5 and KIS_APP_KEY and KIS_APP_SECRET:
+                for slot, (start, end) in FLOW_SLOT_TIMES.items():
+                    date = now.strftime("%Y-%m-%d")
+                    key = (date, slot)
+                    if start <= mins <= end and _flowlog["tries"].get(key, 0) < 4 and not _flowlog_has(date, slot) and is_krx_trading_day():
+                        _flowlog["tries"][key] = _flowlog["tries"].get(key, 0) + 1
+                        ok, n = _flowlog_run(slot, now)
+                        _flowlog["lastRun"] = "%s %s %s %s(%d줄)" % (date, now.strftime("%H:%M:%S"), slot, "ok" if ok else "값없음", n)
+                        if not ok:
+                            time.sleep(60)   # 값이 비면 1분 뒤 다시(최대 4번)
+        except Exception as e:
+            print(f"flowcheck scheduler error: {e}")
+            _flowlog["lastRun"] = "error: " + str(e)[:80]
+        time.sleep(20)
+
+
 # --- 위기 상황판 (/crisis) ---
 # 코스피 낙폭 위치·저점 차수·반등 체크리스트(60거래일 신저점 없음, 60일선 위)와 미국 신용 스프레드(FRED)를 한 번에 계산해 준다.
 # 신용 스프레드는 "확산 여부 / 정점 이후 꺾임" 확인용으로만 쓴다(2026-11-10 검증: 미국발 위기 5/5 확산, 한국발(1997~98)은 0/2 —
@@ -2249,6 +2330,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_crisis()
         elif self.path.startswith("/api/ops/score-snapshot"):
             self.handle_ops_score_snapshot()
+        elif urllib.parse.urlparse(self.path).path == "/api/ops/flow-check-log":
+            self.handle_ops_flow_check_log()
         elif self.path.startswith("/api/ops/flow-check"):
             self.handle_ops_flow_check()
         elif self.path.startswith("/api/ops/stock-flow"):
@@ -2803,6 +2886,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.send_json(400, {"error": str(e)})
         except Exception as e:
             self.send_json(502, {"error": str(e)[:200]})
+
+    def handle_ops_flow_check_log(self):
+        # 서버가 정시에 쌓은 수급 점검 기록(flow_check_log.json). flowcheck_pull.py 가 가져가 data 브랜치 CSV 에 합친다. ?since=YYYY-MM-DD
+        if not TELEGRAM_SUMMARY_KEY or self.query_param("key") != TELEGRAM_SUMMARY_KEY:
+            self.send_json(403, {"error": "forbidden"})
+            return
+        since = self.query_param("since") or ""
+        with _flowlog_lock:
+            rows = [r for r in _flowlog["rows"] if r["date"] >= since]
+        self.send_json(200, {"ok": True, "rows": rows, "bootAt": _flowlog["bootAt"], "lastRun": _flowlog["lastRun"],
+                             "slotTimes": {k: "%02d:%02d" % (v[0] // 60, v[0] % 60) for k, v in FLOW_SLOT_TIMES.items()}})
 
     def handle_crisis_history(self):
         """과거 코스피 위기(-30% 이하) 곡선·요약. build_crisis_history.py 가 만든 crisis_history.json 을 그대로 준다."""
@@ -4682,6 +4776,8 @@ if __name__ == "__main__":
     threading.Thread(target=_regime_scheduler, daemon=True).start()
     threading.Thread(target=_breadth_scheduler, daemon=True).start()
     threading.Thread(target=_align_scheduler, daemon=True).start()
+    _flowlog_load()
+    threading.Thread(target=_flowcheck_scheduler, daemon=True).start()
     with Server((HOST, PORT), Handler) as httpd:
         print(f"Serving dashboard on http://{HOST}:{PORT}")
         httpd.serve_forever()

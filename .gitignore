@@ -4,3 +4,5 @@ __pycache__/
 .kis_token_cache.json
 .rsi_min_cache.json
 .claude/settings.local.json
+flow_check_log.json
+flow_check_log.json.tmp
