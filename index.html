@@ -1774,7 +1774,8 @@ function valRender(code, price, v) {
     const eps = custom ? ov[key] : fy.eps;
     const bps = prev + eps - Math.max(0, eps) * payout;
     prev = bps;
-    rows.push({ label: `${fy.year == String(+a.year + 1) ? "내년" : "내후년"} 말(${fy.year.slice(2)}E)`, sub: custom ? "직접 입력" : fy.source === "kis" ? "한투 추정 EPS" : "올해 EPS 동일 가정", bps, eps, key, custom });
+    const subTxt = custom ? "직접 입력" : fy.source === "reports" ? `증권사 ${fy.n}곳 중앙값` : fy.source === "kis" ? "한투 추정 EPS" : `${fy.basis || "올해"} EPS 동일 가정`;
+    rows.push({ label: `${fy.year == String(+a.year + 1) ? "내년" : "내후년"} 말(${fy.year.slice(2)}E)`, sub: subTxt, bps, eps, key, custom, brokerBps: fy.brokerBps });
   });
   const body = rows.map((r) => {
     const pbr = r.bps > 0 ? price / r.bps : null;
@@ -1785,9 +1786,14 @@ function valRender(code, price, v) {
   }).join("");
   const cross = v.cross ? `<div class="meta-row"><span>참고: 전년 BPS + 올해 EPS - 배당으로 계산한 올해 말 BPS ${f0(v.cross.rollBps)}원 (컨센서스와 ${(((v.cross.rollBps / a.bps) - 1) * 100).toFixed(0)}%)</span></div>` : "";
   const hasOv = Object.keys(ov).length > 0;
+  const rp = v.reports || {};
+  const brokerBpsTxt = rows.filter((r) => r.brokerBps).map((r) => `${r.label.replace(" 말", "").replace(/\(.*\)/, "")} ${f0(r.brokerBps)}원`).join(" · ");
+  const repLine = rp.state === "pending" ? `<div class="meta-row"><span>증권사 리포트를 읽는 중입니다(10~20초). 끝나면 내년·내후년 EPS가 자동으로 바뀝니다.</span></div>`
+    : rp.state === "done" ? `<div class="meta-row"><span>내년·내후년 EPS: 증권사 리포트 ${rp.ok}곳(${(rp.brokers || []).map((b) => b.replace("증권", "")).join("·")}, ${(rp.latest || "").slice(4, 6)}/${(rp.latest || "").slice(6)} 기준)에서 읽어 이상치를 뺀 중앙값입니다.${brokerBpsTxt ? ` 리포트 BPS 중앙값 참고: ${brokerBpsTxt}.` : ""}</span></div>`
+    : rp.state === "insufficient" ? `<div class="meta-row"><span>읽을 수 있는 증권사 리포트가 3곳 미만이라 EPS는 가정값입니다(직접 입력 가능).</span></div>` : "";
   el.innerHTML = `<table class="flow-table val-table"><thead><tr><th>기준</th><th>BPS(원)</th><th>현재가 PBR</th><th>1배선까지</th></tr></thead><tbody>${body}</tbody></table>
     <div class="meta-row"><span>현재가 ₩${f0(price)} · 1배선까지 = 현재가가 BPS(PBR 1배)까지 오르내려야 하는 %, 기준 ${v.asOf}${hasOv ? ' · <a href="#" id="valReset">입력 초기화</a>' : ""}</span></div>
-    <div class="meta-row"><span>내년·내후년 BPS = 전년 말 BPS + EPS - 배당(올해 배당성향 ${(payout * 100).toFixed(0)}% 유지). EPS가 바뀌면 1배선도 같이 움직이니 칸을 바꿔 보세요. ${v.kis && v.kis.unverified ? "한투 추정값이 네이버와 맞지 않아 쓰지 않았습니다. " : ""}</span></div>${cross}
+    <div class="meta-row"><span>내년·내후년 BPS = 전년 말 BPS + EPS - 배당(올해 배당성향 ${(payout * 100).toFixed(0)}% 유지). EPS가 바뀌면 1배선도 같이 움직이니 칸을 바꿔 보세요. </span></div>${repLine}${cross}
     <div class="meta-row"><span>박세익 대표(KBS 11/10)는 "내년 말 BPS의 PBR 1배"를 순자산보다 싸게 거래되는 선으로 봤지만, 이 선이 매수 근거였는지는 아직 과거 검증 전입니다. 전망(EPS)이 틀리면 선도 틀립니다.</span></div>`;
   el.querySelectorAll(".val-eps").forEach((inp) => inp.addEventListener("change", () => {
     const o = valLoadOverrides(code), n = parseFloat(inp.value);
@@ -1802,9 +1808,17 @@ async function loadValuation(code, price) {
   const token = ++valReqToken, item = document.getElementById("valuationItem");
   item.hidden = true;
   try {
-    const v = await fetchJson(`/api/stock/valuation?code=${code}`);
+    let v = await fetchJson(`/api/stock/valuation?code=${code}`);
     if (token !== valReqToken) return;
     valRender(code, price, v);
+    // 증권사 리포트를 읽는 중이면 4초마다 다시 불러와 값이 채워지면 바꾼다(최대 8번)
+    for (let i = 0; i < 8 && v.reports && v.reports.state === "pending"; i++) {
+      await new Promise((r) => setTimeout(r, 4000));
+      if (token !== valReqToken) return;
+      v = await fetchJson(`/api/stock/valuation?code=${code}`);
+      if (token !== valReqToken) return;
+      valRender(code, price, v);
+    }
   } catch (e) { /* ETF·재무 없는 종목은 항목을 숨긴다 */ }
 }
 

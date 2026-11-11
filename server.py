@@ -1138,6 +1138,176 @@ def _kis_estimates(code):
     return out, data
 
 
+# --- 증권사 리포트에서 내년·내후년 EPS/BPS 읽기 (2026-11-11) ---
+# 한투 종목추정실적은 SK하이닉스·삼성전자가 비어 있어(NAVER·기아만 값, 한국투자증권 1곳 추정) 못 쓰고, 네이버가 주는 증권사 리포트 PDF의 재무 표에서
+# 연도별 EPS·BPS를 읽는다. 표 열 위치를 알 수 없으니 "전년 확정치(네이버 값)와 5% 안으로 맞는 숫자"를 기준점으로 삼아 그 뒤 숫자를 올해·내년·내후년으로 본다.
+# 최근 리포트 여러 곳에서 읽어 이상치(중앙값의 0.65~1.35배 밖)를 빼고 중앙값을 쓴다. 읽는 데 곳당 1~2초라 백그라운드 스레드로 돌리고 종목별 하루 저장한다.
+# pypdf 가 없으면(requirements.txt 를 못 설치한 경우 등) 이 기능만 꺼지고 나머지는 그대로다.
+try:
+    import pypdf as _pypdf
+except ImportError:
+    _pypdf = None
+REP_MAX_REPORTS = 8
+REP_MAX_AGE_DAYS = 75
+REP_MAX_PDF_BYTES = 8 * 1024 * 1024
+REP_MIN_SOURCES = 3
+REP_TTL = {"done": 24 * 3600, "insufficient": 6 * 3600, "error": 1800}
+_rep_cache = {}               # code -> {"ts", "state": pending|done|insufficient|error|unavailable, "data": {...}}
+_rep_lock = threading.Lock()
+_rep_sem = threading.Semaphore(1)   # 한 번에 한 종목만 읽는다(다른 요청이 밀리지 않게)
+_NUMRUN_RE = re.compile(r"(?<![A-Za-z0-9])(EPS|BPS)(?:[ \t]*\([^)\n]{0,8}\)|[ \t]*원)?[ \t]+([\-\d(),.%][\-\d(),.% \t]*)")
+
+
+def _clean_num(tok):
+    t = tok.strip().replace(" ", "")
+    neg = t.startswith("(") and t.endswith(")")
+    t = t.strip("()").replace(",", "").replace("%", "")
+    try:
+        v = float(t)
+    except ValueError:
+        return None
+    return -v if neg else v
+
+
+def _row_numbers(run):
+    """숫자 행 문자열 -> [float]. 글자 간격이 깨진 행('1 , 0 0 2 ,9 9 4')은 2칸 이상 공백을 열 구분으로 쓴다."""
+    run = run.strip()
+    toks = re.split(r"\s{2,}", run) if re.search(r"\d\s,|,\s\d", run) else run.split()
+    out = []
+    for t in toks:
+        v = _clean_num(t)
+        if v is not None:
+            out.append(v)
+    return out
+
+
+def _parse_report_text(text, prior, anchor):
+    """text: 리포트 전체 텍스트. prior/anchor: {"eps","bps"} 네이버의 전년 확정값·올해 컨센서스.
+    -> {"eps": [올해, 내년, 내후년(없으면 None)], "bps": [...]} (못 읽은 지표는 키 없음)"""
+    found = {}
+    for m in _NUMRUN_RE.finditer(text):
+        metric = m.group(1).lower()
+        if metric in found or not prior.get(metric) or not anchor.get(metric):
+            continue
+        nums = _row_numbers(m.group(2))
+        # 전년 확정치와 12% 안으로 맞는 열 중 가장 가까운 열을 기준점으로 삼는다(리포트는 지배주주·조정 기준이라 네이버와 몇 % 다를 수 있고,
+        # 12%를 넘게 벌어진 이웃 열(전전년)이 걸리지 않도록 가장 가까운 열을 고른다).
+        cands = sorted((abs(v / prior[metric] - 1), i) for i, v in enumerate(nums) if abs(v / prior[metric] - 1) < 0.12)
+        for _, i in cands:
+            tail = nums[i + 1:i + 4]
+            if len(tail) < 2:
+                continue
+            if abs(tail[0] / anchor[metric] - 1) > 0.30:   # 올해 전망이 컨센서스와 너무 다르면 같은 행이 아니다
+                continue
+            found[metric] = (tail + [None, None, None])[:3]
+            break
+    return found
+
+
+def _pdf_text(url):
+    if _pypdf is None:
+        raise RuntimeError("pypdf 없음")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        body = resp.read(REP_MAX_PDF_BYTES + 1)
+    if len(body) > REP_MAX_PDF_BYTES:
+        raise ValueError("PDF가 너무 큼")
+    import io
+    rd = _pypdf.PdfReader(io.BytesIO(body))
+    return "\n".join((pg.extract_text() or "") for pg in list(rd.pages)[:16])
+
+
+def _combine_reports(vals):
+    """[값...] -> (중앙값, 사용 개수) | None. 중앙값의 0.65~1.35배 밖은 이상치로 뺀다."""
+    vals = [v for v in vals if v is not None]
+    if len(vals) < REP_MIN_SOURCES:
+        return None
+    med = sorted(vals)[len(vals) // 2] if len(vals) % 2 else (sorted(vals)[len(vals) // 2 - 1] + sorted(vals)[len(vals) // 2]) / 2
+    if med <= 0:
+        return None
+    kept = [v for v in vals if 0.65 * med <= v <= 1.35 * med]
+    if len(kept) < REP_MIN_SOURCES:
+        return None
+    k = sorted(kept)
+    m = k[len(k) // 2] if len(k) % 2 else (k[len(k) // 2 - 1] + k[len(k) // 2]) / 2
+    return m, len(kept)
+
+
+def _collect_reports(code, prior, anchor, debug=False):
+    """네이버 리포트 목록 -> PDF -> 표 읽기 -> 중앙값. 느리다(곳당 1~2초). -> data dict"""
+    integ = _naver_get_json("https://m.stock.naver.com/api/stock/%s/integration" % code)
+    today = _kst_now().date()
+    items = []
+    for r in (integ.get("researches") or []):
+        try:
+            age = (today - datetime.strptime(str(r.get("wdt")), "%Y%m%d").date()).days
+        except ValueError:
+            continue
+        if age <= REP_MAX_AGE_DAYS:
+            items.append(r)
+        if len(items) >= REP_MAX_REPORTS:
+            break
+    details, t0 = [], time.time()
+    for r in items:
+        if time.time() - t0 > 75:
+            break
+        row = {"broker": r.get("bnm"), "date": str(r.get("wdt")), "title": r.get("tit")}
+        try:
+            d = _naver_get_json("https://m.stock.naver.com/api/research/company/%s" % r["id"])["researchContent"]
+            url = d.get("attachUrl")
+            if not url or not url.lower().endswith(".pdf"):
+                raise ValueError("PDF 없음")
+            parsed = _parse_report_text(_pdf_text(url), prior, anchor)
+            row["parsed"] = parsed
+        except Exception as e:
+            row["error"] = str(e)[:60]
+        details.append(row)
+    out = {"asOf": _kst_now().strftime("%Y-%m-%d %H:%M"), "tried": len(details),
+           "ok": [d for d in details if d.get("parsed", {}).get("eps")], "years": {}}
+    for yi in (1, 2):      # 0=올해(검증용), 1=내년, 2=내후년
+        e = _combine_reports([(d["parsed"].get("eps") or [None] * 3)[yi] for d in out["ok"]])
+        b = _combine_reports([(d["parsed"].get("bps") or [None] * 3)[yi] for d in out["ok"]])
+        out["years"][yi] = {"eps": e, "bps": b}
+    out["brokers"] = [d["broker"] for d in out["ok"]]
+    out["latest"] = max([d["date"] for d in out["ok"]] or [""])
+    if debug:
+        out["details"] = details
+    out["ok"] = len(out["ok"])
+    return out
+
+
+def _reports_for(code, prior, anchor, debug=False):
+    """리포트 기반 EPS/BPS 상태를 돌려준다. 저장된 게 없으면 백그라운드로 읽기 시작하고 {"state":"pending"}."""
+    if _pypdf is None:
+        return {"state": "unavailable"}
+    now = time.time()
+    with _rep_lock:
+        c = _rep_cache.get(code)
+        if c and c["state"] == "pending":
+            return {"state": "pending"}
+        if c and now - c["ts"] < REP_TTL.get(c["state"], 0) and not debug:
+            return {"state": c["state"], **(c.get("data") or {})}
+        _rep_cache[code] = {"ts": now, "state": "pending", "data": None}
+
+    def work():
+        with _rep_sem:
+            try:
+                data = _collect_reports(code, prior, anchor, debug)
+                has = any(v["eps"] for v in data["years"].values())
+                state = "done" if has else "insufficient"
+            except Exception as e:
+                data, state = {"error": str(e)[:80]}, "error"
+            with _rep_lock:
+                _rep_cache[code] = {"ts": time.time(), "state": state, "data": data}
+    if debug:
+        work()
+        with _rep_lock:
+            c = _rep_cache[code]
+        return {"state": c["state"], **(c.get("data") or {})}
+    threading.Thread(target=work, daemon=True).start()
+    return {"state": "pending"}
+
+
 def build_valuation(code, debug=False):
     """-> {name, confirmed:{period,bps}, anchor:{year,bps,eps,dps,roe}, prior:{year,bps,eps}, future:[{year,eps,source}], kis:{...}} (PBR 계산은 화면에서)"""
     now = time.time()
@@ -1189,12 +1359,25 @@ def build_valuation(code, debug=False):
     # 한투 값을 믿어도 되는지: 네이버에 이미 있는 연도(확정·올해 추정)의 EPS와 5% 이내로 맞는지 본다
     checked = [y for y in kis if (rows["EPS"].get(y + "12") is not None and kis[y]["eps"] is not None)]
     kis_ok = bool(checked) and all(abs(kis[y]["eps"] / rows["EPS"][y + "12"] - 1) < 0.05 for y in checked if rows["EPS"][y + "12"])
+    # 증권사 리포트(우선) -> 한투 추정 -> 올해 EPS 동일 가정
+    prior_d = {"eps": rows["EPS"].get(prior_key) if prior_key else None, "bps": rows["BPS"].get(prior_key) if prior_key else None}
+    rep = _reports_for(code, prior_d, {"eps": eps_a, "bps": rows["BPS"][anchor_key]}, debug)
+    rep_years = (rep.get("years") or {}) if rep.get("state") == "done" else {}
     future = []
     for i in (1, 2):
         y = str(ay + i)
+        r_eps = (rep_years.get(i) or rep_years.get(str(i)) or {}).get("eps")
+        r_bps = (rep_years.get(i) or rep_years.get(str(i)) or {}).get("bps")
         e = (kis.get(y) or {}).get("eps") if kis_ok else None
-        future.append({"year": y, "eps": e if e is not None else eps_a, "source": "kis" if e is not None else "assumed",
-                       "roe": (kis.get(y) or {}).get("roe") if kis_ok else None})
+        if r_eps:
+            item = {"year": y, "eps": r_eps[0], "source": "reports", "n": r_eps[1], "brokerBps": r_bps[0] if r_bps else None}
+        else:
+            # 값이 없는 해는 직전 해 EPS를 그대로 이어받는다(내년이 리포트 값이면 내후년은 내년과 동일 가정)
+            prev_eps = future[-1]["eps"] if future else eps_a
+            item = {"year": y, "eps": e if e is not None else prev_eps, "source": "kis" if e is not None else "assumed",
+                    "basis": "내년" if (future and e is None) else "올해"}
+        item["roe"] = (kis.get(y) or {}).get("roe") if kis_ok else None
+        future.append(item)
     out = {
         "code": code, "name": integ.get("stockName"), "asOf": _kst_now().strftime("%Y-%m-%d %H:%M"),
         "confirmed": confirmed,
@@ -1202,13 +1385,15 @@ def build_valuation(code, debug=False):
         "prior": ({"year": prior_key[:4], "bps": rows["BPS"].get(prior_key), "eps": rows["EPS"].get(prior_key)} if prior_key else None),
         "future": future,
         "kis": {"ok": kis_ok, "years": sorted(kis.keys()), "error": kis_note, "unverified": bool(kis) and not kis_ok},
+        "reports": {k: rep.get(k) for k in ("state", "ok", "brokers", "latest", "asOf", "error") if rep.get(k) is not None},
     }
     if out["prior"] and out["prior"]["bps"] is not None and eps_a is not None:
         out["cross"] = {"rollBps": out["prior"]["bps"] + eps_a - (dps_a or 0)}   # 전년 BPS + 올해 EPS - 배당 (컨센서스 BPS와 비교용)
     if debug:
         out["kisRaw"] = kis_raw
         out["kisParsed"] = kis
-    else:
+        out["reportsDetail"] = rep
+    elif rep.get("state") != "pending":      # 리포트를 읽는 중이면 저장하지 않는다(곧 다시 불러오므로)
         with _val_lock:
             _val_cache[code] = (now, out)
     return out
