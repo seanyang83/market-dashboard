@@ -2633,6 +2633,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_ops_snapshot()
         elif urllib.parse.urlparse(self.path).path == "/api/crisis/history":
             self.handle_crisis_history()
+        elif urllib.parse.urlparse(self.path).path == "/api/crisis/semis":
+            self.handle_crisis_semis()
         elif self.path.startswith("/api/crisis"):
             self.handle_crisis()
         elif self.path.startswith("/api/ops/score-snapshot"):
@@ -3238,6 +3240,15 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(200, json.load(f))
         except (OSError, ValueError):
             self.send_json(503, {"error": "crisis_history.json 을 읽지 못했습니다"})
+
+    def handle_crisis_semis(self):
+        """삼성전자·SK하이닉스 사이클(고점→저점→전고점 회복) 표. build_semi_cycles.py 가 만든 semi_cycles.json 을 그대로 준다."""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "semi_cycles.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                self.send_json(200, json.load(f))
+        except (OSError, ValueError):
+            self.send_json(503, {"error": "semi_cycles.json 을 읽지 못했습니다"})
 
     def handle_crisis(self):
         try:

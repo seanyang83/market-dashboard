@@ -73,6 +73,8 @@
   svg.ch { width: 100%; height: auto; display: block; margin-top: 8px; }
   svg.ch text { fill: var(--sub); font-size: 9.5px; font-family: inherit; }
   tr.now td { font-weight: 700; background: var(--note-bg); }
+  td .s2 { display: block; font-size: 10.5px; color: var(--sub); font-weight: 400; margin-top: 1px; }
+  table.cyc th, table.cyc td { padding: 7px 2px; font-size: 12.5px; }
 </style>
 </head>
 <body>
@@ -89,6 +91,7 @@
   <div id="disp"></div>
   <div id="mgn"></div>
   <div id="cred"></div>
+  <div id="semi"></div>
   <div id="scn"></div>
   <div class="sub" style="margin-top:18px">자료: 코스피 일봉(네이버), 미국 신용 스프레드(FRED, 하루 1회 갱신·미국 영업일 기준 하루 늦음). 보유 종목은 이 기기의 손절 계산기 입력값을 읽으며 서버로 보내지 않습니다.</div>
 </div>
@@ -305,6 +308,53 @@
       '<div class="note">신용잔고는 하루 늦게 공표돼 마지막 값은 ' + md(m.asOf) + ' 마감 기준입니다. 잔고는 신용으로 산 물량이 반대매매·상환으로 줄면 내려갑니다. 이 낙폭이 어느 정도일 때 저점이었는지는 아직 과거 검증을 하지 않아 사실만 보여 줍니다.</div></div>';
   }
 
+  // ---------- 2-5. 반도체 사이클 참고 (삼성전자·SK하이닉스) ----------
+  var SEMI = null, semiCode = '000660', semiLive = {};
+  function yr(v) { return v == null ? '-' : v.toFixed(1) + '년'; }
+  function renderSemi() {
+    if (!SEMI) { $('semi').innerHTML = ''; return; }
+    var st = SEMI.stocks.filter(function (x) { return x.code === semiCode; })[0] || SEMI.stocks[0];
+    var rows = st.rows.map(function (r) {
+      return '<tr><td>\'' + r.peakDate.slice(2, 4) + '.' + r.peakDate.slice(5, 7) + '<span class="s2">' + fmt(r.peakClose) + '원</span></td>' +
+        '<td class="pos">' + pct(r.risePct, 0) + '<span class="s2">' + yr(r.riseYears) + '</span></td>' +
+        '<td class="neg">' + pct(r.lowPct, 0) + '<span class="s2">고점 후 ' + yr(r.fallYears) + '</span></td>' +
+        '<td><b>' + yr(r.recYears) + '</b><span class="s2">' + r.recDate.slice(2, 7).replace('-', '.') + ' 회복</span></td>' +
+        '<td>' + yr(r.totalYears) + '</td></tr>';
+    }).join('');
+    var c = st.current, now = '';
+    if (c) {
+      var live = semiLive[st.code], last = live != null ? live : c.lastClose;
+      var low = Math.min(c.lowClose, last), lowPct = (low / c.peakClose - 1) * 100, curPct = (last / c.peakClose - 1) * 100;
+      var lowDate = last < c.lowClose ? '오늘' : c.lowDate.slice(5);
+      now = '<tr class="now"><td>\'' + c.peakDate.slice(2, 4) + '.' + c.peakDate.slice(5, 7) + ' 지금<span class="s2">' + fmt(c.peakClose) + '원</span></td>' +
+        '<td class="pos">' + pct(c.risePct, 0) + '<span class="s2">' + yr(c.riseYears) + '</span></td>' +
+        '<td class="neg">' + pct(lowPct, 0) + '<span class="s2">' + lowDate + ' 최저</span></td>' +
+        '<td>?<span class="s2">회복 전</span></td><td>' + yr(c.sincePeakYears) + '<span class="s2">경과</span></td></tr>';
+    }
+    var rec = st.rows.map(function (r) { return r.recYears; }), tot = st.rows.map(function (r) { return r.totalYears; });
+    var sum = '<div class="chips"><span class="chip">저점→전고점 회복 <b>중앙 ' + yr(median(rec)) + '</b> (' + yr(Math.min.apply(null, rec)) + '~' + yr(Math.max.apply(null, rec)) + ')</span>' +
+      '<span class="chip">고점→회복 <b>중앙 ' + yr(median(tot)) + '</b> (' + yr(Math.min.apply(null, tot)) + '~' + yr(Math.max.apply(null, tot)) + ')</span></div>';
+    var cur = '';
+    if (c) {
+      var last2 = semiLive[st.code] != null ? semiLive[st.code] : c.lastClose;
+      cur = '<div class="row"><span>현재가 <b>' + fmt(last2) + '원</b></span><span>고점 대비 <b class="neg">' + pct((last2 / c.peakClose - 1) * 100, 0) + '</b></span><span>고점 후 <b>' + yr(c.sincePeakYears) + '</b></span></div>';
+    }
+    var seg = '<div class="seg" id="sseg">' + SEMI.stocks.map(function (x) { return '<button data-c="' + x.code + '" class="' + (x.code === semiCode ? 'on' : '') + '">' + esc(x.name) + '</button>'; }).join('') + '</div>';
+    $('semi').innerHTML = '<div class="card"><h2>반도체 사이클 참고<small>일봉 종가 · ' + esc(SEMI.asOf) + ' 기준</small></h2>' + seg + cur +
+      '<table class="cyc"><thead><tr><th>고점</th><th>상승</th><th>하락(저점)</th><th>저점→<br>전고점</th><th>고점→<br>전고점</th></tr></thead><tbody>' + rows + now + '</tbody></table>' + sum +
+      '<div class="note">저점은 고점 이후 전고점을 다시 넘기 <b>전</b>의 가장 낮은 종가이고, 회복은 종가가 전고점 종가를 처음 넘은 날입니다. 상승은 직전 사이클 저점에서 이번 고점까지입니다. 얕은 하락(-30~-50%)은 저점 후 대체로 1년 안팎에 회복했지만, 깊은 하락은 오래 걸렸습니다(하이닉스 -58% 2.3년, -85% 5.4년). 이번 사이클은 상승 폭이 과거의 수십 배라 과거 기간을 그대로 대 보기 어렵고, 사례가 ' + st.rows.length + '건뿐이라 참고용입니다.' +
+      (st.code === '005930' ? ' 삼성전자 2024.7 고점(87,800원)은 2021.1 고점(91,000원)을 넘지 못해 2021.1 사이클에 묶었습니다. 삼성전자는 모바일 등 비메모리가 섞여 메모리 사이클과 어긋나기도 합니다.' : '') + '</div></div>';
+    Array.prototype.forEach.call(document.querySelectorAll('#sseg button'), function (b) { b.addEventListener('click', function () { semiCode = b.getAttribute('data-c'); renderSemi(); }); });
+  }
+  function loadSemi() {
+    apiGet('/api/crisis/semis').then(function (j) {
+      SEMI = j; renderSemi();
+      j.stocks.forEach(function (x) {
+        apiGet('/api/stock/quote?code=' + x.code).then(function (q) { if (isFinite(q.price)) { semiLive[x.code] = q.price; renderSemi(); } }).catch(function () { });
+      });
+    }).catch(function () { SEMI = null; $('semi').innerHTML = ''; });
+  }
+
   // ---------- 3. 신용 스프레드 ----------
   function renderCred() {
     var c = D.credit, b = c.baa10y, hy = c.hy, ig = c.ig;
@@ -406,6 +456,7 @@
     apiGet('/api/crisis').then(function (d) {
       D = d; renderPos(); renderChk(); renderCred(); renderMargin();
       apiGet('/api/crisis/history').then(function (h) { HIST = h; renderHist(); renderDisp(); }).catch(function () { HIST = null; $('hist').innerHTML = ''; renderDisp(); });
+      loadSemi();
       var H = holdings();
       renderScn();
       loadPrices(H.list).then(renderScn);
