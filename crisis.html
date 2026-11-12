@@ -59,7 +59,6 @@
   .tag { font-size: 10.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; color: var(--sub); margin-left: 6px; font-weight: 400; white-space: nowrap; }
   .st-ok { color: var(--ok); } .st-no { color: var(--pend); } .st-na { color: var(--sub); }
   input { width: 64px; padding: 6px 7px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 15px; font-family: inherit; text-align: right; }
-  .over { color: var(--up); font-weight: 700; } .under { color: var(--ok); }
   details summary { cursor: pointer; font-size: 12.5px; color: var(--sub); margin-top: 10px; }
   .muted { color: var(--sub); }
   #err { margin-top: 14px; }
@@ -92,8 +91,7 @@
   <div id="mgn"></div>
   <div id="cred"></div>
   <div id="semi"></div>
-  <div id="scn"></div>
-  <div class="sub" style="margin-top:18px">자료: 코스피 일봉(네이버), 미국 신용 스프레드(FRED, 하루 1회 갱신·미국 영업일 기준 하루 늦음). 보유 종목은 이 기기의 손절 계산기 입력값을 읽으며 서버로 보내지 않습니다.</div>
+  <div class="sub" style="margin-top:18px">자료: 코스피 일봉(네이버), 미국 신용 스프레드(FRED, 하루 1회 갱신·미국 영업일 기준 하루 늦음).</div>
 </div>
 <script>
 (function () {
@@ -104,7 +102,6 @@
   function md(s) { return s ? s.slice(5) : ''; }
   function num(s) { var v = parseFloat(String(s == null ? '' : s).replace(/,/g, '')); return isFinite(v) ? v : NaN; }
   var D = null;               // /api/crisis 응답
-  var prices = {};            // code -> 현재가 (보유 종목)
 
   function apiGet(path) {
     return fetch(path, { credentials: 'same-origin' }).then(function (r) {
@@ -374,96 +371,15 @@
       '<div class="note">검증은 1986년부터 데이터가 있는 Baa 스프레드(BAA10Y)로 했고, 하이일드·투자등급은 FRED가 최근 3년만 제공해 같은 검증을 못 했습니다.</div></div>';
   }
 
-  // ---------- 4. 내 포지션 시나리오 ----------
-  var SKEY = 'crisis.v1', beta = {};
-  function loadBeta() { try { beta = (JSON.parse(localStorage.getItem(SKEY) || '{}').beta) || {}; } catch (e) { beta = {}; } }
-  function saveBeta() { try { localStorage.setItem(SKEY, JSON.stringify({ beta: beta })); } catch (e) { } }
-  function defBeta(name) {
-    name = String(name || '');
-    if (/인버스/.test(name)) return /2X|곱버스/i.test(name) ? -2 : -1;
-    if (/레버리지/.test(name)) return 2;
-    return 1;
-  }
-  function holdings() {
-    try {
-      var d = JSON.parse(localStorage.getItem('risk.v1') || '{}');
-      var list = (d.holdings || []).filter(function (h) { return h.include !== false && !h.plan && num(h.qty) > 0; });
-      return { list: list, limit: num(d.limit), basis: d.basis === 'cur' ? 'cur' : 'avg' };
-    } catch (e) { return { list: [], limit: NaN, basis: 'avg' }; }
-  }
-  function loadPrices(list) {
-    return Promise.all(list.map(function (h) {
-      return apiGet('/api/stock/quote?code=' + h.code).then(function (q) { if (isFinite(q.price)) prices[h.code] = q.price; }).catch(function () { });
-    }));
-  }
-  var DROPS = [-10, -20, -30];
-  function renderScn() {
-    var H = holdings();
-    if (!H.list.length) {
-      $('scn').innerHTML = '<div class="card"><h2>내 포지션 시나리오</h2><div class="note">손절 계산기(<a href="/risk">/risk</a>)에 보유 종목의 수량·평단을 입력하면 여기서 지수가 더 빠질 때의 손실을 계산합니다. 이 기기에 저장된 입력값만 읽습니다.</div></div>';
-      return;
-    }
-    var idx = D.last.close;
-    var calc = H.list.map(function (h) {
-      var p = prices[h.code], q = num(h.qty), a = num(h.avg);
-      var b = beta[h.code] != null && isFinite(beta[h.code]) ? beta[h.code] : defBeta(h.name);
-      return { h: h, p: p, q: q, a: a, b: b, v: p > 0 ? q * p : NaN };
-    });
-    var cols = DROPS.map(function (dp) {
-      var cur = 0, vsAvg = 0, over = 0, ok = true;
-      calc.forEach(function (c) {
-        if (!(c.v > 0)) { ok = false; return; }
-        var mv = Math.max(-1, c.b * dp / 100), nv = c.v * (1 + mv);
-        cur += c.v - nv;
-        if (c.a > 0) vsAvg += c.q * c.a - nv;
-      });
-      return { dp: dp, idx: idx * (1 + dp / 100), cur: cur, vsAvg: vsAvg, ok: ok };
-    });
-    var lim = H.limit, basisTxt = H.basis === 'cur' ? '현재가 기준' : '평단 기준';
-    var rows = calc.map(function (c) {
-      var inp = '<input data-code="' + esc(c.h.code) + '" inputmode="decimal" value="' + c.b + '">';
-      return '<tr><td class="nm">' + esc(c.h.name || c.h.code) + '</td><td>' + (c.v > 0 ? fmt(c.v) : '-') + '</td><td>' + inp + '</td></tr>';
-    }).join('');
-    var head = cols.map(function (x) { return '<th>' + x.dp + '%<br><span class="muted">' + fmt(x.idx) + '</span></th>'; }).join('');
-    var lineCur = cols.map(function (x) { return '<td class="neg">' + (x.ok ? '-' + fmt(x.cur) : '-') + '</td>'; }).join('');
-    var lineAvg = cols.map(function (x) { return '<td class="' + (x.vsAvg > 0 ? 'neg' : 'pos') + '">' + (x.ok ? (x.vsAvg > 0 ? '-' + fmt(x.vsAvg) : '+' + fmt(-x.vsAvg)) : '-') + '</td>'; }).join('');
-    var lineLim = '';
-    if (isFinite(lim) && lim > 0) {
-      lineLim = '<tr><td>한도 ' + fmt(lim) + '원<br><span class="muted">(' + basisTxt + ')</span></td>' + cols.map(function (x) {
-        var loss = H.basis === 'cur' ? x.cur : Math.max(0, x.vsAvg);
-        if (!x.ok) return '<td>-</td>';
-        return '<td class="' + (loss > lim ? 'over' : 'under') + '">' + (loss > lim ? '초과<br>+' + fmt(loss - lim) : '여유<br>' + fmt(lim - loss)) + '</td>';
-      }).join('') + '</tr>';
-    }
-    $('scn').innerHTML = '<div class="card"><h2>내 포지션 시나리오<small>코스피 ' + fmt(idx, 2) + ' 기준</small></h2>' +
-      '<div class="sub">지수가 지금보다 더 내려가면 보유 종목이 얼마나 빠지는지 계산합니다. 민감도는 지수가 1% 움직일 때 종목이 움직이는 배수(직접 수정)입니다.</div>' +
-      '<table><tr><th>종목</th><th>평가금(원)</th><th>민감도(배)</th></tr>' + rows + '</table>' +
-      '<table><tr><th>지수가</th>' + head + '</tr>' +
-      '<tr><td>추가 손실<br><span class="muted">(현재가 대비)</span></td>' + lineCur + '</tr>' +
-      '<tr><td>평단 대비<br><span class="muted">손익 합계</span></td>' + lineAvg + '</tr>' + lineLim + '</table>' +
-      '<div class="note">단순 배수 계산이라 매도 비용은 빠져 있습니다. 레버리지·인버스 ETF는 일일 수익률의 배수라서 며칠에 걸친 등락에서는 단순 배수와 달라집니다(변동성 손실). 코스닥 종목·ETF는 코스피와 같이 움직이는 정도가 달라 민감도를 직접 정하세요.</div></div>';
-    $('scn').querySelectorAll('input').forEach(function (el) {
-      el.addEventListener('change', function () {
-        var v = parseFloat(el.value.replace(',', '.'));
-        if (isFinite(v)) beta[el.dataset.code] = v; else delete beta[el.dataset.code];
-        saveBeta(); renderScn();
-      });
-    });
-  }
-
   function load() {
     $('err').innerHTML = '';
     apiGet('/api/crisis').then(function (d) {
       D = d; renderPos(); renderChk(); renderCred(); renderMargin();
       apiGet('/api/crisis/history').then(function (h) { HIST = h; renderHist(); renderDisp(); }).catch(function () { HIST = null; $('hist').innerHTML = ''; renderDisp(); });
       loadSemi();
-      var H = holdings();
-      renderScn();
-      loadPrices(H.list).then(renderScn);
     }).catch(function (e) { $('err').innerHTML = '<div class="note warn">불러오지 못했습니다: ' + esc(e.message) + '</div>'; });
   }
   $('refresh').addEventListener('click', load);
-  loadBeta();
   load();
 })();
 </script>
