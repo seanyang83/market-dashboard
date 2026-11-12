@@ -840,17 +840,18 @@ _volume_rank_flows_lock = threading.Lock()
 
 def _stock_flow_signs(code):
     """-> {"foreignQty","institutionQty","programNetAmount"} (없으면 None 값). 한 종목 호출 2~3번.
-    장중에는 한투 가집계(추정치)를, 마감 후(15:40~)에는 종목 체크리스트와 같이 일별 수급의 오늘 행
-    (investor_today_row, 캐시 공유)을 먼저 쓴다. 마감 후에도 가집계를 쓰면 마지막 추정 시점의 부호가
-    확정 값과 달라 Hit 뱃지가 틀릴 수 있다(2026-11-02 하이닉스: 가집계 외국인 +1,000주, 확정 -150,254주)."""
+    종목 체크리스트(handle_stock_investor_live)와 같은 순서로 평일엔 시간과 상관없이 통합(UN) 일별 수급의
+    오늘 행(investor_today_row, 캐시 공유)을 먼저 쓰고, 행이 없거나 값이 전부 0(집계 전 자리표시)이면 한투 가집계로
+    돌아간다. 출처가 다르면 부호가 갈려 한쪽은 기관 -, 한쪽은 Hit 가 된다(2026-11-12 삼성전자 장 마감 직전:
+    체크리스트는 일별 기관 -, 순위 Hit 는 가집계 기관 +. 2026-11-02 하이닉스: 가집계 외국인 +1,000주, 확정 -150,254주)."""
     out = {"foreignQty": None, "institutionQty": None, "programNetAmount": None}
     now = _kst_now()
-    after_close = now.weekday() < 5 and now.hour * 60 + now.minute >= 15 * 60 + 40
+    daily_first = now.weekday() < 5
 
     def from_daily():
         try:
             row = investor_today_row(code)
-            if row:
+            if row and not all(int(row.get(k, 0) or 0) == 0 for k in ("frgn_ntby_qty", "orgn_ntby_qty", "prsn_ntby_qty")):
                 out["foreignQty"] = int(row.get("frgn_ntby_qty", 0))
                 out["institutionQty"] = int(row.get("orgn_ntby_qty", 0))
         except Exception:
@@ -868,7 +869,7 @@ def _stock_flow_signs(code):
         except Exception:
             pass
 
-    for fetch in ((from_daily, from_estimate) if after_close else (from_estimate, from_daily)):
+    for fetch in ((from_daily, from_estimate) if daily_first else (from_estimate, from_daily)):
         if out["foreignQty"] is None:
             fetch()
     try:
