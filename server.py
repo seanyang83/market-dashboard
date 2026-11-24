@@ -1527,6 +1527,290 @@ def _margin_state(closes, credit, peak_date):
     return out
 
 
+# --- 기록판 (/record) ---
+ISSUE_AFTER_DAYS = (5, 20, 60)   # 이슈일 종가 대비 N거래일 뒤 등락
+
+
+def build_record_issues(issues, closes):
+    """이슈 기록 + 지수 일봉 -> 화면용. issues: [{date, dir, title, ...}], closes: {YYYYMMDD: 종가}.
+    이슈일이 휴장이면 그 뒤 첫 거래일을 기준일로 쓴다. chg = 기준일 등락(전일 종가 대비), after = 기준일 종가 대비 N거래일 뒤 등락(아직 안 지났으면 없음).
+    endDate 가 있으면 span = 시작일 전일 종가 ~ endDate 이전 마지막 거래일 종가 등락."""
+    ds = sorted(closes)
+    out_issues = []
+    for it in issues:
+        try:
+            want = it["date"].replace("-", "")
+            i = next((k for k, d in enumerate(ds) if d >= want), None)
+        except (KeyError, AttributeError):
+            continue
+        row = dict(it)
+        row["base"] = row["chg"] = row["close"] = row["span"] = None
+        row["after"] = {}
+        if i is not None:
+            c = closes[ds[i]]
+            row["base"] = "%s-%s-%s" % (ds[i][:4], ds[i][4:6], ds[i][6:])
+            row["close"] = c
+            if i > 0:
+                row["chg"] = round((c / closes[ds[i - 1]] - 1) * 100, 2)
+            for n in ISSUE_AFTER_DAYS:
+                if i + n < len(ds):
+                    row["after"][str(n)] = round((closes[ds[i + n]] / c - 1) * 100, 1)
+            end = (it.get("endDate") or "").replace("-", "")
+            if end and i > 0:
+                j = max((k for k, d in enumerate(ds) if d <= end), default=None)
+                if j is not None and j >= i:
+                    row["span"] = round((closes[ds[j]] / closes[ds[i - 1]] - 1) * 100, 1)
+        out_issues.append(row)
+    out_issues.sort(key=lambda r: r.get("date", ""))
+    return {"asOf": "%s-%s-%s" % (ds[-1][:4], ds[-1][4:6], ds[-1][6:]) if ds else None,
+            "closes": {"d": [int(d) for d in ds], "v": [round(closes[d], 2) for d in ds]},
+            "issues": out_issues}
+
+
+US_CYCLE_BASE = 2000   # 이 해부터 4년 주기로 센다(2000 대선 해, 2001 취임 첫해, 2002 중간선거 해, 2003 대선 전해)
+US_CYCLE_NAMES = ("미국 대선 해", "미국 대통령 취임 첫해", "미국 중간선거 해", "미국 대선 전해")
+US_CYCLE_ELECTION = (True, False, True, False)   # 그 해 11월에 연방선거가 있나
+
+
+def _us_election_day(y):
+    """미국 연방선거일 = 11월 첫 월요일의 다음 날(화요일). datetime 반환."""
+    d = datetime(y, 11, 1)
+    while d.weekday() != 0:
+        d += timedelta(days=1)
+    return d + timedelta(days=1)
+
+
+def build_us_cycle(closes, this_year):
+    """미국 대통령 4년 주기(대선 해 → 취임 첫해 → 중간선거 해 → 대선 전해)별 코스피 특징 + 앞으로 3년 달력. closes: {YYYYMMDD: 종가}.
+    수익률은 전년 말 종가 대비, 2000년부터. 선거 후 수익은 선거일(한국 종가) 기준이라 선거 결과에 대한 첫 반응을 포함한다.
+    각 자리의 기준(base)은 같은 기간(2000~작년)의 다른 세 자리 해 전체."""
+    import bisect
+    ds = sorted(closes)
+    if not ds:
+        return None
+    ge = lambda s: bisect.bisect_left(ds, s)             # s 이상인 첫 인덱스(없으면 len)
+    le = lambda s: bisect.bisect_right(ds, s) - 1        # s 이하인 마지막 인덱스
+    ymd = lambda d: "%s-%s-%s" % (d[:4], d[4:6], d[6:])
+    pct = lambda a, b: round((a / b - 1) * 100, 1)
+    pos_of = lambda y: (y - US_CYCLE_BASE) % 4
+
+    def year_stats(y):
+        a, b = ge("%d0101" % y), le("%d1231" % y)
+        if a >= len(ds) or a < 1 or a > b or not ds[a].startswith(str(y)):
+            return None
+        base = closes[ds[a - 1]]
+        months = []
+        for m in range(1, 13):
+            xs = [i for i in range(a, b + 1) if ds[i][4:6] == "%02d" % m]
+            months.append(pct(closes[ds[xs[-1]]], closes[ds[xs[0] - 1]]) if xs else None)
+        pk, mdd = base, 0.0
+        for i in range(a, b + 1):
+            v = closes[ds[i]]
+            pk = max(pk, v)
+            mdd = min(mdd, (v / pk - 1) * 100)
+        low_i = min(range(a, b + 1), key=lambda i: closes[ds[i]])
+        return {"a": a, "b": b, "base": base, "ret": pct(closes[ds[b]], base), "months": months, "maxDd": round(mdd, 1),
+                "lowDate": ymd(ds[low_i]), "lowRet": pct(closes[ds[low_i]], base)}
+
+    stats = {y: year_stats(y) for y in range(US_CYCLE_BASE, this_year + 1)}
+    rows = {p: [] for p in range(4)}
+    for y in range(US_CYCLE_BASE, this_year + 1):
+        st = stats[y]
+        if not st:
+            continue
+        p = pos_of(y)
+        a, b, base = st["a"], st["b"], st["base"]
+        row = {"year": y, "complete": y < this_year, "ret": st["ret"], "months": st["months"], "maxDd": st["maxDd"],
+               "lowDate": st["lowDate"], "lowRet": st["lowRet"], "election": None, "electionDoy": None,
+               "toElection": None, "pre3m": None, "toEnd": None, "daysAfter": None, "after": {}}
+        row["curve"] = {"x": [datetime(int(ds[i][:4]), int(ds[i][4:6]), int(ds[i][6:])).timetuple().tm_yday for i in range(a, b + 1)],
+                        "y": [pct(closes[ds[i]], base) for i in range(a, b + 1)]}
+        if US_CYCLE_ELECTION[p]:
+            el = _us_election_day(y)
+            ie = ge(el.strftime("%Y%m%d"))
+            row["election"], row["electionDoy"] = el.strftime("%Y-%m-%d"), el.timetuple().tm_yday
+            if a <= ie <= b:
+                row["toElection"] = pct(closes[ds[ie]], base)
+                row["pre3m"] = pct(closes[ds[ie]], closes[ds[le((el - timedelta(days=91)).strftime("%Y%m%d"))]])
+                row["toEnd"] = pct(closes[ds[b]], closes[ds[ie]])
+                row["daysAfter"] = b - ie
+                for m in (1, 3, 6, 12):
+                    tt = (el + timedelta(days=int(30.4 * m))).strftime("%Y%m%d")
+                    row["after"][str(m)] = pct(closes[ds[le(tt)]], closes[ds[ie]]) if tt <= ds[-1] else None
+        rows[p].append(row)
+
+    def base_of(p):
+        ost = [stats[y] for y in range(US_CYCLE_BASE, this_year) if pos_of(y) != p and stats[y]]
+        rets = sorted(x["ret"] for x in ost)
+        months = []
+        for m in range(12):
+            vs = [x["months"][m] for x in ost if x["months"][m] is not None]
+            months.append({"down": round(sum(1 for v in vs if v < 0) / len(vs), 2) if vs else None,
+                           "mean": round(sum(vs) / len(vs), 1) if vs else None})
+        return {"n": len(ost), "up": sum(1 for x in ost if x["ret"] > 0), "meanRet": round(sum(rets) / len(rets), 1) if rets else None,
+                "medRet": round((rets[(len(rets) - 1) // 2] + rets[len(rets) // 2]) / 2, 1) if rets else None,
+                "meanDd": round(sum(x["maxDd"] for x in ost) / len(ost), 1) if ost else None, "months": months}
+
+    fwd = {}
+    i0 = ge("%d0101" % US_CYCLE_BASE)
+    for n, lab in ((63, "3"), (126, "6"), (252, "12")):
+        xs = [closes[ds[i + n]] / closes[ds[i]] - 1 for i in range(i0, len(ds) - n)]
+        if xs:
+            fwd[lab] = {"up": round(sum(1 for v in xs if v > 0) / len(xs), 2), "mean": round(sum(xs) / len(xs) * 100, 1)}
+    positions = [{"pos": p, "name": US_CYCLE_NAMES[p], "hasElection": US_CYCLE_ELECTION[p], "years": rows[p], "base": base_of(p)} for p in range(4)]
+    upcoming = []
+    for y in range(this_year, this_year + 3):
+        p = pos_of(y)
+        upcoming.append({"year": y, "pos": p, "name": US_CYCLE_NAMES[p], "isCurrent": y == this_year,
+                         "election": _us_election_day(y).strftime("%Y-%m-%d") if US_CYCLE_ELECTION[p] else None,
+                         "ref": [{"year": r["year"], "ret": r["ret"]} for r in rows[p] if r["complete"]]})
+    return {"asOf": ymd(ds[-1]), "thisYear": this_year, "curPos": pos_of(this_year), "fwd": fwd, "positions": positions, "upcoming": upcoming}
+
+
+def build_rates(closes, tar, taru, y10, cpi, core, ndq=None):
+    """미국 금리와 코스피. closes: {YYYYMMDD: 코스피 종가}, tar: FRED DFEDTAR(목표금리, ~2008-12-15), taru: DFEDTARU(목표 상단, 2008-12-16~),
+    y10: FRED DGS10 [(YYYY-MM-DD, %)], ndq: FRED NASDAQCOM(나스닥 종합 일별 종가, 미국 현지 날짜, FRED 반영이 며칠 늦음) 또는 None, cpi·core: FRED CPIAUCSL·CPILFESL(계절조정 지수, 월별) -> 전년 동월 대비 %.
+    정책금리 = 목표금리(상단) 이어붙임. 물가는 해당 월 기준이라 발표(다음 달 중순)보다 앞선 값이니, 결정일에는 "직전 월" 물가를 쓴다. 사이클 = 같은 방향 결정을 365일 안에서 묶음(방향이 바뀌면 새 사이클)."""
+    import bisect
+    ds = sorted(closes)
+    if not ds:
+        return None
+    ge = lambda s: bisect.bisect_left(ds, s)
+    le = lambda s: bisect.bisect_right(ds, s) - 1
+    nd = lambda s: s.replace("-", "")
+    pct = lambda a, b: round((a / b - 1) * 100, 1)
+    iso = lambda d: "%s-%s-%s" % (d[:4], d[4:6], d[6:])
+    series = [r for r in tar if r[0] <= "2008-12-15"] + [r for r in taru if r[0] >= "2008-12-16"]
+    if len(series) < 100 or len(y10) < 100:
+        raise ValueError("금리 데이터가 부족합니다")
+    events, prev = [], series[0][1]
+    for d, v in series[1:]:
+        if abs(v - prev) > 1e-9:
+            events.append({"date": d, "delta": round(v - prev, 2), "rate": v, "from": prev})
+            prev = v
+    y10d = dict((nd(d), v) for d, v in y10)
+    y10k = sorted(y10d)
+    y10_at = lambda s: y10d[y10k[max(0, bisect.bisect_right(y10k, s) - 1)]]   # s 이하 마지막 값
+    last_close = closes[ds[-1]]
+
+    def yoy_series(rows):
+        idx = dict((d[:7], v) for d, v in rows)
+        out = {}
+        for m in sorted(idx):
+            p = "%d-%s" % (int(m[:4]) - 1, m[5:7])
+            if p in idx:
+                out[m] = round((idx[m] / idx[p] - 1) * 100, 2)
+        return out
+    cyoy, kyoy = yoy_series(cpi), yoy_series(core)
+    prev_month = lambda iso_d: "%d-%02d" % (int(iso_d[:4]) - (1 if iso_d[5:7] == "01" else 0), 12 if iso_d[5:7] == "01" else int(iso_d[5:7]) - 1)
+    cycles = []
+    for e in events:
+        dr = 1 if e["delta"] > 0 else -1
+        c = cycles[-1] if cycles else None
+        if c and c["dir"] == dr and (datetime.strptime(e["date"], "%Y-%m-%d") - datetime.strptime(c["last"], "%Y-%m-%d")).days <= 365:
+            c["last"], c["n"], c["sum"], c["rateTo"] = e["date"], c["n"] + 1, round(c["sum"] + e["delta"], 2), e["rate"]
+        else:
+            cycles.append({"dir": dr, "first": e["date"], "last": e["date"], "n": 1, "sum": e["delta"], "rateFrom": e["from"], "rateTo": e["rate"]})
+    for c in cycles:
+        c["ongoing"] = c is cycles[-1] and (datetime.strptime(ds[-1], "%Y%m%d") - datetime.strptime(c["last"], "%Y-%m-%d")).days <= 365
+        a = ge(nd(c["first"]))
+        b = len(ds) - 1 if c["ongoing"] else le(nd(c["last"]))
+        c["kospiRet"] = pct(closes[ds[b]], closes[ds[a]]) if a < len(ds) and b >= a else None
+        pk, mdd = None, 0.0
+        for i in range(a, b + 1):
+            v = closes[ds[i]]
+            pk = v if pk is None else max(pk, v)
+            mdd = min(mdd, (v / pk - 1) * 100)
+        c["maxDd"] = round(mdd, 1)
+        c["y10Chg"] = round(y10_at(nd(ds[b]) if c["ongoing"] else nd(c["last"])) - y10_at(nd(c["first"])), 2)
+        p0 = closes[ds[le(nd(c["first"]))]]
+        d0 = datetime.strptime(c["first"], "%Y-%m-%d")
+        c["pre3m"] = pct(p0, closes[ds[le((d0 - timedelta(days=91)).strftime("%Y%m%d"))]])
+        c["after"] = {}
+        for m in (1, 3, 6, 12):
+            tt = (d0 + timedelta(days=int(30.4 * m))).strftime("%Y%m%d")
+            c["after"][str(m)] = pct(closes[ds[le(tt)]], p0) if tt <= ds[-1] else None
+        # 물가: 첫 결정 직전 월 ~ 마지막 결정 직전 월(진행 중이면 최신 월)
+        m_a = prev_month(c["first"])
+        m_b = max(cyoy) if c["ongoing"] else prev_month(c["last"])
+        win = [(m, cyoy[m]) for m in sorted(cyoy) if m_a <= m <= m_b]
+        c["cpiStart"] = cyoy.get(m_a)
+        c["coreStart"] = kyoy.get(m_a)
+        c["cpiStartMonth"] = m_a
+        c["cpiEnd"] = cyoy.get(m_b)
+        c["cpiEndMonth"] = m_b
+        if win:
+            pk_m, pk_v = max(win, key=lambda x: x[1])
+            c["cpiPeak"] = {"month": pk_m, "v": pk_v}
+        else:
+            c["cpiPeak"] = None
+        c["realStart"] = round(c["rateFrom"] - c["cpiStart"], 1) if c["cpiStart"] is not None else None
+    # 월말 값(상관·구간 비교용)
+    def month_end(m):
+        o = {}
+        for d in sorted(m):
+            o[d[:6]] = m[d]
+        return o
+    kme, yme = month_end(closes), month_end(y10d)
+    shift = lambda m, n: "%d%02d" % ((int(m[:4]) * 12 + int(m[4:]) - 1 + n) // 12, (int(m[:4]) * 12 + int(m[4:]) - 1 + n) % 12 + 1)
+    months = [m for m in sorted(yme) if m >= "200001" and m in kme]
+
+    def corr(a, b):
+        ma, mb = sum(a) / len(a), sum(b) / len(b)
+        den = (sum((x - ma) ** 2 for x in a) * sum((y - mb) ** 2 for y in b)) ** 0.5
+        return round(sum((x - ma) * (y - mb) for x, y in zip(a, b)) / den, 2) if den else None
+    corrs = {}
+    for n in (3, 6):
+        xs, ys = [], []
+        for m in months:
+            p = shift(m, -n)
+            if p in kme and p in yme:
+                xs.append((kme[m] / kme[p] - 1) * 100)
+                ys.append(yme[m] - yme[p])
+        corrs[str(n)] = {"r": corr(xs, ys), "n": len(xs)}
+    buckets = {"up": [], "flat": [], "down": []}
+    for m in months:           # 3개월 비중복(3·6·9·12월 말) 구간, 10년물 ±0.3%p 기준
+        if int(m[4:]) % 3:
+            continue
+        p = shift(m, -3)
+        if p in kme and p in yme:
+            dy = yme[m] - yme[p]
+            buckets["up" if dy > 0.3 else "down" if dy < -0.3 else "flat"].append((kme[m] / kme[p] - 1) * 100)
+    bk = {}
+    for k, v in buckets.items():
+        v2 = sorted(v)
+        bk[k] = {"n": len(v), "mean": round(sum(v) / len(v), 1) if v else None, "median": round((v2[(len(v2) - 1) // 2] + v2[len(v2) // 2]) / 2, 1) if v else None,
+                 "upRate": round(sum(1 for x in v if x > 0) / len(v), 2) if v else None}
+    # 10년물 3개월 +0.7%p 이상 급등 에피소드
+    hit = [m for m in months if shift(m, -3) in yme and yme[m] - yme[shift(m, -3)] >= 0.7]
+    eps = []
+    for m in hit:
+        if eps and shift(eps[-1][-1], 1) == m:
+            eps[-1].append(m)
+        else:
+            eps.append([m])
+    episodes = []
+    for e in eps:
+        a, b = shift(e[0], -3), e[-1]
+        episodes.append({"from": a, "to": b, "y10From": round(yme[a], 2), "y10To": round(yme[b], 2), "kospi": pct(kme[b], kme[a]),
+                         "next3m": pct(kme[shift(b, 3)], kme[b]) if shift(b, 3) in kme else None})
+    # 차트용: 정책금리 계단, 10년물 주간
+    weekly = {}
+    for d in y10k:
+        if d >= "19990101":
+            dd = datetime.strptime(d, "%Y%m%d").isocalendar()
+            weekly[(dd[0], dd[1])] = d
+    wk = [weekly[k] for k in sorted(weekly)]
+    cur_rate = series[-1][1]
+    return {"asOf": iso(ds[-1]), "policy": {"steps": [{"date": series[0][0], "rate": series[0][1]}] + [{"date": e["date"], "rate": e["rate"]} for e in events],
+                                          "now": cur_rate, "nowDate": series[-1][0]},
+            "y10": {"d": [int(d) for d in wk], "v": [y10d[d] for d in wk], "now": y10d[y10k[-1]], "nowDate": iso(y10k[-1])},
+            "cpi": {"m": [m for m in sorted(cyoy) if m >= "2000-01"], "v": [cyoy[m] for m in sorted(cyoy) if m >= "2000-01"],
+                    "core": [kyoy.get(m) for m in sorted(cyoy) if m >= "2000-01"], "now": cyoy[max(cyoy)], "coreNow": kyoy.get(max(cyoy)), "nowMonth": max(cyoy)},
+            "events": events, "cycles": cycles, "corr": corrs, "buckets": bk, "episodes": episodes, "kospiNow": last_close,
+            "ndq": ({"d": [int(nd(d)) for d, _ in ndq], "v": [round(v, 1) for _, v in ndq], "now": ndq[-1][1], "nowDate": ndq[-1][0]} if ndq else None)}
+
+
 def build_crisis_status(closes, spreads, today, credit_bal=None):
     """closes: {YYYYMMDD: 종가}, credit_bal: 신용융자 잔고 {YYYYMMDD: {"kospi","kosdaq"}}(없으면 생략), spreads: {"BAA10Y": rows, "BAMLH0A0HYM2": rows, "BAMLC0A0CM": rows} (없으면 None), today: YYYYMMDD(KST)."""
     pts = sorted(closes.items())
@@ -2636,6 +2920,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             self.handle_crisis_history()
         elif urllib.parse.urlparse(self.path).path == "/api/crisis/semis":
             self.handle_crisis_semis()
+        elif urllib.parse.urlparse(self.path).path == "/api/record/issues":
+            self.handle_record_issues()
+        elif urllib.parse.urlparse(self.path).path == "/api/record/cycle":
+            self.handle_record_cycle()
+        elif urllib.parse.urlparse(self.path).path == "/api/record/rates":
+            self.handle_record_rates()
         elif self.path.startswith("/api/crisis"):
             self.handle_crisis()
         elif self.path.startswith("/api/ops/score-snapshot"):
@@ -2702,6 +2992,10 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         elif urllib.parse.urlparse(self.path).path in ("/crisis", "/crisis.html"):
             # 위기 상황판: 코스피 낙폭 위치·반등 체크리스트·미국 신용 스프레드. 보유 종목은 /risk와 같은 localStorage에서 읽는다.
             self.path = "/crisis.html"
+            super().do_GET()
+        elif urllib.parse.urlparse(self.path).path in ("/record", "/record.html"):
+            # 기록판: 코스피 큰 상승·하락 이슈를 지수 위 화살표로 쌓아 두는 페이지(record_issues.json).
+            self.path = "/record.html"
             super().do_GET()
         elif urllib.parse.urlparse(self.path).path in ("/", "/index.html"):
             super().do_GET()
@@ -3250,6 +3544,50 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 self.send_json(200, json.load(f))
         except (OSError, ValueError):
             self.send_json(503, {"error": "semi_cycles.json 을 읽지 못했습니다"})
+
+    def handle_record_rates(self):
+        """미국 정책금리(연방기금 목표금리)·10년물·물가(CPI)·나스닥과 코스피: 금리 사이클별 코스피·물가, 10년물 변화 구간별 코스피. FRED 6시리즈(6시간 캐시)."""
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            closes = _fetch_index_closes("KOSPI", 10500)
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                futs = [ex.submit(_fetch_fred_series, sid, st) for sid, st in (("DFEDTAR", "1999-01-01"), ("DFEDTARU", "1999-01-01"), ("DGS10", "1999-01-01"), ("CPIAUCSL", "1997-01-01"), ("CPILFESL", "1997-01-01"))]   # 물가는 1999년 전년 동월 대비 계산용으로 1997년부터
+                fn = ex.submit(_fetch_fred_series, "NASDAQCOM", "1999-01-01")   # 나스닥 종합(겹쳐 그리기용). 실패해도 나머지는 보여 준다
+                tar, taru, y10, cpi, core = [f.result() for f in futs]
+                try:
+                    ndq = fn.result()
+                except Exception:
+                    ndq = None
+            self.send_json(200, build_rates(closes, tar, taru, y10, cpi, core, ndq))
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
+
+    def handle_record_cycle(self):
+        """미국 대통령 4년 주기(대선 해·취임 첫해·중간선거 해·대선 전해)별 코스피 연간·월별·선거 전후 수익과 앞으로 3년 달력."""
+        try:
+            closes = _fetch_index_closes("KOSPI", 10500)
+            self.send_json(200, build_us_cycle(closes, _kst_now().year))
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
+
+    def handle_record_issues(self):
+        """기록판(/record)의 코스피 이슈 기록(화살표). record_issues.json 의 이슈에 그날 등락·이후 5/20/60거래일 등락을 붙이고 지수 일봉을 같이 준다."""
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "record_issues.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                issues = json.load(f).get("issues") or []
+        except (OSError, ValueError):
+            self.send_json(503, {"error": "record_issues.json 을 읽지 못했습니다"})
+            return
+        try:
+            today = _kst_now().replace(tzinfo=None)
+            first = min([i.get("date", "") for i in issues if i.get("date")] or [today.strftime("%Y-%m-%d")])
+            span = (today - datetime.strptime(first, "%Y-%m-%d")).days + 120
+            days = min(14000, max(10500, -(-span // 100) * 100))   # 최소 10500일(2000년 이후 중간선거 해 띠가 다 보이게, /api/record/midterm 과 같은 캐시 키), 100일 단위로 올림
+            closes = _fetch_index_closes("KOSPI", days)
+            self.send_json(200, build_record_issues(issues, closes))
+        except Exception as e:
+            self.send_json(502, {"error": str(e)[:200]})
 
     def handle_crisis(self):
         try:
